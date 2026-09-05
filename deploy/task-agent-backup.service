@@ -1,0 +1,11 @@
+[Unit]
+Description=Consistent encrypted Task Agent backup to private S3
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/task-agent/backup.env
+WorkingDirectory=/opt/task-agent
+ExecStart=/bin/bash /opt/task-agent/backup.sh
+UMask=0077

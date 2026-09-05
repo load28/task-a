@@ -18,13 +18,18 @@
     "start": "node apps/task-agent/src/main.ts",
     "http": "node apps/task-agent/src/http.ts",
     "mcp": "node apps/task-agent/src/mcp.ts",
+    "remote": "node apps/task-agent/src/remote.ts",
+    "smoke:remote": "node scripts/smoke-remote.ts",
     "test": "node --test",
     "check": "tsc --noEmit && node --test"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@opencode-ai/plugin": "^1.0.0",
     "@opencode-ai/sdk": "^1.0.0",
-    "opencode-ai": "^1.18.28"
+    "jose": "^6.2.11",
+    "opencode-ai": "^1.18.28",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

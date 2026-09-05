@@ -5,7 +5,7 @@ export default tool({
   description: "Append a confirmed durable event to a task. Do not store tentative ideas or conversation noise.",
   args: {
     taskId: tool.schema.string(),
-    type: tool.schema.enum(["decision", "progress", "finding", "constraint", "blocker", "blocker_resolved", "next_action", "status"]),
+    type: tool.schema.enum(["decision", "progress", "finding", "constraint", "constraint_removed", "blocker", "blocker_resolved", "next_action", "next_action_completed", "status"]),
     content: tool.schema.string(),
     metadata: tool.schema.record(tool.schema.string(), tool.schema.unknown()).optional(),
   },

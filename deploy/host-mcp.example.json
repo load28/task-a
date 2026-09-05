@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "task-agent": {
+      "command": "/ABSOLUTE/PATH/node",
+      "args": ["/ABSOLUTE/PATH/task-a/scripts/host-entry.ts", "mcp", "/PRIVATE/PATH/claude-connection.json"]
+    }
+  }
+}

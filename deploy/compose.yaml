@@ -1,0 +1,39 @@
+services:
+  agent:
+    image: ${TASK_AGENT_IMAGE:?Set an immutable ECR image digest}
+    restart: unless-stopped
+    init: true
+    env_file: /etc/task-agent/agent.env
+    volumes:
+      - tasks:/data
+      - harness:/home/node/.local/share
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    mem_limit: 3g
+    cpus: 2
+    stop_grace_period: 160s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+  proxy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      TASK_AGENT_DOMAIN: ${TASK_AGENT_DOMAIN:?Set your domain}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+    depends_on:
+      agent:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+volumes:
+  tasks:
+  harness:
+  certificates:

@@ -1,0 +1,7 @@
+{$TASK_AGENT_DOMAIN} {
+  request_body {
+    max_size 1MB
+  }
+  header Strict-Transport-Security "max-age=31536000"
+  reverse_proxy agent:7331
+}

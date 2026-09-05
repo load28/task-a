@@ -3,12 +3,12 @@ import type { ArtifactRef, Task, TaskEvent, TaskSnapshot, TaskStatus } from "#ta
 export function projectSnapshot(task: Task, events: TaskEvent[], artifacts: ArtifactRef[]): TaskSnapshot {
   let objective = task.objective
   let status: TaskStatus = task.status
-  const constraints: string[] = []
+  const constraints = new Map<string, string>()
   const decisions = new Map<string, string>()
   const blockers = new Map<string, string>()
   const progress: string[] = []
   const findings: string[] = []
-  const nextActions: string[] = []
+  const nextActions = new Map<string, string>()
 
   for (const event of events) {
     switch (event.type) {
@@ -26,7 +26,10 @@ export function projectSnapshot(task: Task, events: TaskEvent[], artifacts: Arti
         break
       }
       case "constraint":
-        if (!constraints.includes(event.content)) constraints.push(event.content)
+        constraints.set(event.id, event.content)
+        break
+      case "constraint_removed":
+        if (typeof event.metadata?.resolves === "string") constraints.delete(event.metadata.resolves)
         break
       case "progress":
         progress.push(event.content)
@@ -43,7 +46,10 @@ export function projectSnapshot(task: Task, events: TaskEvent[], artifacts: Arti
         break
       }
       case "next_action":
-        nextActions.push(event.content)
+        nextActions.set(event.id, event.content)
+        break
+      case "next_action_completed":
+        if (typeof event.metadata?.resolves === "string") nextActions.delete(event.metadata.resolves)
         break
       case "status":
         if (isTaskStatus(event.metadata?.status)) status = event.metadata.status
@@ -54,13 +60,13 @@ export function projectSnapshot(task: Task, events: TaskEvent[], artifacts: Arti
   return {
     objective,
     status,
-    currentState: progress.at(-1) ?? objective,
-    constraints,
+    currentState: progress.at(-1) ?? "No progress has been recorded.",
+    constraints: [...new Set(constraints.values())],
     activeDecisions: [...decisions.values()],
     blockers: [...blockers.values()],
     recentProgress: progress.slice(-10),
     findings: findings.slice(-10),
-    nextActions: nextActions.slice(-10),
+    nextActions: [...nextActions.values()],
     relevantArtifacts: artifacts,
     updatedAt: events.at(-1)?.createdAt ?? task.updatedAt,
   }

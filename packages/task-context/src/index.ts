@@ -26,7 +26,7 @@ export function compileTaskContext(record: TaskRecord, mode: ContextMode = "cont
     importantDecisions: snapshot.activeDecisions,
     recentProgress: snapshot.recentProgress.slice(-5),
     blockers: snapshot.blockers,
-    nextActions: snapshot.nextActions.slice(-5),
+    nextActions: snapshot.nextActions,
   }
 
   if (["implementation", "review", "handoff"].includes(mode)) {
@@ -53,7 +53,7 @@ export function formatTaskContext(context: ExecutableTaskContext): string {
     ["Next Actions", context.nextActions],
   ]
   return sections
-    .filter(([, value]) => typeof value === "string" || (Array.isArray(value) && value.length > 0))
-    .map(([title, value]) => `${title}\n${Array.isArray(value) ? value.map((item) => `- ${item}`).join("\n") : value}`)
+    .filter(([, value]) => value !== undefined)
+    .map(([title, value]) => `${title}\n${Array.isArray(value) ? (value.length ? value.map((item) => `- ${item}`).join("\n") : "None recorded.") : value}`)
     .join("\n\n")
 }

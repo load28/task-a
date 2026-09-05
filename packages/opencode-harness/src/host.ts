@@ -6,17 +6,21 @@ import { createRequire } from "node:module"
 import { readFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
+import { TASK_AGENT_SYSTEM_PROMPT } from "../../task-agent-core/src/prompt.ts"
+import { HOST_TASK_INSTRUCTIONS } from "../../host-integration/src/index.ts"
 
 export const serviceRoot = fileURLToPath(new URL("../../../", import.meta.url))
 export const taskTools = ["search_task", "get_task", "create_task", "update_task", "append_event", "link_artifact", "complete_task", "link_task"]
 
 // Each worker gets its own process environment, project directory and password.
-export async function launchHost() {
-  const configured = process.env.TASK_AGENT_OPENCODE_PORT
+export async function launchHost(options: { database?: string; hostMcpDatabase?: string } = {}) {
+  const configured = process.env.TASK_AGENT_OPENCODE_PORT || undefined
   const port = configured === undefined ? await availablePort() : Number(configured)
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("TASK_AGENT_OPENCODE_PORT must be a valid port")
   const password = randomBytes(24).toString("hex")
-  const permissions = Object.fromEntries([["*", "deny"], ...taskTools.map((name) => [name, "allow"])])
+  const permissions = options.hostMcpDatabase
+    ? { "*": "deny", "persistent_task_*": "allow" }
+    : Object.fromEntries([["*", "deny"], ...taskTools.map((name) => [name, "allow"])])
   const manifestPath = createRequire(import.meta.url).resolve("opencode-ai/package.json")
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
   const executable = resolve(dirname(manifestPath), manifest.bin.opencode)
@@ -26,11 +30,26 @@ export async function launchHost() {
     env: {
       ...process.env,
       PATH: `${join(serviceRoot, "node_modules/.bin")}${delimiter}${process.env.PATH ?? ""}`,
-      TASK_AGENT_DB: resolve(serviceRoot, process.env.TASK_AGENT_DB ?? "data/tasks.db"),
+      TASK_AGENT_DB: resolve(serviceRoot, options.database ?? process.env.TASK_AGENT_DB ?? "data/tasks.db"),
       TASK_AGENT_NODE: process.execPath,
       OPENCODE_SERVER_USERNAME: "opencode",
       OPENCODE_SERVER_PASSWORD: password,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        permission: permissions,
+        default_agent: options.hostMcpDatabase ? "host-evaluation" : "task-state",
+        agent: {
+          [options.hostMcpDatabase ? "host-evaluation" : "task-state"]: {
+            description: options.hostMcpDatabase ? "Conversational host using the Task Agent Gateway" : "Persistent work state specialist",
+            mode: "primary", steps: 8, permission: permissions,
+            prompt: options.hostMcpDatabase ? HOST_TASK_INSTRUCTIONS : TASK_AGENT_SYSTEM_PROMPT,
+          },
+        },
+        ...(process.env.TASK_AGENT_MODEL ? { model: process.env.TASK_AGENT_MODEL } : {}),
+        ...(options.hostMcpDatabase ? { mcp: { persistent_task: {
+          type: "local", command: [process.execPath, join(serviceRoot, "apps/task-agent/src/mcp.ts")], enabled: true, timeout: 180000,
+          environment: { TASK_AGENT_DB: resolve(options.hostMcpDatabase), TASK_AGENT_OPENCODE_PORT: "", TASK_AGENT_DISABLE_OPENCODE: "0" },
+        } } } : {}),
+      }),
     },
   })
   const stop = () => { child.kill() }

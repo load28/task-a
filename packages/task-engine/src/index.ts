@@ -160,6 +160,13 @@ export class TaskEngine {
     }
     const task = this.requireTask(input.taskId)
     const priorEvents = this.repository.events(input.taskId)
+    const lifecycle = { constraint_removed: "constraint", next_action_completed: "next_action" } as const
+    if (input.type === "constraint_removed" || input.type === "next_action_completed") {
+      const resolves = input.metadata?.resolves
+      if (typeof resolves !== "string" || !activeEventIds(priorEvents, lifecycle[input.type], input.type, "resolves").has(resolves)) {
+        throw new Error(`${input.type} requires metadata.resolves referencing an active ${lifecycle[input.type]}`)
+      }
+    }
     if (input.type === "status" && !isTaskStatus(input.metadata?.status)) {
       throw new Error("status event requires metadata.status")
     }
@@ -199,6 +206,7 @@ export class TaskEngine {
     description?: string
     source?: EventSource
     idempotencyKey?: string
+    metadata?: Record<string, unknown>
   }): TaskRecord {
     requireText(input.uri, "uri")
     if (!isArtifactType(input.type)) throw new Error(`Invalid artifact type: ${input.type}`)
@@ -215,7 +223,7 @@ export class TaskEngine {
       description: input.description?.trim(),
       createdAt: now,
     }
-    const event = makeEvent(task.id, "artifact", input.description?.trim() || artifact.uri, { artifactId: artifact.id, artifact }, input.source, now, input.idempotencyKey)
+    const event = makeEvent(task.id, "artifact", input.description?.trim() || artifact.uri, { ...input.metadata, artifactId: artifact.id, artifact }, input.source, now, input.idempotencyKey)
     const updated = { ...task, updatedAt: now }
     const events = [...this.repository.events(task.id), event]
     const artifacts = [...this.repository.artifacts(task.id), artifact]
@@ -303,7 +311,7 @@ function isTaskStatus(value: unknown): value is TaskStatus {
 }
 
 function isAppendableEventType(value: unknown): value is AppendEventInput["type"] {
-  return ["decision", "progress", "finding", "constraint", "blocker", "blocker_resolved", "next_action", "status"].includes(String(value))
+  return ["decision", "progress", "finding", "constraint", "constraint_removed", "blocker", "blocker_resolved", "next_action", "next_action_completed", "status"].includes(String(value))
 }
 
 function isArtifactType(value: unknown): value is ArtifactType {

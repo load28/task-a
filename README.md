@@ -13,6 +13,12 @@ OpenCode를 내부 Agent Harness로 사용하는 독립형 Persistent Work Conte
 
 ## 실행
 
+기본 사용 방식은 [Codex·Claude 대화 안에서 사용하기](docs/in-host-experience.md)다. “이 작업 이어서 하자”라고 말하면 MCP 연결 계층이 컨텍스트 조회·필요 시 로그인 링크·기록 연결을 제공한다. 별도 로그인 CLI나 work 실행기는 필요하지 않다. 최초 MCP·훅 등록과 서버 배포는 필요하다.
+
+AWS에서 본인 인증 후 여러 장소에서 연결하는 구성은 [배포 절차](deploy/README.md)를 따른다. 원격 모드는 `npm run remote`이며 공식 MCP SDK의 Streamable HTTP와 Cognito 호환 JWT 검증을 사용한다. 기존 `npm start`는 로컬/직접 HTTP 통합용이며 원격 배포에는 사용하지 않는다.
+
+자연스러운 기록을 위한 Host 지침과 평가 범위는 [Host 연동](docs/host-integration.md)에 정리했다. Task Agent가 전달되지 않은 대화를 자동 수집하지는 않는다.
+
 Node.js 24 이상이 필요합니다.
 
 ```sh
@@ -60,10 +66,16 @@ HTTP 서버는 `npm start`로 실행합니다. 기본 주소는 `127.0.0.1:7331`
 
 의존성 방향은 `protocol → task-agent-core → task-engine → task-domain`입니다. `opencode-harness`는 Core의 `TaskReasoner` 포트만 구현하며 Domain과 Engine은 OpenCode를 import하지 않습니다.
 
-Task의 현재 상태는 Event History에서 다시 투영할 수 있습니다. Decision 대체는 `metadata.supersedes`, Blocker 해제는 `metadata.resolves`로 과거 Event를 보존합니다.
+Task의 현재 상태는 Event History에서 다시 투영할 수 있습니다. Decision 대체는 `metadata.supersedes`를 사용합니다. Blocker 해제, Constraint 철회(`constraint_removed`), Next Action 완료(`next_action_completed`)는 `metadata.resolves`로 활성 Event를 가리키며 과거 기록을 보존합니다.
+
+자연어 추출에는 실제 대화의 근거 인용을 요구합니다. 인용과 Harness Session ID는 이벤트에 남습니다. 모델 판단 중 Task가 바뀌면 최신 상태로 최대 세 번 추출을 시도합니다. 인용 검증은 사용자의 발언을 실제 사실로 입증하는 검증은 아닙니다.
 
 OpenCode는 별도 프로세스로 격리됩니다. Custom Tool은 Node bridge를 통해 Task Engine만 호출하므로 OpenCode의 Bun 런타임이 Domain이나 Storage에 침투하지 않습니다.
 
 현재 sync는 OpenCode의 구조화된 이벤트 추출 뒤 Core가 Engine에 일괄 반영하는 방식입니다. 추출·Task 선택 세션의 쓰기 Tool은 차단하고, 자유 작업인 run은 Task Tool을 호출할 수 있습니다. 모든 operation을 OpenCode Tool Loop로 수행하는 원래 설계와는 이 부분이 다릅니다.
 
 점검 결과와 남은 구현 범위는 [설계 점검 기록](docs/design-review.md)에 정리했습니다.
+
+## 실제 모델 평가
+
+`node scripts/evaluate-agent.ts`는 가상 컴파일러 대화를 구성된 외부 모델 제공자에게 보내므로 명시적으로 실행할 때만 사용합니다. 별도 임시 DB에서 작업 생성, 미확정 제안 제외, 확정 상태 저장, 완료 후 다른 Host 서비스의 Handoff 조회를 검증합니다. 임시 DB 경로를 출력하고 검사 후에도 보존합니다. 일반 `npm run check`는 외부 모델을 호출하지 않습니다.

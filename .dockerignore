@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+.git
+.env*
+data
+*.db*
+test
+scripts/*
+!scripts/backup.ts
+docs
+deploy

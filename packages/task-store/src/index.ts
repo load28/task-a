@@ -23,6 +23,16 @@ export class SqliteTaskRepository implements TaskRepository {
     this.db.close()
   }
 
+  bindOwner(issuer: string, subject: string): void {
+    if (!issuer.trim() || !subject.trim()) throw new Error("Owner identity is required")
+    this.transaction(() => {
+      this.db.exec("CREATE TABLE IF NOT EXISTS service_owner (id INTEGER PRIMARY KEY CHECK(id = 1), issuer TEXT NOT NULL, subject TEXT NOT NULL)")
+      const owner = this.db.prepare("SELECT issuer, subject FROM service_owner WHERE id = 1").get()
+      if (owner && (owner.issuer !== issuer || owner.subject !== subject)) throw new Error("Database belongs to another owner; refusing to reassign it")
+      if (!owner) this.db.prepare("INSERT INTO service_owner (id, issuer, subject) VALUES (1, ?, ?)").run(issuer, subject)
+    })
+  }
+
   create(task: Task, event: TaskEvent, snapshot: TaskSnapshot): void {
     this.transaction(() => {
       this.insertTask(task)

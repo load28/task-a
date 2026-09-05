@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline"
 import type { TaskAgent } from "#task-agent-core"
+import { HOST_TASK_INSTRUCTIONS } from "../../host-integration/src/index.ts"
 
 interface JsonRpcRequest {
   jsonrpc: "2.0"
@@ -41,6 +42,7 @@ export class TaskAgentMcpServer {
           protocolVersion: "2025-06-18",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "task-agent", version: "0.1.0" },
+          instructions: HOST_TASK_INSTRUCTIONS,
         }
       case "ping":
         return {}
@@ -117,7 +119,7 @@ function failure(id: JsonRpcRequest["id"], fallbackCode: number, message: string
   return { jsonrpc: "2.0", id: id ?? null, error: { code: fallbackCode, message } }
 }
 
-const tools = [
+export const tools = [
   {
     name: "task_context",
     title: "Compile task context",

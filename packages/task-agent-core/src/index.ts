@@ -114,40 +114,51 @@ export class TaskAgentService implements TaskAgent {
     const syncKey = request.idempotencyKey ?? (sourceSyncKey(request.source) ? `${sourceSyncKey(request.source)}:${fingerprint}` : undefined)
     const existing = syncKey ? this.engine.syncReceipt<SyncResult>(task.id, syncKey, fingerprint) : undefined
     if (existing) return existing
-    const record = this.engine.getTask(task.id)
-    const extracted = await this.extract(request, record)
-    if (!Array.isArray(extracted)) throw new Error("Task Agent must return an event array")
-    return this.engine.atomic(() => {
-    const repeated = syncKey ? this.engine.syncReceipt<SyncResult>(task.id, syncKey, fingerprint) : undefined
-    if (repeated) return repeated
-    const appended: TaskEvent[] = []
-    for (const item of extracted) {
-      if (!isPersistable(item)) throw new Error("Task Agent returned an invalid durable event")
-      const idempotencyKey = syncKey ? `${syncKey}:${eventFingerprint(item)}` : undefined
-      if (idempotencyKey && this.engine.hasProcessed(task.id, idempotencyKey)) continue
-      if (item.type === "artifact") {
-        const uri = item.metadata?.uri
-        const artifactType = item.metadata?.type
-        if (typeof uri !== "string" || !isArtifactType(artifactType)) throw new Error("artifact event must include metadata.uri and metadata.type")
-        const record = this.engine.linkArtifact({
-          taskId: task.id,
-          type: artifactType,
-          uri,
-          description: item.content,
-          source: request.source,
-          idempotencyKey,
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const record = this.engine.getTask(task.id)
+      const extracted = await this.extract(request, record)
+      if (!Array.isArray(extracted)) throw new Error("Task Agent must return an event array")
+      try {
+        return this.engine.atomic(() => {
+          const repeated = syncKey ? this.engine.syncReceipt<SyncResult>(task.id, syncKey, fingerprint) : undefined
+          if (repeated) return repeated
+          if (this.engine.getTask(task.id).events.at(-1)?.id !== record.events.at(-1)?.id) {
+            throw new StaleTaskStateError("Task changed during sync; retry with fresh context")
+          }
+          const appended: TaskEvent[] = []
+          for (const item of extracted) {
+            if (!isPersistable(item)) throw new Error("Task Agent returned an invalid durable event")
+            const idempotencyKey = syncKey ? `${syncKey}:${eventFingerprint(item)}` : undefined
+            if (idempotencyKey && this.engine.hasProcessed(task.id, idempotencyKey)) continue
+            if (item.type === "artifact") {
+              const uri = item.metadata?.uri
+              const artifactType = item.metadata?.type
+              if (typeof uri !== "string" || !isArtifactType(artifactType)) throw new Error("artifact event must include metadata.uri and metadata.type")
+              const record = this.engine.linkArtifact({
+                taskId: task.id,
+                type: artifactType,
+                uri,
+                description: item.content,
+                metadata: item.metadata,
+                source: request.source,
+                idempotencyKey,
+              })
+              appended.push(record.events.at(-1)!)
+              continue
+            }
+            const input: AppendEventInput = { taskId: task.id, ...item, source: request.source, idempotencyKey }
+            const record = this.engine.appendEvent(input)
+            appended.push(record.events.at(-1)!)
+          }
+          const result = { task: this.engine.getTask(task.id).task, appended }
+          if (syncKey) this.engine.saveSyncReceipt(task.id, syncKey, fingerprint, result)
+          return result
         })
-        appended.push(record.events.at(-1)!)
-        continue
+      } catch (error) {
+        if (!(error instanceof StaleTaskStateError) || attempt === 2) throw error
       }
-      const input: AppendEventInput = { taskId: task.id, ...item, source: request.source, idempotencyKey }
-      const record = this.engine.appendEvent(input)
-      appended.push(record.events.at(-1)!)
     }
-    const result = { task: this.engine.getTask(task.id).task, appended }
-    if (syncKey) this.engine.saveSyncReceipt(task.id, syncKey, fingerprint, result)
-    return result
-    })
+    throw new Error("Sync retry limit exceeded")
   }
 
   private async extract(request: SyncRequest, task: TaskRecord): Promise<ExtractedEvent[]> {
@@ -175,8 +186,10 @@ export class TaskAgentService implements TaskAgent {
   }
 }
 
+class StaleTaskStateError extends Error {}
+
 function isPersistable(event: ExtractedEvent): boolean {
-  const allowed: EventType[] = ["decision", "progress", "finding", "constraint", "blocker", "blocker_resolved", "next_action", "artifact", "status"]
+  const allowed: EventType[] = ["decision", "progress", "finding", "constraint", "constraint_removed", "blocker", "blocker_resolved", "next_action", "next_action_completed", "artifact", "status"]
   return Boolean(event) && allowed.includes(event.type) && typeof event.content === "string" && Boolean(event.content.trim())
 }
 

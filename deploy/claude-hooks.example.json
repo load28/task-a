@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node /ABSOLUTE/PATH/task-agent/scripts/session-hook.ts hook", "timeout": 60 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node /ABSOLUTE/PATH/task-agent/scripts/session-hook.ts hook", "timeout": 60, "async": true }] }],
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "node /ABSOLUTE/PATH/task-agent/scripts/session-hook.ts hook", "timeout": 60 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "node /ABSOLUTE/PATH/task-agent/scripts/session-hook.ts hook", "timeout": 60 }] }]
+  }
+}

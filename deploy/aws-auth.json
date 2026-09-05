@@ -1,0 +1,78 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private Task Agent Cognito identity provider. Admin-created users only.",
+  "Parameters": {
+    "ResourceUrl": { "Type": "String", "AllowedPattern": "https://[a-zA-Z0-9.-]+/mcp" },
+    "LoginDomainPrefix": { "Type": "String", "AllowedPattern": "[a-z0-9-]+" },
+    "ChatGPTCallback": { "Type": "String", "AllowedPattern": "https://chatgpt.com/.*" },
+    "ClaudeCallback": { "Type": "String", "Default": "http://localhost:8080/callback", "AllowedPattern": "http://(localhost|127.0.0.1):[0-9]+/.*" }
+  },
+  "Resources": {
+    "Pool": {
+      "Type": "AWS::Cognito::UserPool",
+      "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "UserPoolTier": "ESSENTIALS", "DeletionProtection": "ACTIVE",
+        "AdminCreateUserConfig": { "AllowAdminCreateUserOnly": true },
+        "UsernameAttributes": ["email"], "AutoVerifiedAttributes": ["email"],
+        "MfaConfiguration": "ON", "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
+        "Policies": { "PasswordPolicy": { "MinimumLength": 14, "RequireLowercase": true, "RequireUppercase": true, "RequireNumbers": true, "RequireSymbols": true } },
+        "AccountRecoverySetting": { "RecoveryMechanisms": [{ "Name": "verified_email", "Priority": 1 }] }
+      }
+    },
+    "Domain": {
+      "Type": "AWS::Cognito::UserPoolDomain",
+      "Properties": { "UserPoolId": { "Ref": "Pool" }, "Domain": { "Ref": "LoginDomainPrefix" }, "ManagedLoginVersion": 2 }
+    },
+    "ResourceServer": {
+      "Type": "AWS::Cognito::UserPoolResourceServer",
+      "Properties": { "UserPoolId": { "Ref": "Pool" }, "Identifier": { "Ref": "ResourceUrl" }, "Name": "Task Agent", "Scopes": [{ "ScopeName": "read", "ScopeDescription": "Read my work context" }, { "ScopeName": "write", "ScopeDescription": "Update my work state" }] }
+    },
+    "ChatGPTClient": {
+      "Type": "AWS::Cognito::UserPoolClient", "DependsOn": "ResourceServer",
+      "Properties": {
+        "UserPoolId": { "Ref": "Pool" }, "ClientName": "ChatGPT", "GenerateSecret": false,
+        "AllowedOAuthFlowsUserPoolClient": true, "AllowedOAuthFlows": ["code"],
+        "AllowedOAuthScopes": ["openid", "email", { "Fn::Sub": "${ResourceUrl}/read" }, { "Fn::Sub": "${ResourceUrl}/write" }],
+        "CallbackURLs": [{ "Ref": "ChatGPTCallback" }], "SupportedIdentityProviders": ["COGNITO"],
+        "AccessTokenValidity": 5, "IdTokenValidity": 5, "RefreshTokenValidity": 7,
+        "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "days" },
+        "EnableTokenRevocation": true, "PreventUserExistenceErrors": "ENABLED"
+      }
+    },
+    "ClaudeClient": {
+      "Type": "AWS::Cognito::UserPoolClient", "DependsOn": "ResourceServer",
+      "Properties": {
+        "UserPoolId": { "Ref": "Pool" }, "ClientName": "Claude Code", "GenerateSecret": false,
+        "AllowedOAuthFlowsUserPoolClient": true, "AllowedOAuthFlows": ["code"],
+        "AllowedOAuthScopes": ["openid", "email", { "Fn::Sub": "${ResourceUrl}/read" }, { "Fn::Sub": "${ResourceUrl}/write" }],
+        "CallbackURLs": [{ "Ref": "ClaudeCallback" }], "SupportedIdentityProviders": ["COGNITO"],
+        "AccessTokenValidity": 5, "IdTokenValidity": 5, "RefreshTokenValidity": 7,
+        "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "days" },
+        "EnableTokenRevocation": true, "PreventUserExistenceErrors": "ENABLED"
+      }
+    },
+    "WorkClient": {
+      "Type": "AWS::Cognito::UserPoolClient", "DependsOn": "ResourceServer",
+      "Properties": {
+        "UserPoolId": { "Ref": "Pool" }, "ClientName": "Task Agent Work CLI", "GenerateSecret": false,
+        "AllowedOAuthFlowsUserPoolClient": true, "AllowedOAuthFlows": ["code"],
+        "AllowedOAuthScopes": ["openid", { "Fn::Sub": "${ResourceUrl}/read" }, { "Fn::Sub": "${ResourceUrl}/write" }],
+        "CallbackURLs": ["http://localhost:8765/callback"], "SupportedIdentityProviders": ["COGNITO"],
+        "AccessTokenValidity": 5, "IdTokenValidity": 5, "RefreshTokenValidity": 7,
+        "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "days" },
+        "EnableTokenRevocation": true, "PreventUserExistenceErrors": "ENABLED"
+      }
+    },
+    "WorkBranding": { "Type": "AWS::Cognito::ManagedLoginBranding", "Properties": { "UserPoolId": { "Ref": "Pool" }, "ClientId": { "Ref": "WorkClient" }, "UseCognitoProvidedValues": true } },
+    "ChatGPTBranding": { "Type": "AWS::Cognito::ManagedLoginBranding", "Properties": { "UserPoolId": { "Ref": "Pool" }, "ClientId": { "Ref": "ChatGPTClient" }, "UseCognitoProvidedValues": true } },
+    "ClaudeBranding": { "Type": "AWS::Cognito::ManagedLoginBranding", "Properties": { "UserPoolId": { "Ref": "Pool" }, "ClientId": { "Ref": "ClaudeClient" }, "UseCognitoProvidedValues": true } }
+  },
+  "Outputs": {
+    "WorkClientId": { "Value": { "Ref": "WorkClient" } },
+    "PoolId": { "Value": { "Ref": "Pool" } },
+    "Issuer": { "Value": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.amazonaws.com/${Pool}" } },
+    "ChatGPTClientId": { "Value": { "Ref": "ChatGPTClient" } },
+    "ClaudeClientId": { "Value": { "Ref": "ClaudeClient" } }
+  }
+}

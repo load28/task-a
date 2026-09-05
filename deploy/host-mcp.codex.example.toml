@@ -1,0 +1,3 @@
+[mcp_servers.task-agent]
+command = "/ABSOLUTE/PATH/node"
+args = ["/ABSOLUTE/PATH/task-a/scripts/host-entry.ts", "mcp", "/PRIVATE/PATH/codex-connection.json"]
