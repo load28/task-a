@@ -249,6 +249,8 @@ export type LearningKind =
   | "failure_pattern"
   | "improvement"
 
+export type LearningStatus = "active" | "superseded" | "retracted"
+
 export interface Learning {
   id: string
   sourceTaskId?: string
@@ -256,7 +258,12 @@ export interface Learning {
   kind: LearningKind
   description: string
   tags: string[]
+  importance: number
   appliedCount: number
+  status: LearningStatus
+  supersededBy?: string
+  supersededAt?: string
+  invalidFrom?: string
   createdAt: string
 }
 
@@ -287,6 +294,8 @@ export type EventType =
   | "DIAGNOSTIC_CREATED"
   | "ARCHITECTURE_REVISED"
   | "LEARNING_RECORDED"
+  | "LEARNING_SUPERSEDED"
+  | "REFLECTION_CREATED"
 
 export interface TaskGraphEvent {
   id: string

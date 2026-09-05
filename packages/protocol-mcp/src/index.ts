@@ -14,7 +14,8 @@ Sessions are workers: resume work by searching (task_search), loading (task_load
 Execute one atomic task at a time: task_start, do the work, then task_complete with a summary, published artifacts and local verification. The engine, not the agent, decides state transitions.
 Task results are versioned artifacts (artifact_publish) with lineage and contracts (contract_define). Upstream changes mark downstream artifacts, bundles and integrations stale; impact_analyze reports the blast radius.
 Combinations of artifacts are verified separately: integration_propose defines integration sets and scenarios along architecture boundaries, integration_run pins exact artifact versions, and integration_report records scenario results. Passing runs promote Verified Bundles that parents consume instead of raw artifacts; failures classify causes and can spawn diagnostic tasks.
-The system self-improves: record what you learn while completing tasks (task_complete learnings, learning_record) — insights, pitfalls, conventions, failure patterns. The engine feeds relevant learnings back into every task context, so the second run on a topic is better than the first.`
+The system self-improves: record what you learn while completing tasks (task_complete learnings, learning_record) — insights, pitfalls, conventions, failure patterns, each with an importance score. The engine feeds relevant learnings back into every task context (ranked by relevance, recency, importance and graph proximity), so the second run on a topic is better than the first.
+Keep the memory coherent: learning_record returns semantically similar existing learnings — when the new lesson contradicts or replaces one, mark the old one with learning_supersede (history is kept, retrieval excludes it). When failure patterns accumulate, the engine creates a reflection task to synthesize them into higher-level learnings.`
 
 export class TaskAgentMcpServer {
   private agent: TaskAgent
@@ -282,7 +283,7 @@ export const tools = [
   {
     name: "learning_record",
     title: "Record a learning",
-    description: "Save a durable lesson to memory (insight, pitfall, convention, failure pattern or improvement idea). Relevant learnings are automatically fed into future task contexts so the second run on a topic is better than the first.",
+    description: "Save a durable lesson to memory (insight, pitfall, convention, failure pattern or improvement idea) with an importance score (1-10). Relevant learnings are automatically fed into future task contexts. The result includes semantically similar existing learnings — review them and call learning_supersede when the new learning contradicts or replaces one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -291,8 +292,24 @@ export const tools = [
         kind: { type: "string", enum: ["insight", "pitfall", "convention", "failure_pattern", "improvement"] },
         description: { type: "string" },
         tags: { type: "array", items: { type: "string" } },
+        importance: { type: "number", description: "Integer 1-10; how consequential this lesson is (default 5)" },
       },
       required: ["description"],
+    },
+  },
+  {
+    name: "learning_supersede",
+    title: "Supersede or retract a learning",
+    description: "Mark an outdated or wrong learning as superseded (pass `by` with the replacing learning's id) or retracted (no `by`). The record is kept for history but excluded from search and task contexts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        learningId: { type: "string" },
+        by: { type: "string", description: "ID of the learning that replaces this one; omit to retract without replacement" },
+        reason: { type: "string" },
+        invalidFrom: { type: "string", description: "Optional ISO timestamp when the fact stopped being true (bi-temporal event timeline)" },
+      },
+      required: ["learningId", "reason"],
     },
   },
   {

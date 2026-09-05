@@ -83,6 +83,18 @@ export interface RecordLearningInput {
   kind?: LearningKind
   description: string
   tags?: string[]
+  importance?: number
+}
+
+export interface SupersedeLearningInput {
+  learningId: string
+  by?: string
+  reason: string
+  invalidFrom?: string
+}
+
+export interface TaskGraphEngineOptions {
+  reflectionThreshold?: number
 }
 
 export interface DefineContractInput {
@@ -145,9 +157,11 @@ const MANUAL_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 
 export class TaskGraphEngine {
   readonly store: TaskGraphStore
+  private reflectionThreshold: number
 
-  constructor(store: TaskGraphStore) {
+  constructor(store: TaskGraphStore, options: TaskGraphEngineOptions = {}) {
     this.store = store
+    this.reflectionThreshold = Math.max(2, options.reflectionThreshold ?? 5)
   }
 
   atomic<T>(operation: () => T): T {
@@ -456,6 +470,9 @@ export class TaskGraphEngine {
     return this.atomic(() => {
       requireText(input.description, "description")
       if (input.kind !== undefined && !isLearningKind(input.kind)) throw new Error(`Invalid learning kind: ${input.kind}`)
+      if (input.importance !== undefined && (!Number.isInteger(input.importance) || input.importance < 1 || input.importance > 10)) {
+        throw new Error("importance must be an integer between 1 and 10")
+      }
       if (input.sourceTaskId) this.requireTask(input.sourceTaskId)
       const learning: Learning = {
         id: randomUUID(),
@@ -464,12 +481,35 @@ export class TaskGraphEngine {
         kind: input.kind ?? "insight",
         description: input.description.trim(),
         tags: [...new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean))],
+        importance: input.importance ?? 5,
         appliedCount: 0,
+        status: "active",
         createdAt: new Date().toISOString(),
       }
       this.store.insertLearning(learning)
       this.emit("LEARNING_RECORDED", input.sourceTaskId, { learningId: learning.id, runId: input.sourceRunId }, { kind: learning.kind, description: learning.description })
+      this.maybeCreateReflection(learning)
       return learning
+    })
+  }
+
+  supersedeLearning(input: SupersedeLearningInput): Learning {
+    return this.atomic(() => {
+      requireText(input.reason, "reason")
+      const learning = this.store.findLearning(input.learningId)
+      if (!learning) throw new Error(`Learning not found: ${input.learningId}`)
+      if (learning.status !== "active") throw new Error(`Learning is already ${learning.status}`)
+      if (input.by !== undefined) {
+        if (input.by === learning.id) throw new Error("A learning cannot supersede itself")
+        const replacement = this.store.findLearning(input.by)
+        if (!replacement) throw new Error(`Learning not found: ${input.by}`)
+        if (replacement.status !== "active") throw new Error(`Replacement learning is ${replacement.status}`)
+      }
+      const now = new Date().toISOString()
+      const status = input.by ? "superseded" : "retracted"
+      this.store.supersedeLearning(learning.id, status, input.by, now, input.invalidFrom)
+      this.emit("LEARNING_SUPERSEDED", learning.sourceTaskId, { learningId: learning.id, supersededBy: input.by }, { status, reason: input.reason, invalidFrom: input.invalidFrom })
+      return this.store.findLearning(learning.id)!
     })
   }
 
@@ -477,34 +517,87 @@ export class TaskGraphEngine {
     const task = this.requireTask(taskId)
     const terms = tokenize([task.title, task.goal, task.category, ...this.ancestorsOf(taskId).map((ancestor) => ancestor.title)].join(" "))
     const proximity = new Set([...this.subtreeIds(this.rootOf(taskId).id), ...task.dependencies])
-    const scored: Array<{ learning: Learning; score: number }> = []
-    for (const learning of this.store.allLearnings()) {
-      if (learning.sourceTaskId === taskId) continue
-      const text = `${learning.description} ${learning.tags.join(" ")}`.toLowerCase()
-      let score = terms.filter((term) => text.includes(term)).length
-      if (score === 0) continue
-      if (learning.sourceTaskId && proximity.has(learning.sourceTaskId)) score += 1
-      scored.push({ learning, score })
-    }
-    return scored
-      .sort((a, b) => b.score - a.score || b.learning.createdAt.localeCompare(a.learning.createdAt))
-      .slice(0, Math.max(1, Math.min(limit, 50)))
-      .map((entry) => entry.learning)
+    return this.fuseLearnings(terms, limit, (learning) => learning.sourceTaskId !== taskId, proximity)
   }
 
   searchLearnings(query: string, limit = 20): Learning[] {
     const terms = tokenize(query)
-    const all = this.store.allLearnings()
-    if (terms.length === 0) return all.slice(0, Math.max(1, Math.min(limit, 100)))
+    if (terms.length === 0) return this.store.activeLearnings().slice(0, Math.max(1, Math.min(limit, 100)))
+    return this.fuseLearnings(terms, limit, () => true)
+  }
+
+  similarLearnings(learning: Learning, limit = 5): Learning[] {
+    const terms = tokenize(`${learning.description} ${learning.tags.join(" ")}`)
+    return this.fuseLearnings(terms, limit, (candidate) => candidate.id !== learning.id)
+  }
+
+  private fuseLearnings(terms: string[], limit: number, include: (learning: Learning) => boolean, proximity?: Set<string>): Learning[] {
+    if (terms.length === 0) return []
+    const wordIds = this.store.matchLearnings(ftsQuery(terms), "word")
+    const trigramTerms = terms.filter((term) => [...term].length >= 3)
+    const trigramIds = trigramTerms.length > 0 ? this.store.matchLearnings(ftsQuery(trigramTerms), "trigram") : []
+    const candidates = new Map<string, Learning>()
+    for (const id of [...wordIds, ...trigramIds]) {
+      if (candidates.has(id)) continue
+      const learning = this.store.findLearning(id)
+      if (learning && include(learning)) candidates.set(id, learning)
+    }
+    if (candidates.size === 0) return []
+    const inCandidates = (ids: string[]) => ids.filter((id) => candidates.has(id))
+    const all = [...candidates.values()]
+    const rankLists: string[][] = [
+      inCandidates(wordIds),
+      inCandidates(trigramIds),
+      [...all].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((learning) => learning.id),
+      [...all].sort((a, b) => b.importance - a.importance || b.appliedCount - a.appliedCount || b.createdAt.localeCompare(a.createdAt)).map((learning) => learning.id),
+    ]
+    if (proximity) {
+      rankLists.push(all
+        .filter((learning) => learning.sourceTaskId && proximity.has(learning.sourceTaskId))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map((learning) => learning.id))
+    }
+    const scores = new Map<string, number>()
+    for (const list of rankLists) {
+      list.forEach((id, index) => scores.set(id, (scores.get(id) ?? 0) + 1 / (index + 1 + RRF_K)))
+    }
     return all
-      .map((learning) => {
-        const text = `${learning.description} ${learning.tags.join(" ")}`.toLowerCase()
-        return { learning, score: terms.filter((term) => text.includes(term)).length }
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || b.learning.createdAt.localeCompare(a.learning.createdAt))
-      .slice(0, Math.max(1, Math.min(limit, 100)))
-      .map((entry) => entry.learning)
+      .sort((a, b) => (scores.get(b.id)! - scores.get(a.id)!) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(1, Math.min(limit, 50)))
+  }
+
+  private maybeCreateReflection(learning: Learning): void {
+    if (learning.kind !== "failure_pattern") return
+    const since = this.store.lastEventOfType("REFLECTION_CREATED")?.createdAt ?? ""
+    const pending = this.store.activeLearnings().filter((candidate) => candidate.kind === "failure_pattern" && candidate.createdAt > since)
+    if (pending.length < this.reflectionThreshold) return
+    try {
+      const parentId = learning.sourceTaskId ? this.rootOf(learning.sourceTaskId).id : undefined
+      const title = `Reflect on ${pending.length} recurring failure patterns (${new Date().toISOString()})`
+      const goal = [
+        `${pending.length} failure-pattern learnings have accumulated: ${pending.map((candidate) => candidate.id).join(", ")}.`,
+        "Review them, synthesize the recurring causes into a small number of higher-level insight or convention learnings,",
+        "supersede the raw failure patterns they replace, and promote anything that must always hold into a requirement or constraint.",
+      ].join(" ")
+      const task = this.createReflectionTask(title, goal, parentId)
+      if (!task) return
+      this.emit("REFLECTION_CREATED", task.id, { learningIds: pending.map((candidate) => candidate.id) }, { count: pending.length })
+    } catch {
+      return
+    }
+  }
+
+  private createReflectionTask(title: string, goal: string, parentId?: string): Task | undefined {
+    try {
+      return this.createTask({ title, goal, category: "diagnostic", parentId })
+    } catch {
+      if (!parentId) return undefined
+      try {
+        return this.createTask({ title, goal, category: "diagnostic" })
+      } catch {
+        return undefined
+      }
+    }
   }
 
   evaluateCompletion(taskId: string): CompletionEvaluation {
@@ -963,6 +1056,12 @@ function isLearningKind(value: unknown): value is LearningKind {
   return ["insight", "pitfall", "convention", "failure_pattern", "improvement"].includes(String(value))
 }
 
+const RRF_K = 60
+
 function tokenize(text: string): string[] {
   return [...new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((term) => term.length > 1))]
+}
+
+function ftsQuery(terms: string[]): string {
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ")
 }

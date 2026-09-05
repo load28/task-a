@@ -32,12 +32,16 @@ Learning은 1급 객체다(`learnings` 테이블).
 type Learning = {
   id, sourceTaskId?, sourceRunId?,
   kind: "insight" | "pitfall" | "convention" | "failure_pattern" | "improvement",
-  description, tags[], appliedCount, createdAt
+  description, tags[], importance (1-10), appliedCount,
+  status: "active" | "superseded" | "retracted",
+  supersededBy?, supersededAt?, invalidFrom?, createdAt
 }
 ```
 
-- **축적**: `task_complete`의 `learnings` 필드 또는 `learning_record`로 기록한다. Integration 실패는 Engine이 failure pattern으로 자동 기록한다. 모든 기록은 `LEARNING_RECORDED` Event를 남긴다.
-- **환류**: Context Builder가 Task의 제목·목표·카테고리·조상 제목에서 추출한 키워드로 Learning을 검색해 Context의 `Learnings` 섹션으로 주입한다. 키워드 일치가 필수 조건이고, 같은 Root subtree·의존 Task에서 나온 Learning은 가산점을 받는다. 주입될 때마다 `appliedCount`가 증가하여 어떤 Learning이 실제로 재사용되는지 측정한다.
+- **축적**: `task_complete`의 `learnings` 필드 또는 `learning_record`로 기록한다. 중요도(1–10)는 기록 시 Agent가 선언한다(Generative Agents의 importance 점수 방식). Integration 실패는 Engine이 failure pattern으로 자동 기록한다. 모든 기록은 `LEARNING_RECORDED` Event를 남긴다.
+- **환류(검색)**: SQLite FTS5 이중 색인(unicode61 단어 일치 + trigram 부분 문자열, 한국어 교착 형태 대응)의 BM25 순위와 최신성·중요도(+재사용 실적)·그래프 근접(같은 Root subtree·의존 Task) 순위를 Reciprocal Rank Fusion(`1/(rank+60)`)으로 융합한다. 키워드 일치가 후보의 필수 조건이며, 주입될 때마다 `appliedCount`가 증가한다.
+- **폐기(supersede)**: 삭제하지 않는다. `learning_supersede`로 `superseded`(대체 Learning 지정) 또는 `retracted`(철회)로 전환하며, 기록 시점(`supersededAt`)과 사실이 무효해진 시점(`invalidFrom`)을 분리해 남긴다(Zep의 bi-temporal 모델). 검색·Context는 `active`만 대상으로 하고 이력은 보존한다(ADR superseded 관행). `learning_record`는 유사 기존 Learning top-5를 함께 반환하여 Agent가 모순을 발견하면 supersede를 제안하게 한다(Mem0의 ADD/UPDATE/DELETE 판정 패턴).
+- **반추(reflection)**: failure pattern이 임계치(기본 5건)만큼 쌓이면 Engine이 해당 Learning들을 합성하도록 지시하는 Reflection Task(diagnostic 카테고리)를 자동 생성한다(`REFLECTION_CREATED`). Agent는 이를 수행하며 상위 통찰을 기록하고 원본 패턴을 supersede한다(Generative Agents의 reflection).
 - **경계**: Learning은 정성적 메모리이며 강제 조건이 아니다. 반드시 지켜져야 할 교훈은 Agent가 `requirement_add`로 Requirement/Constraint로 승격시킨다. Requirement는 Integration Scenario로 검증되지만 Learning은 참고 정보로만 전달된다.
 
 ## 네 종류의 Graph

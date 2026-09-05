@@ -424,10 +424,20 @@ export class TaskGraphStore {
   }
 
   insertLearning(learning: Learning): void {
-    this.db.prepare(`
-      INSERT INTO learnings (id, source_task_id, source_run_id, kind, description, tags_json, applied_count, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(learning.id, learning.sourceTaskId ?? null, learning.sourceRunId ?? null, learning.kind, learning.description, JSON.stringify(learning.tags), learning.appliedCount, learning.createdAt)
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO learnings (id, source_task_id, source_run_id, kind, description, tags_json, importance, applied_count,
+          status, superseded_by, superseded_at, invalid_from, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        learning.id, learning.sourceTaskId ?? null, learning.sourceRunId ?? null, learning.kind, learning.description,
+        JSON.stringify(learning.tags), learning.importance, learning.appliedCount,
+        learning.status, learning.supersededBy ?? null, learning.supersededAt ?? null, learning.invalidFrom ?? null, learning.createdAt,
+      )
+      const text = learning.tags.join(" ")
+      this.db.prepare("INSERT INTO learnings_fts (id, description, tags) VALUES (?, ?, ?)").run(learning.id, learning.description, text)
+      this.db.prepare("INSERT INTO learnings_fts_tri (id, description, tags) VALUES (?, ?, ?)").run(learning.id, learning.description, text)
+    })
   }
 
   findLearning(id: string): Learning | undefined {
@@ -439,12 +449,39 @@ export class TaskGraphStore {
     return (this.db.prepare("SELECT * FROM learnings ORDER BY created_at DESC, rowid DESC").all() as Row[]).map(toLearning)
   }
 
+  activeLearnings(): Learning[] {
+    return (this.db.prepare("SELECT * FROM learnings WHERE status = 'active' ORDER BY created_at DESC, rowid DESC").all() as Row[]).map(toLearning)
+  }
+
   learningsBySourceTask(taskId: string): Learning[] {
     return (this.db.prepare("SELECT * FROM learnings WHERE source_task_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map(toLearning)
   }
 
+  matchLearnings(matchQuery: string, variant: "word" | "trigram"): string[] {
+    const table = variant === "word" ? "learnings_fts" : "learnings_fts_tri"
+    try {
+      return (this.db.prepare(`
+        SELECT l.id FROM ${table} f JOIN learnings l ON l.id = f.id
+        WHERE ${table} MATCH ? AND l.status = 'active'
+        ORDER BY bm25(${table}), l.created_at DESC
+      `).all(matchQuery) as Row[]).map((row) => String(row.id))
+    } catch {
+      return []
+    }
+  }
+
+  supersedeLearning(id: string, status: "superseded" | "retracted", supersededBy: string | undefined, supersededAt: string, invalidFrom?: string): void {
+    this.db.prepare("UPDATE learnings SET status = ?, superseded_by = ?, superseded_at = ?, invalid_from = ? WHERE id = ?")
+      .run(status, supersededBy ?? null, supersededAt, invalidFrom ?? null, id)
+  }
+
   incrementLearningApplied(id: string): void {
     this.db.prepare("UPDATE learnings SET applied_count = applied_count + 1 WHERE id = ?").run(id)
+  }
+
+  lastEventOfType(type: string): TaskGraphEvent | undefined {
+    const row = this.db.prepare("SELECT * FROM events WHERE type = ? ORDER BY rowid DESC LIMIT 1").get(type) as Row | undefined
+    return row ? toEvent(row) : undefined
   }
 
   insertEvent(event: TaskGraphEvent): void {
@@ -634,10 +671,19 @@ export class TaskGraphStore {
         kind TEXT NOT NULL,
         description TEXT NOT NULL,
         tags_json TEXT NOT NULL,
+        importance INTEGER NOT NULL DEFAULT 5,
         applied_count INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        superseded_by TEXT,
+        superseded_at TEXT,
+        invalid_from TEXT,
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_learnings_task ON learnings(source_task_id);
+      CREATE INDEX IF NOT EXISTS idx_learnings_status ON learnings(status);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts USING fts5(id UNINDEXED, description, tags, tokenize='unicode61');
+      CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts_tri USING fts5(id UNINDEXED, description, tags, tokenize='trigram');
 
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
@@ -649,6 +695,24 @@ export class TaskGraphStore {
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, created_at);
     `)
+    const learningColumns = (this.db.prepare("PRAGMA table_info(learnings)").all() as Row[]).map((column) => String(column.name))
+    const added: Array<[string, string]> = [
+      ["importance", "INTEGER NOT NULL DEFAULT 5"],
+      ["status", "TEXT NOT NULL DEFAULT 'active'"],
+      ["superseded_by", "TEXT"],
+      ["superseded_at", "TEXT"],
+      ["invalid_from", "TEXT"],
+    ]
+    for (const [name, definition] of added) {
+      if (!learningColumns.includes(name)) this.db.exec(`ALTER TABLE learnings ADD COLUMN ${name} ${definition}`)
+    }
+    for (const table of ["learnings_fts", "learnings_fts_tri"]) {
+      this.db.exec(`
+        INSERT INTO ${table} (id, description, tags)
+        SELECT id, description, coalesce((SELECT group_concat(value, ' ') FROM json_each(tags_json)), '')
+        FROM learnings WHERE id NOT IN (SELECT id FROM ${table})
+      `)
+    }
   }
 
   private toTask(row: Row): Task {
@@ -798,7 +862,12 @@ function toLearning(row: Row): Learning {
     kind: String(row.kind) as Learning["kind"],
     description: String(row.description),
     tags: parseJson(row.tags_json) ?? [],
+    importance: Number(row.importance ?? 5),
     appliedCount: Number(row.applied_count),
+    status: String(row.status ?? "active") as Learning["status"],
+    supersededBy: row.superseded_by == null ? undefined : String(row.superseded_by),
+    supersededAt: row.superseded_at == null ? undefined : String(row.superseded_at),
+    invalidFrom: row.invalid_from == null ? undefined : String(row.invalid_from),
     createdAt: String(row.created_at),
   }
 }

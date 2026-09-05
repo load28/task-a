@@ -8,6 +8,7 @@ import type {
   PublishArtifactInput,
   RecordLearningInput,
   RunnableTask,
+  SupersedeLearningInput,
   TaskGraphEngine,
   TaskLoadResult,
 } from "#task-engine"
@@ -41,7 +42,8 @@ export interface TaskAgent {
   defineContract(input: DefineContractInput): Promise<TaskContract>
   addRequirement(input: { taskId: string; description: string; kind?: "requirement" | "constraint" }): Promise<Requirement>
   calculateImpact(input: { artifactId: string; compatibility?: "compatible" | "breaking" }): Promise<ImpactReport>
-  recordLearning(input: RecordLearningInput): Promise<Learning>
+  recordLearning(input: RecordLearningInput): Promise<{ learning: Learning; similar: Learning[] }>
+  supersedeLearning(input: SupersedeLearningInput): Promise<Learning>
   searchLearnings(input: { query?: string; taskId?: string; limit?: number }): Promise<Learning[]>
   proposeIntegration(input: IntegrationProposal): Promise<IntegrationProposalResult>
   runIntegration(input: { setRef: string }): Promise<StartRunResult>
@@ -130,9 +132,15 @@ export class TaskAgentService implements TaskAgent {
     return this.engine.calculateImpact(input.artifactId, input.compatibility)
   }
 
-  async recordLearning(input: RecordLearningInput): Promise<Learning> {
+  async recordLearning(input: RecordLearningInput): Promise<{ learning: Learning; similar: Learning[] }> {
     validateObject(input)
-    return this.engine.recordLearning(input)
+    const learning = this.engine.recordLearning(input)
+    return { learning, similar: this.engine.similarLearnings(learning) }
+  }
+
+  async supersedeLearning(input: SupersedeLearningInput): Promise<Learning> {
+    requireId(input, "learningId")
+    return this.engine.supersedeLearning(input)
   }
 
   async searchLearnings(input: { query?: string; taskId?: string; limit?: number }): Promise<Learning[]> {
@@ -173,6 +181,7 @@ export const OPERATIONS = [
   "requirement_add",
   "impact_analyze",
   "learning_record",
+  "learning_supersede",
   "learning_search",
   "integration_propose",
   "integration_run",
@@ -211,6 +220,8 @@ export async function dispatchOperation(agent: TaskAgent, operation: string, inp
       return agent.calculateImpact(input as Parameters<TaskAgent["calculateImpact"]>[0])
     case "learning_record":
       return agent.recordLearning(input as Parameters<TaskAgent["recordLearning"]>[0])
+    case "learning_supersede":
+      return agent.supersedeLearning(input as Parameters<TaskAgent["supersedeLearning"]>[0])
     case "learning_search":
       return agent.searchLearnings(input as Parameters<TaskAgent["searchLearnings"]>[0])
     case "integration_propose":
