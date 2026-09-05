@@ -1,221 +1,251 @@
-import type { EventSource, EventType, Task, TaskEvent, TaskRecord } from "#task-domain"
-import type { AppendEventInput, TaskEngine } from "#task-engine"
-import { compileTaskContext, formatTaskContext, type ContextMode, type ExecutableTaskContext } from "#task-context"
-import { createHash } from "node:crypto"
-
-export interface ContextRequest {
-  taskId?: string
-  query?: string
-  mode?: ContextMode
-}
+import type { ArtifactVersion, Learning, Requirement, Task, TaskContract } from "#task-domain"
+import type {
+  CompleteTaskInput,
+  CreateTaskInput,
+  DecompositionProposal,
+  DefineContractInput,
+  ImpactReport,
+  PublishArtifactInput,
+  RecordLearningInput,
+  RunnableTask,
+  SupersedeLearningInput,
+  TaskGraphEngine,
+  TaskLoadResult,
+} from "#task-engine"
+import type {
+  IntegrationEngine,
+  IntegrationProposal,
+  IntegrationProposalResult,
+  ReportRunResult,
+  RunReport,
+  StartRunResult,
+} from "#integration-engine"
+import { buildTaskContext, formatTaskContext, type TaskContext } from "#task-context"
 
 export interface ContextResult {
-  context: ExecutableTaskContext
+  context: TaskContext
   text: string
-}
-
-export interface SyncRequest {
-  taskId?: string
-  task?: string
-  conversation: string
-  instruction?: string
-  source?: EventSource
-  idempotencyKey?: string
-}
-
-export interface SyncResult {
-  task: Task
-  appended: TaskEvent[]
-}
-
-export interface ExtractedEvent {
-  type: EventType
-  content: string
-  metadata?: Record<string, unknown>
-}
-
-export interface TaskReasoner {
-  extractEvents(input: { conversation: string; instruction?: string; task: TaskRecord }): Promise<ExtractedEvent[]>
-  selectTask(input: { query: string; candidates: Task[] }): Promise<string>
-  run(input: { instruction: string; tasks: TaskRecord[] }): Promise<string>
 }
 
 export interface TaskAgent {
-  context(request: ContextRequest): Promise<ContextResult>
-  sync(request: SyncRequest): Promise<SyncResult>
-  handoff(request: HandoffRequest): Promise<HandoffResult>
-  run(request: RunRequest): Promise<RunResult>
-}
-
-export interface HandoffRequest extends ContextRequest {
-  targetAgent?: string
-}
-
-export interface HandoffResult extends ContextResult {
-  targetAgent?: string
-}
-
-export interface RunRequest {
-  instruction: string
-  taskIds?: string[]
-  query?: string
-}
-
-export interface RunResult {
-  text: string
-  taskIds: string[]
+  createTask(input: CreateTaskInput): Promise<Task>
+  searchTasks(input: { query: string; limit?: number }): Promise<Task[]>
+  loadTask(input: { taskId: string }): Promise<TaskLoadResult>
+  getRunnable(input: { rootId?: string }): Promise<RunnableTask[]>
+  proposeDecomposition(input: DecompositionProposal): Promise<{ parent: Task; children: Task[] }>
+  startTask(input: { taskId: string; agent?: string; sessionId?: string; role?: string }): Promise<Task>
+  completeTask(input: CompleteTaskInput): Promise<Task>
+  failTask(input: { taskId: string; reason: string }): Promise<Task>
+  reopenTask(input: { taskId: string; reason: string }): Promise<Task>
+  getContext(input: { taskId: string }): Promise<ContextResult>
+  publishArtifact(input: PublishArtifactInput): Promise<ArtifactVersion>
+  defineContract(input: DefineContractInput): Promise<TaskContract>
+  addRequirement(input: { taskId: string; description: string; kind?: "requirement" | "constraint" }): Promise<Requirement>
+  calculateImpact(input: { artifactId: string; compatibility?: "compatible" | "breaking" }): Promise<ImpactReport>
+  recordLearning(input: RecordLearningInput): Promise<{ learning: Learning; similar: Learning[] }>
+  supersedeLearning(input: SupersedeLearningInput): Promise<Learning>
+  searchLearnings(input: { query?: string; taskId?: string; limit?: number }): Promise<Learning[]>
+  proposeIntegration(input: IntegrationProposal): Promise<IntegrationProposalResult>
+  runIntegration(input: { setRef: string }): Promise<StartRunResult>
+  reportIntegration(input: { runId: string } & RunReport): Promise<ReportRunResult>
 }
 
 export class TaskAgentService implements TaskAgent {
-  private engine: TaskEngine
-  private reasoner?: TaskReasoner
+  private engine: TaskGraphEngine
+  private integration: IntegrationEngine
 
-  constructor(engine: TaskEngine, reasoner?: TaskReasoner) {
+  constructor(engine: TaskGraphEngine, integration: IntegrationEngine) {
     this.engine = engine
-    this.reasoner = reasoner
+    this.integration = integration
   }
 
-  async context(request: ContextRequest): Promise<ContextResult> {
-    validateRequest(request)
-    if (request.mode !== undefined && !["continuation", "implementation", "review", "handoff", "planning", "summary"].includes(request.mode)) throw new Error("mode must be a supported context mode")
-    const task = await this.resolveTask(request.taskId, request.query)
-    const context = compileTaskContext(this.engine.getCurrentTask(task.id), request.mode)
-    const relations = this.engine.getRelations(task.id)
-    if (relations.length > 0) {
-      context.relations = relations.map(({ fromTaskId, toTaskId, type }) => ({ fromTaskId, toTaskId, type }))
-    }
+  async createTask(input: CreateTaskInput): Promise<Task> {
+    validateObject(input)
+    return this.engine.createTask(input)
+  }
+
+  async searchTasks(input: { query: string; limit?: number }): Promise<Task[]> {
+    validateObject(input)
+    if (typeof input.query !== "string") throw new Error("query must be a string")
+    return this.engine.searchTasks(input.query, input.limit)
+  }
+
+  async loadTask(input: { taskId: string }): Promise<TaskLoadResult> {
+    requireId(input, "taskId")
+    return this.engine.loadTask(input.taskId)
+  }
+
+  async getRunnable(input: { rootId?: string } = {}): Promise<RunnableTask[]> {
+    validateObject(input)
+    return this.engine.resolveRunnable(input.rootId)
+  }
+
+  async proposeDecomposition(input: DecompositionProposal): Promise<{ parent: Task; children: Task[] }> {
+    requireId(input, "taskId")
+    return this.engine.proposeDecomposition(input)
+  }
+
+  async startTask(input: { taskId: string; agent?: string; sessionId?: string; role?: string }): Promise<Task> {
+    requireId(input, "taskId")
+    return this.engine.startTask(input.taskId, { agent: input.agent, sessionId: input.sessionId, role: input.role })
+  }
+
+  async completeTask(input: CompleteTaskInput): Promise<Task> {
+    requireId(input, "taskId")
+    return this.engine.completeTask(input)
+  }
+
+  async failTask(input: { taskId: string; reason: string }): Promise<Task> {
+    requireId(input, "taskId")
+    return this.engine.failTask(input.taskId, input.reason)
+  }
+
+  async reopenTask(input: { taskId: string; reason: string }): Promise<Task> {
+    requireId(input, "taskId")
+    return this.engine.reopenTask(input.taskId, input.reason)
+  }
+
+  async getContext(input: { taskId: string }): Promise<ContextResult> {
+    requireId(input, "taskId")
+    const context = buildTaskContext(this.engine, input.taskId)
     return { context, text: formatTaskContext(context) }
   }
 
-  async handoff(request: HandoffRequest): Promise<HandoffResult> {
-    const result = await this.context({ ...request, mode: "handoff" })
-    return { ...result, targetAgent: request.targetAgent }
+  async publishArtifact(input: PublishArtifactInput): Promise<ArtifactVersion> {
+    requireId(input, "taskId")
+    return this.engine.publishArtifact(input)
   }
 
-  async run(request: RunRequest): Promise<RunResult> {
-    validateRequest(request)
-    if (typeof request.instruction !== "string" || !request.instruction.trim()) throw new Error("instruction is required")
-    if (request.taskIds !== undefined && (!Array.isArray(request.taskIds) || request.taskIds.some((id) => typeof id !== "string" || !id.trim()))) throw new Error("taskIds must be an array of task IDs")
-    if (!this.reasoner) throw new Error("run requires a configured TaskReasoner")
-    const tasks = request.taskIds?.length
-      ? request.taskIds.map((id) => this.engine.getTask(id))
-      : this.engine.searchTasks(request.query ?? "", 20).map((task) => this.engine.getTask(task.id))
-    const text = await this.reasoner.run({ instruction: request.instruction, tasks })
-    return { text, taskIds: tasks.map((record) => record.task.id) }
+  async defineContract(input: DefineContractInput): Promise<TaskContract> {
+    requireId(input, "providerTaskId")
+    requireId(input, "consumerTaskId")
+    return this.engine.defineContract(input)
   }
 
-  async sync(request: SyncRequest): Promise<SyncResult> {
-    validateRequest(request)
-    if (!request || typeof request.conversation !== "string") throw new Error("conversation must be a string")
-    if ("events" in request) throw new Error("events must not be supplied by a Host Agent")
-    if (request.idempotencyKey !== undefined && (typeof request.idempotencyKey !== "string" || !request.idempotencyKey.trim())) throw new Error("idempotencyKey must be a nonempty string")
-    const task = await this.resolveTask(request.taskId, request.task)
-    const fingerprint = createHash("sha256").update(JSON.stringify([request.conversation, request.instruction ?? null, request.source ?? null])).digest("hex")
-    const syncKey = request.idempotencyKey ?? (sourceSyncKey(request.source) ? `${sourceSyncKey(request.source)}:${fingerprint}` : undefined)
-    const existing = syncKey ? this.engine.syncReceipt<SyncResult>(task.id, syncKey, fingerprint) : undefined
-    if (existing) return existing
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const record = this.engine.getTask(task.id)
-      const extracted = await this.extract(request, record)
-      if (!Array.isArray(extracted)) throw new Error("Task Agent must return an event array")
-      try {
-        return this.engine.atomic(() => {
-          const repeated = syncKey ? this.engine.syncReceipt<SyncResult>(task.id, syncKey, fingerprint) : undefined
-          if (repeated) return repeated
-          if (this.engine.getTask(task.id).events.at(-1)?.id !== record.events.at(-1)?.id) {
-            throw new StaleTaskStateError("Task changed during sync; retry with fresh context")
-          }
-          const appended: TaskEvent[] = []
-          for (const item of extracted) {
-            if (!isPersistable(item)) throw new Error("Task Agent returned an invalid durable event")
-            const idempotencyKey = syncKey ? `${syncKey}:${eventFingerprint(item)}` : undefined
-            if (idempotencyKey && this.engine.hasProcessed(task.id, idempotencyKey)) continue
-            if (item.type === "artifact") {
-              const uri = item.metadata?.uri
-              const artifactType = item.metadata?.type
-              if (typeof uri !== "string" || !isArtifactType(artifactType)) throw new Error("artifact event must include metadata.uri and metadata.type")
-              const record = this.engine.linkArtifact({
-                taskId: task.id,
-                type: artifactType,
-                uri,
-                description: item.content,
-                metadata: item.metadata,
-                source: request.source,
-                idempotencyKey,
-              })
-              appended.push(record.events.at(-1)!)
-              continue
-            }
-            const input: AppendEventInput = { taskId: task.id, ...item, source: request.source, idempotencyKey }
-            const record = this.engine.appendEvent(input)
-            appended.push(record.events.at(-1)!)
-          }
-          const result = { task: this.engine.getTask(task.id).task, appended }
-          if (syncKey) this.engine.saveSyncReceipt(task.id, syncKey, fingerprint, result)
-          return result
-        })
-      } catch (error) {
-        if (!(error instanceof StaleTaskStateError) || attempt === 2) throw error
-      }
-    }
-    throw new Error("Sync retry limit exceeded")
+  async addRequirement(input: { taskId: string; description: string; kind?: "requirement" | "constraint" }): Promise<Requirement> {
+    requireId(input, "taskId")
+    return this.engine.addRequirement(input.taskId, input.description, input.kind)
   }
 
-  private async extract(request: SyncRequest, task: TaskRecord): Promise<ExtractedEvent[]> {
-    if (!this.reasoner) {
-      throw new Error("Natural-language sync requires a configured TaskReasoner")
-    }
-    return this.reasoner.extractEvents({ conversation: request.conversation, instruction: request.instruction, task })
+  async calculateImpact(input: { artifactId: string; compatibility?: "compatible" | "breaking" }): Promise<ImpactReport> {
+    requireId(input, "artifactId")
+    return this.engine.calculateImpact(input.artifactId, input.compatibility)
   }
 
-  private async resolveTask(taskId?: string, query?: string): Promise<Task> {
-    if (taskId) return this.engine.getCurrentTask(taskId).task
-    if (!query?.trim()) throw new Error("taskId or task query is required")
-    let matches = this.engine.searchTasks(query, 5)
-    const semanticFallback = matches.length === 0 && Boolean(this.reasoner)
-    if (semanticFallback) matches = this.engine.searchTasks("", 20)
-    if (matches.length === 0) throw new Error(`No task matched: ${query}`)
-    if (this.reasoner && (matches.length > 1 || semanticFallback)) {
-      const selectedId = await this.reasoner.selectTask({ query, candidates: matches })
-      const selected = matches.find((task) => task.id === selectedId)
-      if (selected) return selected
-      throw new Error("No task matched unambiguously; provide taskId")
-    }
-    if (matches.length !== 1) throw new Error("Multiple tasks matched; provide taskId")
-    return matches[0]!
+  async recordLearning(input: RecordLearningInput): Promise<{ learning: Learning; similar: Learning[] }> {
+    validateObject(input)
+    const learning = this.engine.recordLearning(input)
+    return { learning, similar: this.engine.similarLearnings(learning) }
+  }
+
+  async supersedeLearning(input: SupersedeLearningInput): Promise<Learning> {
+    requireId(input, "learningId")
+    return this.engine.supersedeLearning(input)
+  }
+
+  async searchLearnings(input: { query?: string; taskId?: string; limit?: number }): Promise<Learning[]> {
+    validateObject(input)
+    if (input.taskId) return this.engine.relevantLearnings(input.taskId, input.limit)
+    return this.engine.searchLearnings(input.query ?? "", input.limit)
+  }
+
+  async proposeIntegration(input: IntegrationProposal): Promise<IntegrationProposalResult> {
+    validateObject(input)
+    return this.integration.proposeIntegration(input)
+  }
+
+  async runIntegration(input: { setRef: string }): Promise<StartRunResult> {
+    requireId(input, "setRef")
+    return this.integration.startRun(input.setRef)
+  }
+
+  async reportIntegration(input: { runId: string } & RunReport): Promise<ReportRunResult> {
+    requireId(input, "runId")
+    return this.integration.reportRun(input.runId, { scenarios: input.scenarios, failure: input.failure })
   }
 }
 
-class StaleTaskStateError extends Error {}
+export const OPERATIONS = [
+  "task_create",
+  "task_search",
+  "task_load",
+  "task_get_runnable",
+  "task_propose_decomposition",
+  "task_start",
+  "task_complete",
+  "task_fail",
+  "task_reopen",
+  "task_get_context",
+  "artifact_publish",
+  "contract_define",
+  "requirement_add",
+  "impact_analyze",
+  "learning_record",
+  "learning_supersede",
+  "learning_search",
+  "integration_propose",
+  "integration_run",
+  "integration_report",
+] as const
 
-function isPersistable(event: ExtractedEvent): boolean {
-  const allowed: EventType[] = ["decision", "progress", "finding", "constraint", "constraint_removed", "blocker", "blocker_resolved", "next_action", "next_action_completed", "artifact", "status"]
-  return Boolean(event) && allowed.includes(event.type) && typeof event.content === "string" && Boolean(event.content.trim())
-}
-
-function validateRequest(request: unknown): void {
-  if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("request must be an object")
-  const fields = request as Record<string, unknown>
-  for (const name of ["taskId", "query", "task", "instruction", "targetAgent"]) {
-    if (fields[name] !== undefined && (typeof fields[name] !== "string" || !(fields[name] as string).trim())) throw new Error(`${name} must be a nonempty string`)
+export async function dispatchOperation(agent: TaskAgent, operation: string, input: Record<string, any>): Promise<unknown> {
+  switch (operation) {
+    case "task_create":
+      return agent.createTask(input as Parameters<TaskAgent["createTask"]>[0])
+    case "task_search":
+      return agent.searchTasks(input as Parameters<TaskAgent["searchTasks"]>[0])
+    case "task_load":
+      return agent.loadTask(input as Parameters<TaskAgent["loadTask"]>[0])
+    case "task_get_runnable":
+      return agent.getRunnable(input as Parameters<TaskAgent["getRunnable"]>[0])
+    case "task_propose_decomposition":
+      return agent.proposeDecomposition(input as Parameters<TaskAgent["proposeDecomposition"]>[0])
+    case "task_start":
+      return agent.startTask(input as Parameters<TaskAgent["startTask"]>[0])
+    case "task_complete":
+      return agent.completeTask(input as Parameters<TaskAgent["completeTask"]>[0])
+    case "task_fail":
+      return agent.failTask(input as Parameters<TaskAgent["failTask"]>[0])
+    case "task_reopen":
+      return agent.reopenTask(input as Parameters<TaskAgent["reopenTask"]>[0])
+    case "task_get_context":
+      return agent.getContext(input as Parameters<TaskAgent["getContext"]>[0])
+    case "artifact_publish":
+      return agent.publishArtifact(input as Parameters<TaskAgent["publishArtifact"]>[0])
+    case "contract_define":
+      return agent.defineContract(input as Parameters<TaskAgent["defineContract"]>[0])
+    case "requirement_add":
+      return agent.addRequirement(input as Parameters<TaskAgent["addRequirement"]>[0])
+    case "impact_analyze":
+      return agent.calculateImpact(input as Parameters<TaskAgent["calculateImpact"]>[0])
+    case "learning_record":
+      return agent.recordLearning(input as Parameters<TaskAgent["recordLearning"]>[0])
+    case "learning_supersede":
+      return agent.supersedeLearning(input as Parameters<TaskAgent["supersedeLearning"]>[0])
+    case "learning_search":
+      return agent.searchLearnings(input as Parameters<TaskAgent["searchLearnings"]>[0])
+    case "integration_propose":
+      return agent.proposeIntegration(input as Parameters<TaskAgent["proposeIntegration"]>[0])
+    case "integration_run":
+      return agent.runIntegration(input as Parameters<TaskAgent["runIntegration"]>[0])
+    case "integration_report":
+      return agent.reportIntegration(input as Parameters<TaskAgent["reportIntegration"]>[0])
   }
-  if (fields.source !== undefined) {
-    if (!fields.source || typeof fields.source !== "object" || Array.isArray(fields.source)) throw new Error("source must be an object")
-    for (const value of Object.values(fields.source)) {
-      if (typeof value !== "string") throw new Error("source values must be strings")
-    }
+  throw new UnknownOperationError(operation)
+}
+
+export class UnknownOperationError extends Error {
+  constructor(operation: string) {
+    super(`Unknown operation: ${operation}`)
   }
 }
 
-function isArtifactType(value: unknown): value is "file" | "commit" | "pr" | "issue" | "document" | "url" | "test" | "other" {
-  return ["file", "commit", "pr", "issue", "document", "url", "test", "other"].includes(String(value))
+function validateObject(input: unknown): asserts input is Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("request must be an object")
 }
 
-function sourceSyncKey(source?: EventSource): string | undefined {
-  if (!source?.conversationId) return undefined
-  return [source.agent ?? "unknown", source.sessionId ?? "unknown", source.conversationId].join(":")
-}
-
-function eventFingerprint(event: ExtractedEvent): string {
-  return createHash("sha256").update(JSON.stringify([event.type, event.content, event.metadata ?? null])).digest("hex").slice(0, 24)
+function requireId(input: unknown, field: string): void {
+  validateObject(input)
+  const value = (input as Record<string, unknown>)[field]
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${field} must be a nonempty string`)
 }

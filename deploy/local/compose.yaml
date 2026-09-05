@@ -9,12 +9,8 @@ services:
     env_file: ../../data/local-docker/agent.env
     environment:
       NODE_EXTRA_CA_CERTS: /trust/root.crt
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - tasks:/data
-      - harness:/home/node/.local/share
-      - ../../data/local-docker/opencode-auth.json:/home/node/.local/share/opencode/auth.json
       - trust:/trust:ro
     tmpfs: ["/tmp:uid=1000,gid=1000,mode=1770"]
     security_opt: ["no-new-privileges:true"]
@@ -24,13 +20,7 @@ services:
     stop_grace_period: 160s
     depends_on:
       ca-export: { condition: service_completed_successfully }
-      init-storage: { condition: service_completed_successfully }
       identity: { condition: service_started }
-  init-storage:
-    image: caddy:2.10.2-alpine
-    entrypoint: /bin/sh
-    command: ["-c", "mkdir -p /harness/opencode && chown 1000:1000 /harness /harness/opencode"]
-    volumes: ["harness:/harness"]
   proxy:
     image: caddy:2.10.2-alpine
     restart: unless-stopped
@@ -84,7 +74,6 @@ services:
       retries: 30
 volumes:
   tasks:
-  harness:
   certificates:
   trust:
   identity:

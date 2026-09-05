@@ -8,28 +8,22 @@
   "imports": {
     "#task-domain": "./packages/task-domain/src/index.ts",
     "#task-engine": "./packages/task-engine/src/index.ts",
+    "#integration-engine": "./packages/integration-engine/src/index.ts",
     "#task-store": "./packages/task-store/src/index.ts",
     "#task-context": "./packages/task-context/src/index.ts",
-    "#task-agent-core": "./packages/task-agent-core/src/index.ts",
-    "#task-agent-core/*": "./packages/task-agent-core/src/*.ts",
-    "#opencode-harness": "./packages/opencode-harness/src/index.ts"
+    "#task-agent-core": "./packages/task-agent-core/src/index.ts"
   },
   "scripts": {
     "start": "node apps/task-agent/src/main.ts",
     "http": "node apps/task-agent/src/http.ts",
     "mcp": "node apps/task-agent/src/mcp.ts",
     "remote": "node apps/task-agent/src/remote.ts",
-    "smoke:remote": "node scripts/smoke-remote.ts",
     "test": "node --test",
     "check": "tsc --noEmit && node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@opencode-ai/plugin": "^1.0.0",
-    "@opencode-ai/sdk": "^1.0.0",
-    "jose": "^6.2.11",
-    "opencode-ai": "^1.18.28",
-    "zod": "^3.25.76"
+    "jose": "^6.2.11"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

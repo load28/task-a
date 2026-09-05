@@ -2,9 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { TaskAgentMcpServer, tools } from "./index.ts"
+import { AGENT_INSTRUCTIONS, READ_ONLY_TOOLS, TaskAgentMcpServer, tools } from "./index.ts"
 import { OwnerAuthenticator, AccessError, type Principal } from "../../task-auth/src/index.ts"
-import { HOST_TASK_INSTRUCTIONS } from "../../host-integration/src/index.ts"
 import type { TaskAgent } from "#task-agent-core"
 
 export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
@@ -58,14 +57,14 @@ export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
       const delegate = new TaskAgentMcpServer(agent)
       await delegate.handle({ jsonrpc: "2.0", id: 0, method: "initialize" })
       await delegate.handle({ jsonrpc: "2.0", method: "notifications/initialized" })
-      sdk = new Server({ name: "task-agent", version: "0.2.0" }, { capabilities: { tools: {} }, instructions: HOST_TASK_INSTRUCTIONS })
+      sdk = new Server({ name: "task-agent", version: "1.0.0" }, { capabilities: { tools: {} }, instructions: AGENT_INSTRUCTIONS })
       sdk.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map((tool) => {
-        const readOnly = ["task_context", "task_handoff"].includes(tool.name)
+        const readOnly = READ_ONLY_TOOLS.includes(tool.name)
         const securitySchemes = [{ type: "oauth2", scopes: readOnly ? [auth.config.readScope] : [auth.config.readScope, auth.config.writeScope] }]
         return { ...tool, inputSchema: { ...tool.inputSchema, type: "object" as const }, securitySchemes, _meta: { securitySchemes }, annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: false } }
       }) }))
       sdk.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-        if (!["task_context", "task_handoff"].includes(params.name) && !principal.scopes.has(auth.config.writeScope)) return {
+        if (!READ_ONLY_TOOLS.includes(params.name) && !principal.scopes.has(auth.config.writeScope)) return {
           isError: true, content: [{ type: "text" as const, text: "Write authorization required" }], _meta: { "mcp/www_authenticate": [auth.challenge(auth.config.writeScope)] },
         }
         const result = await delegate.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params })

@@ -1,9 +1,0 @@
-{
-  "TASK_AGENT_HOST": "codex",
-  "TASK_AGENT_RESOURCE": "https://YOUR_DOMAIN/mcp",
-  "TASK_AGENT_OUTBOX": "/PRIVATE/PATH/codex-outbox.db",
-  "TASK_AGENT_CREDENTIALS": "/PRIVATE/PATH/task-agent-credentials.db",
-  "TASK_AGENT_OAUTH_ISSUER": "https://cognito-idp.REGION.amazonaws.com/POOL_ID",
-  "TASK_AGENT_OAUTH_ORIGIN": "https://PREFIX.auth.REGION.amazoncognito.com",
-  "TASK_AGENT_OAUTH_CLIENT_ID": "WORK_CLIENT_ID"
-}

@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { generateKeyPair, SignJWT, exportJWK, createLocalJWKSet } from "jose"
 import { OwnerAuthenticator, AccessError } from "../packages/task-auth/src/index.ts"
-import { SqliteTaskRepository } from "#task-store"
+import { TaskGraphStore } from "#task-store"
 
 export async function authFixture() {
   const { privateKey, publicKey } = await generateKeyPair("RS256")
@@ -36,7 +36,7 @@ test("remote auth rejects wrong audience, issuer, expiration, and revoked tokens
 })
 
 test("remote databases cannot be reassigned to another account", () => {
-  const store = new SqliteTaskRepository()
+  const store = new TaskGraphStore()
   try {
     store.bindOwner("issuer", "owner")
     store.bindOwner("issuer", "owner")

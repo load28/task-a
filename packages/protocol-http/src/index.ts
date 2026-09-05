@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
-import type { TaskAgent } from "#task-agent-core"
+import { dispatchOperation, UnknownOperationError, type TaskAgent } from "#task-agent-core"
 
 export interface HttpServerOptions {
   hostname?: string
@@ -68,19 +68,13 @@ export class TaskAgentHttpServer {
 }
 
 export async function dispatchHttpOperation(agent: TaskAgent, path: string, body: Record<string, any>): Promise<unknown> {
-  switch (path) {
-    case "/v1/context":
-      return await agent.context(body)
-    case "/v1/sync":
-      if (typeof body.conversation !== "string") throw new Error("conversation is required")
-      return agent.sync(body as Parameters<TaskAgent["sync"]>[0])
-    case "/v1/handoff":
-      return await agent.handoff(body)
-    case "/v1/run":
-      if (typeof body.instruction !== "string") throw new Error("instruction is required")
-      return agent.run(body as Parameters<TaskAgent["run"]>[0])
-    default:
-      throw new HttpRouteNotFoundError()
+  const match = /^\/v1\/([a-z_]+)$/.exec(path)
+  if (!match) throw new HttpRouteNotFoundError()
+  try {
+    return await dispatchOperation(agent, match[1]!, body)
+  } catch (error) {
+    if (error instanceof UnknownOperationError) throw new HttpRouteNotFoundError()
+    throw error
   }
 }
 
@@ -89,8 +83,8 @@ class HttpRouteNotFoundError extends Error {
 }
 
 function statusFor(error: unknown, message: string): number {
-  if (error instanceof HttpRouteNotFoundError || message.startsWith("Task not found") || message.startsWith("No task matched")) return 404
-  if (error instanceof SyntaxError || /required|must|exceeds|JSON body/.test(message)) return 400
+  if (error instanceof HttpRouteNotFoundError || / not found: /.test(message)) return 404
+  if (error instanceof SyntaxError || /required|must|Invalid|invalid|Unknown|Duplicate|Missing|cannot|already|exceeds|JSON body/.test(message)) return 400
   return 500
 }
 

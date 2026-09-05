@@ -22,9 +22,10 @@ test("local deployment generates stable private identity and production-compatib
     assert.ok(client.protocolMappers.some((mapper: any) => mapper.protocolMapper === "oidc-sub-mapper"))
     assert.equal(realm.users[0].id, JSON.parse(state).owner)
     assert.ok(client.protocolMappers.some((mapper: any) => mapper.config["claim.name"] === "token_use" && mapper.config["claim.value"] === "access"))
+    const smoke = JSON.parse(readFileSync(join(directory, "smoke-connection.json"), "utf8"))
+    assert.equal(smoke.TASK_AGENT_RESOURCE, "https://localhost:8443/mcp")
     const compose = readFileSync("deploy/local/compose.yaml", "utf8")
     assert.ok(compose.includes('ports: ["127.0.0.1:8443:8443"]'))
-    assert.ok(!compose.includes("TASK_AGENT_DISABLE_OPENCODE"))
     assert.ok(!compose.includes("NODE_TLS_REJECT_UNAUTHORIZED"))
     assert.ok(compose.includes('command: ["start", "--import-realm"]'))
   } finally { rmSync(directory, { recursive: true, force: true }) }
