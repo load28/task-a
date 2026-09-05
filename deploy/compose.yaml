@@ -6,7 +6,6 @@ services:
     env_file: /etc/task-agent/agent.env
     volumes:
       - tasks:/data
-      - harness:/home/node/.local/share
     tmpfs:
       - /tmp:uid=1000,gid=1000,mode=1770
     security_opt:
@@ -35,5 +34,4 @@ services:
       options: { max-size: "10m", max-file: "3" }
 volumes:
   tasks:
-  harness:
   certificates:

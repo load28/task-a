@@ -19,22 +19,18 @@ docker compose --env-file data/local-docker/.env -f deploy/local/compose.yaml cp
 
 ## Codex·Claude 안에서 사용
 
-`data/local-docker/codex-mcp.toml` 또는 `claude-mcp.json`을 기존 MCP 설정에 병합한다. 같은 디렉터리의 해당 호스트 `*-hooks.json`도 기존 훅 설정에 병합한다. 기존 설정을 덮어쓰지 않는다. 공통 동작과 Host 지침은 [대화 내 사용 안내](../../docs/in-host-experience.md)를 따른다.
-
-호스트를 다시 시작한 뒤 “Task Agent에 연결하고 이 작업을 기록해 줘”라고 요청한다. 제공된 로그인 링크에서 `login.txt`의 테스트 계정으로 로그인한다. 이후 작업 조회·기록 연결·종료 시 기록은 기존 원격 연동 경로를 사용한다. 매 작업마다 CLI 로그인이나 Task ID 입력은 필요하지 않다. 종료 훅의 대화는 로컬 outbox에 먼저 보관하며, 종료 시 전송하지 못한 내용은 다음 호스트 실행에서 재시도한다.
-
-자연어 처리는 컨테이너의 OpenCode 모델을 사용하며 완전 오프라인이 아니다. 필요하면 실행 셸의 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`를 설정하고 agent를 재생성하거나, `data/local-docker/opencode-auth.json`에 OpenCode에서 정상 발급받은 인증을 구성한다. 다른 앱의 인증 파일을 임의 복사하지 않는다. `agent.env`의 `TASK_AGENT_MODEL`로 모델을 지정할 수 있다.
+호스트의 MCP 설정에 원격 서버 `https://localhost:8443/mcp`를 OAuth 클라이언트 `task-agent-work`로 등록한다(예: `claude mcp add-json`의 http+oauth 설정). 호스트를 다시 시작한 뒤 연결하면 브라우저 로그인 링크가 열리고, `login.txt`의 테스트 계정으로 로그인한다. 이후 세션은 `task_search`·`task_get_runnable`·`task_get_context`로 기존 Task Graph를 이어간다.
 
 ## 검증과 재시작
 
 ```sh
 NODE_EXTRA_CA_CERTS="$PWD/data/local-docker/root.crt" node scripts/smoke-local-docker.ts
-NODE_EXTRA_CA_CERTS="$PWD/data/local-docker/root.crt" TASK_AGENT_SMOKE_MODEL=1 node scripts/smoke-local-docker.ts
+NODE_EXTRA_CA_CERTS="$PWD/data/local-docker/root.crt" TASK_AGENT_SMOKE_WRITE=1 node scripts/smoke-local-docker.ts
 docker compose --env-file data/local-docker/.env -f deploy/local/compose.yaml ps
 docker compose --env-file data/local-docker/.env -f deploy/local/compose.yaml stop
 docker compose --env-file data/local-docker/.env -f deploy/local/compose.yaml up -d
 ```
 
-첫 검증은 실제 로그인 폼·PKCE·토큰 갱신·사용자 격리·쓰기 권한을 검사한다. 두 번째는 실제 모델 호출과 테스트 Task 생성을 포함하므로 모델 비용이 발생할 수 있다. Task 이름에 `Docker 실사용 검증`이 붙는다. 인증 테스트용 토큰은 실제 사용자 연결과 분리된 smoke 자격 증명 DB에 저장한다.
+첫 검증은 실제 로그인 폼·PKCE·토큰 갱신·사용자 격리·쓰기 권한을 검사한다. 두 번째는 서버 DB에 테스트 Task Graph를 생성하며 이름에 `Docker smoke`가 붙는다. 인증 테스트용 토큰은 실제 사용자 연결과 분리된 smoke 자격 증명 DB에 저장한다.
 
 컨테이너 재시작과 일반 `down`은 볼륨을 유지한다. `down -v` 또는 Docker 볼륨 삭제는 Task·인증 계정·인증서를 잃게 하므로 사용하지 않는다. `data/local-docker`도 연결 설정과 자격 증명을 포함하므로 보존한다. AWS에서는 localhost/로컬 CA/Keycloak을 실제 도메인·공인 TLS·Cognito로 교체한다. 이 환경은 AWS IAM·네트워크·백업 복구 검증을 대체하지 않는다.

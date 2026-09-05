@@ -2,11 +2,11 @@
 
 ## 배포 범위와 현재 제한
 
-EC2 한 대, Docker Compose, Caddy HTTPS, 서버 디스크의 SQLite, Cognito 로그인, S3 백업을 사용한다. 여러 장소의 Host는 같은 `/mcp`에 접속한다. DB와 내부 OpenCode 포트는 외부에 노출하지 않는다. 이 서버 전체는 하나의 `(issuer, sub)` 소유이며 이메일이나 요청 본문의 사용자 ID를 신뢰하지 않는다. 다른 사용자와 공동 소유하는 다중 tenant 서비스가 아니다.
+EC2 한 대, Docker Compose, Caddy HTTPS, 서버 디스크의 SQLite, Cognito 로그인, S3 백업을 사용한다. 여러 장소의 Host는 같은 `/mcp`에 접속한다. DB는 외부에 노출하지 않는다. 이 서버 전체는 하나의 `(issuer, sub)` 소유이며 이메일이나 요청 본문의 사용자 ID를 신뢰하지 않는다. 다른 사용자와 공동 소유하는 다중 tenant 서비스가 아니다.
 
 템플릿은 아직 실제 AWS에 적용하지 않았다. AWS 로그인·리전·도메인·콜백 URL·본인 Cognito 계정 및 모델 설정이 필요하다. EC2, 디스크, 공인 IPv4, Cognito, S3와 모델 호출은 비용을 발생시킨다. 계정과 예상 비용을 확인한 후 change set을 실행한다. EBS·Cognito·ECR·S3는 삭제 시에도 보존되므로 스택 삭제만으로 모든 비용이 끝나지 않는다.
 
-로컬 검증: 자동 테스트 28개, 공식 SDK 원격 MCP 검사, Linux amd64 이미지 빌드, 이미지 내부 OpenCode 시작·Task Tool 등록, 이미지 내부 MCP 인증 검사가 통과했다. 두 CloudFormation 템플릿은 cfn-lint 검사를 통과했다. 이 결과는 AWS 배포·Cognito 대화형 로그인 완료를 뜻하지 않는다.
+로컬 검증: 자동 테스트, 공식 SDK 원격 MCP 검사, Linux amd64 이미지 빌드가 기준이다. 두 CloudFormation 템플릿은 cfn-lint 검사를 통과했다. 이 결과는 AWS 배포·Cognito 대화형 로그인 완료를 뜻하지 않는다.
 
 ## AWS 리소스 준비
 
@@ -41,13 +41,13 @@ Cognito는 공개 가입을 막고 MFA를 요구한다. AWS 콘솔에서 본인 
 
 ## 컨테이너와 인증 연결
 
-Codex/Claude 공통 작업 실행기는 인증 스택의 `WorkClientId`를 사용한다. 이 ID를 서버의 `TASK_AGENT_CLIENT_IDS` 허용 목록에도 추가하고 [작업 경험 설정](../docs/work-experience.md)에 따라 각 기기에서 로그인한다.
+Codex/Claude 공통 작업 클라이언트는 인증 스택의 `WorkClientId`를 사용한다. 이 ID를 서버의 `TASK_AGENT_CLIENT_IDS` 허용 목록에도 추가하고 각 호스트의 MCP OAuth 설정으로 로그인한다.
 
 로컬 Docker 엔진에서 `docker build --platform linux/amd64 -t task-agent:release .`로 검증한 뒤 서버 스택의 ECR에 업로드한다. 태그 대신 실제 image digest를 배포에 사용한다. EC2에는 SSM Session Manager로 접속하고 Docker Compose 플러그인을 공식 Docker 설치 방법으로 설치한다. SSH 포트는 열지 않는다.
 
-`compose.yaml`, `Caddyfile`, `backup.sh`는 `/opt/task-agent`에 둔다. `agent.env.example`을 참고해 `/etc/task-agent/agent.env`를 생성하고 권한을 600으로 제한한다. 예시 issuer 대신 실제 Cognito discovery의 issuer와 JWKS URI를 사용한다. 모델 제공자의 비밀은 AWS Secrets Manager에서 관리하고 배포 시 이 파일로 주입하는 방식을 권장한다. 템플릿과 user data에는 비밀을 넣지 않는다.
+`compose.yaml`, `Caddyfile`, `backup.sh`는 `/opt/task-agent`에 둔다. `agent.env.example`을 참고해 `/etc/task-agent/agent.env`를 생성하고 권한을 600으로 제한한다. 예시 issuer 대신 실제 Cognito discovery의 issuer와 JWKS URI를 사용한다. 템플릿과 user data에는 비밀을 넣지 않는다.
 
-`/opt/task-agent/.env`에는 비밀이 아닌 `TASK_AGENT_IMAGE=ECR주소@sha256:실제다이제스트`와 `TASK_AGENT_DOMAIN=실제도메인`을 설정한다. 환경 파일의 `TASK_AGENT_MODEL`은 사용할 제공자/모델로 지정하고 필요한 모델 자격 증명을 서버에 설정한다. 이어서 다음을 실행한다.
+`/opt/task-agent/.env`에는 비밀이 아닌 `TASK_AGENT_IMAGE=ECR주소@sha256:실제다이제스트`와 `TASK_AGENT_DOMAIN=실제도메인`을 설정한다. 이어서 다음을 실행한다.
 
 ```sh
 docker compose -f /opt/task-agent/compose.yaml up -d

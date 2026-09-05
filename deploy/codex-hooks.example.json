@@ -1,9 +1,0 @@
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "TASK_AGENT_HOST=codex node /ABSOLUTE/PATH/task-a/scripts/session-hook.ts hook", "timeout": 3 }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "TASK_AGENT_HOST=codex node /ABSOLUTE/PATH/task-a/scripts/session-hook.ts hook", "timeout": 3 }] }],
-    "PreCompact": [{ "hooks": [{ "type": "command", "command": "TASK_AGENT_HOST=codex node /ABSOLUTE/PATH/task-a/scripts/session-hook.ts hook", "timeout": 3 }] }],
-    "Interrupt": [{ "hooks": [{ "type": "command", "command": "TASK_AGENT_HOST=codex node /ABSOLUTE/PATH/task-a/scripts/session-hook.ts hook", "timeout": 3 }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "TASK_AGENT_HOST=codex node /ABSOLUTE/PATH/task-a/scripts/session-hook.ts hook", "timeout": 3 }] }]
-  }
-}
