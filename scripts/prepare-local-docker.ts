@@ -24,15 +24,5 @@ clients: [{ clientId, enabled: true, publicClient: true, standardFlowEnabled: tr
   users: [{ id: state.owner, username: "owner", enabled: true, emailVerified: true, firstName: "Local", lastName: "Owner", email: "owner@example.invalid", credentials: [{ type: "password", value: state.password, temporary: false }] }, { id: state.stranger, username: "stranger", enabled: true, emailVerified: true, firstName: "Local", lastName: "Stranger", email: "stranger@example.invalid", credentials: [{ type: "password", value: state.strangerPassword, temporary: false }] }],
 }, null, 2))
 if (!existsSync(join(directory, "agent.env"))) save("agent.env", `TASK_AGENT_RESOURCE=${resource}\nTASK_AGENT_ISSUER=${issuer}\nTASK_AGENT_JWKS_URI=https://proxy:8443/realms/task-agent/protocol/openid-connect/certs\nTASK_AGENT_OWNER_SUBJECT=${state.owner}\nTASK_AGENT_CLIENT_IDS=${clientId}\nTASK_AGENT_READ_SCOPE=${resource}/read\nTASK_AGENT_WRITE_SCOPE=${resource}/write\n`)
-if (!existsSync(join(directory, "opencode-auth.json"))) save("opencode-auth.json", "{}\n")
-for (const host of ["codex", "claude"]) {
-  const configPath = join(directory, `${host}-connection.json`)
-  save(`${host}-connection.json`, JSON.stringify({ TASK_AGENT_HOST: host, TASK_AGENT_RESOURCE: resource, TASK_AGENT_OUTBOX: join(directory, `${host}-outbox.db`), TASK_AGENT_CREDENTIALS: join(directory, "credentials.db"), TASK_AGENT_OAUTH_ISSUER: issuer, TASK_AGENT_OAUTH_ORIGIN: "https://localhost:8443", TASK_AGENT_OAUTH_CLIENT_ID: clientId }, null, 2))
-  const args = [join(root, "scripts/host-entry.ts"), "mcp", configPath]
-  const env = { NODE_EXTRA_CA_CERTS: join(directory, "root.crt") }
-  if (host === "codex") save("codex-mcp.toml", `[mcp_servers.task-agent]\ncommand = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify(args)}\n[mcp_servers.task-agent.env]\nNODE_EXTRA_CA_CERTS = ${JSON.stringify(env.NODE_EXTRA_CA_CERTS)}\n`)
-  else save("claude-mcp.json", JSON.stringify({ mcpServers: { "task-agent": { command: process.execPath, args, env } } }, null, 2))
-  const command = [process.execPath, join(root, "scripts/host-entry.ts"), "hook", configPath].map((v) => "'" + v.replaceAll("'", "'\\''") + "'").join(" ")
-  save(`${host}-hooks.json`, JSON.stringify({ hooks: Object.fromEntries(["SessionStart", "Stop", "PreCompact", "SessionEnd"].map((event) => [event, [{ hooks: [{ type: "command", command, timeout: 3 }] }]])) }, null, 2))
-}
-console.log(`Local Docker settings prepared: ${directory}\nExisting database identity and agent.env preserved. Credentials were not printed.`)
+save("smoke-connection.json", JSON.stringify({ TASK_AGENT_RESOURCE: resource, TASK_AGENT_OAUTH_ISSUER: issuer, TASK_AGENT_OAUTH_ORIGIN: "https://localhost:8443", TASK_AGENT_OAUTH_CLIENT_ID: clientId }, null, 2))
+console.log(`Local Docker settings prepared: ${directory}\nExisting database identity and agent.env preserved. Credentials were not printed.\nConnect MCP hosts directly to ${resource} with OAuth client ${clientId}.`)

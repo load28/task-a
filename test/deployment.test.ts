@@ -5,24 +5,25 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { TaskEngine } from "#task-engine"
-import { SqliteTaskRepository } from "#task-store"
+import { TaskGraphEngine } from "#task-engine"
+import { TaskGraphStore } from "#task-store"
 
 const exec = promisify(execFile)
-test("online backup restores events, snapshots and owner binding without overwriting files", async () => {
+test("online backup restores the task graph and owner binding without overwriting files", async () => {
   const directory = mkdtempSync(join(tmpdir(), "task-backup-test-"))
   const source = join(directory, "source.db")
   const destination = join(directory, "backup.db")
-  const store = new SqliteTaskRepository(source)
+  const store = new TaskGraphStore(source)
   try {
     store.bindOwner("issuer", "owner")
-    const engine = new TaskEngine(store)
-    const taskId = engine.createTask({ title: "복원", objective: "상태와 소유권 유지" }).task.id
-    engine.appendEvent({ taskId, type: "decision", content: "백업 검증" })
+    const engine = new TaskGraphEngine(store)
+    const task = engine.createTask({ title: "복원", goal: "상태와 소유권 유지" })
+    engine.startTask(task.id)
+    engine.publishArtifact({ taskId: task.id, name: "backup-artifact", type: "note", content: "백업 검증" })
     await exec(process.execPath, ["scripts/backup.ts", source, destination])
-    const restored = new SqliteTaskRepository(destination)
+    const restored = new TaskGraphStore(destination)
     try {
-      assert.deepEqual(new TaskEngine(restored).getTask(taskId), engine.getTask(taskId))
+      assert.deepEqual(new TaskGraphEngine(restored).loadTask(task.id), engine.loadTask(task.id))
       assert.throws(() => restored.bindOwner("issuer", "stranger"), /another owner/)
     } finally { restored.close() }
     await assert.rejects(exec(process.execPath, ["scripts/backup.ts", source, destination]), /destination must be new/)

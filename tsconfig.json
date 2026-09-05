@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", ".opencode/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

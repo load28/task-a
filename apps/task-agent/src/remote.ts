@@ -1,7 +1,6 @@
 import { OwnerAuthenticator } from "../../../packages/task-auth/src/index.ts"
 import { createRemoteServer } from "../../../packages/protocol-mcp/src/remote.ts"
 import { createRuntime } from "./runtime.ts"
-import { startOpenCode } from "#opencode-harness"
 
 function required(name: string) {
   const value = process.env[name]?.trim()
@@ -20,12 +19,9 @@ const auth = new OwnerAuthenticator({
 })
 if (new URL(resource).pathname !== "/mcp") throw new Error("TASK_AGENT_RESOURCE must end in /mcp")
 const runtime = createRuntime()
-runtime.repository.bindOwner(issuer, ownerSubject)
-let harness: Awaited<ReturnType<typeof startOpenCode>> | undefined
+runtime.store.bindOwner(issuer, ownerSubject)
 try {
-  harness = process.env.TASK_AGENT_DISABLE_OPENCODE === "1" ? undefined : await startOpenCode()
-  const { TaskAgentService } = await import("#task-agent-core")
-  const server = createRemoteServer(new TaskAgentService(runtime.engine, harness?.reasoner), auth)
+  const server = createRemoteServer(runtime.agent, auth)
   const port = Number(process.env.TASK_AGENT_PORT ?? 7331)
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid port")
   await new Promise<void>((resolve, reject) => {
@@ -39,8 +35,8 @@ try {
     closing = true
     const deadline = setTimeout(() => server.closeAllConnections(), 150000)
     deadline.unref()
-    server.close(() => { clearTimeout(deadline); harness?.close(); runtime.close() })
+    server.close(() => { clearTimeout(deadline); runtime.close() })
   }
   process.once("SIGINT", close)
   process.once("SIGTERM", close)
-} catch (error) { harness?.close(); runtime.close(); throw error }
+} catch (error) { runtime.close(); throw error }

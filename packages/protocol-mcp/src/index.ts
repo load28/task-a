@@ -1,6 +1,5 @@
 import { createInterface } from "node:readline"
-import type { TaskAgent } from "#task-agent-core"
-import { HOST_TASK_INSTRUCTIONS } from "../../host-integration/src/index.ts"
+import { dispatchOperation, type TaskAgent } from "#task-agent-core"
 
 interface JsonRpcRequest {
   jsonrpc: "2.0"
@@ -8,6 +7,13 @@ interface JsonRpcRequest {
   method: string
   params?: Record<string, any>
 }
+
+export const AGENT_INSTRUCTIONS = `Task Agent is an orchestrator over a persistent recursive task graph.
+A prompt becomes a root task (task_create); tasks decompose progressively via proposals (task_propose_decomposition) that the graph engine validates and applies.
+Sessions are workers: resume work by searching (task_search), loading (task_load), asking for runnable leaf tasks (task_get_runnable) and compiling graph-based context (task_get_context).
+Execute one atomic task at a time: task_start, do the work, then task_complete with a summary, published artifacts and local verification. The engine, not the agent, decides state transitions.
+Task results are versioned artifacts (artifact_publish) with lineage and contracts (contract_define). Upstream changes mark downstream artifacts, bundles and integrations stale; impact_analyze reports the blast radius.
+Combinations of artifacts are verified separately: integration_propose defines integration sets and scenarios along architecture boundaries, integration_run pins exact artifact versions, and integration_report records scenario results. Passing runs promote Verified Bundles that parents consume instead of raw artifacts; failures classify causes and can spawn diagnostic tasks.`
 
 export class TaskAgentMcpServer {
   private agent: TaskAgent
@@ -41,8 +47,8 @@ export class TaskAgentMcpServer {
         return {
           protocolVersion: "2025-06-18",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "task-agent", version: "0.1.0" },
-          instructions: HOST_TASK_INSTRUCTIONS,
+          serverInfo: { name: "task-agent", version: "1.0.0" },
+          instructions: AGENT_INSTRUCTIONS,
         }
       case "ping":
         return {}
@@ -50,32 +56,18 @@ export class TaskAgentMcpServer {
         return { tools }
       case "tools/call":
         return this.callTool(message.params?.name, message.params?.arguments ?? {})
-      default:
-        throw new RpcError(-32601, `Method not found: ${message.method}`)
     }
+    throw new RpcError(-32601, `Method not found: ${message.method}`)
   }
 
   private async callTool(name: unknown, input: Record<string, any>): Promise<Record<string, unknown>> {
-    if (!tools.some((tool) => tool.name === name)) throw new RpcError(-32602, "Unknown tool")
+    if (typeof name !== "string" || !tools.some((tool) => tool.name === name)) throw new RpcError(-32602, "Unknown tool")
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new RpcError(-32602, "Tool arguments must be an object")
     try {
-      let data: unknown
-      if (name === "task_context") {
-        data = await this.agent.context({ taskId: input.taskId, query: input.query, mode: input.mode })
-      } else if (name === "task_sync") {
-        if (typeof input.conversation !== "string") throw new Error("conversation is required")
-        data = await this.agent.sync(input as Parameters<TaskAgent["sync"]>[0])
-      } else if (name === "task_handoff") {
-        data = await this.agent.handoff(input)
-      } else if (name === "task_run") {
-        if (typeof input.instruction !== "string") throw new Error("instruction is required")
-        data = await this.agent.run(input as Parameters<TaskAgent["run"]>[0])
-      } else {
-        throw new RpcError(-32602, `Unknown tool: ${String(name)}`)
-      }
+      const data = await dispatchOperation(this.agent, name, input)
       return {
-        content: [{ type: "text", text: typeof data === "object" && data && "text" in data ? String((data as any).text) : JSON.stringify(data) }],
-        structuredContent: data as Record<string, unknown>,
+        content: [{ type: "text", text: typeof data === "object" && data && "text" in (data as object) ? String((data as any).text) : JSON.stringify(data) }],
+        structuredContent: wrapResult(data),
       }
     } catch (error) {
       return {
@@ -84,6 +76,10 @@ export class TaskAgentMcpServer {
       }
     }
   }
+}
+
+function wrapResult(data: unknown): Record<string, unknown> {
+  return Array.isArray(data) ? { items: data } : data as Record<string, unknown>
 }
 
 export async function serveStdio(server: TaskAgentMcpServer): Promise<void> {
@@ -119,62 +115,227 @@ function failure(id: JsonRpcRequest["id"], fallbackCode: number, message: string
   return { jsonrpc: "2.0", id: id ?? null, error: { code: fallbackCode, message } }
 }
 
+export const READ_ONLY_TOOLS = ["task_search", "task_load", "task_get_runnable", "task_get_context", "impact_analyze"]
+
+const artifactVersionRef = {
+  type: "object",
+  properties: { artifactId: { type: "string" }, version: { type: "number" } },
+  required: ["artifactId", "version"],
+}
+
+const publishableArtifact = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    type: { type: "string", enum: ["research", "architecture", "code", "test", "decision", "note"] },
+    contentRef: { type: "string" },
+    content: { type: "string" },
+    inputs: { type: "array", items: artifactVersionRef },
+    contractVersionRefs: { type: "array", items: { type: "object", properties: { contractId: { type: "string" }, version: { type: "number" } }, required: ["contractId", "version"] } },
+    compatibility: { type: "string", enum: ["compatible", "breaking"] },
+  },
+  required: ["name", "type"],
+}
+
+const taskFields = {
+  title: { type: "string" },
+  goal: { type: "string" },
+  category: { type: "string", enum: ["requirement", "research", "architecture", "implementation", "qa", "integration", "diagnostic", "general"] },
+  dependencies: { type: "array", items: { type: "string" }, description: "Task IDs (or sibling keys inside a decomposition) that must be verified first" },
+  acceptanceCriteria: { type: "array", items: { type: "string" } },
+  requirements: { type: "array", items: { type: "object", properties: { description: { type: "string" }, kind: { type: "string", enum: ["requirement", "constraint"] } }, required: ["description"] } },
+  integrationPolicy: { type: "string", enum: ["none", "contract", "targeted", "full"] },
+  assignedRole: { type: "string" },
+}
+
 export const tools = [
   {
-    name: "task_context",
+    name: "task_create",
+    title: "Create a task",
+    description: "Turn a request into a persistent task (root task, or child of parentId). The task graph, not the conversation, is the durable state.",
+    inputSchema: { type: "object", properties: { ...taskFields, parentId: { type: "string" } }, required: ["title", "goal"] },
+  },
+  {
+    name: "task_search",
+    title: "Search tasks",
+    description: "Find persistent tasks by title or goal to continue earlier work.",
+    inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
+  },
+  {
+    name: "task_load",
+    title: "Load a task",
+    description: "Load a task with children, dependencies, requirements, output artifacts, completion evaluation and roll-up summary.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
+  },
+  {
+    name: "task_get_runnable",
+    title: "Resolve runnable tasks",
+    description: "List atomic leaf tasks whose dependencies are satisfied, in dependency order. Optionally scoped to a root task's subtree.",
+    inputSchema: { type: "object", properties: { rootId: { type: "string" } } },
+  },
+  {
+    name: "task_propose_decomposition",
+    title: "Propose a decomposition",
+    description: "Propose child tasks for a task. The engine validates cycles, duplicate responsibilities and dependencies before applying. Decompose progressively, only to the level current knowledge supports.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        children: { type: "array", items: { type: "object", properties: { ...taskFields, key: { type: "string" } }, required: ["title", "goal"] } },
+      },
+      required: ["taskId", "children"],
+    },
+  },
+  {
+    name: "task_start",
+    title: "Start a task",
+    description: "Claim a ready atomic task for execution in this session.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" }, agent: { type: "string" }, sessionId: { type: "string" }, role: { type: "string" } }, required: ["taskId"] },
+  },
+  {
+    name: "task_complete",
+    title: "Submit task results",
+    description: "Submit a result for a running task: summary, produced artifacts and local verification. The engine decides the state transition (implemented, then verified when verification passed and acceptance criteria are satisfied).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        summary: { type: "string" },
+        artifacts: { type: "array", items: publishableArtifact },
+        verification: {
+          type: "object",
+          properties: { passed: { type: "boolean" }, evidence: { type: "string" }, criteriaSatisfied: { type: "array", items: { type: "string" } } },
+          required: ["passed"],
+        },
+      },
+      required: ["taskId", "summary"],
+    },
+  },
+  {
+    name: "task_fail",
+    title: "Fail a task",
+    description: "Record that a task cannot be completed. Dependent tasks become blocked.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" }, reason: { type: "string" } }, required: ["taskId", "reason"] },
+  },
+  {
+    name: "task_reopen",
+    title: "Reopen a task",
+    description: "Reopen a verified, integrated, failed, blocked or stale task for rework.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" }, reason: { type: "string" } }, required: ["taskId", "reason"] },
+  },
+  {
+    name: "task_get_context",
     title: "Compile task context",
-    description: "Find a persistent task and compile the minimum context needed to continue work.",
+    description: "Build the minimum execution context for a task from the graph: goals, inherited requirements and constraints, decisions, input artifacts (verified bundles preferred), contracts, known failures and acceptance criteria.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
+  },
+  {
+    name: "artifact_publish",
+    title: "Publish an artifact version",
+    description: "Publish a versioned artifact produced by a running task, with lineage inputs and contract references. Republishing a name creates a new version and propagates staleness downstream; declare compatibility=breaking when consumers must rework.",
+    inputSchema: { type: "object", properties: { ...publishableArtifact.properties, taskId: { type: "string" } }, required: ["taskId", "name", "type"] },
+  },
+  {
+    name: "contract_define",
+    title: "Define or version a contract",
+    description: "Declare what a provider task guarantees to a consumer task: provided items, expectations, invariants and compatibility checks.",
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string" },
-        query: { type: "string" },
-        mode: { type: "string", enum: ["continuation", "implementation", "review", "handoff", "planning", "summary"] },
+        contractId: { type: "string" },
+        providerTaskId: { type: "string" },
+        consumerTaskId: { type: "string" },
+        provides: { type: "array", items: { type: "object", properties: { name: { type: "string" }, description: { type: "string" } }, required: ["name"] } },
+        expects: { type: "array", items: { type: "object", properties: { name: { type: "string" }, description: { type: "string" } }, required: ["name"] } },
+        invariants: { type: "array", items: { type: "string" } },
+        compatibilityChecks: { type: "array", items: { type: "string" } },
       },
+      required: ["providerTaskId", "consumerTaskId", "provides"],
     },
   },
   {
-    name: "task_sync",
-    title: "Sync task state",
-    description: "Extract durable task state from a conversation and append it to the selected task.",
+    name: "requirement_add",
+    title: "Add a requirement or constraint",
+    description: "Attach a requirement (must be satisfied by verified integration scenarios) or a constraint (inherited by descendant task contexts) to a task.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" }, description: { type: "string" }, kind: { type: "string", enum: ["requirement", "constraint"] } }, required: ["taskId", "description"] },
+  },
+  {
+    name: "impact_analyze",
+    title: "Analyze change impact",
+    description: "Compute the downstream blast radius of an artifact's latest version via lineage: stale artifact versions, bundles, integration sets and affected tasks.",
+    inputSchema: { type: "object", properties: { artifactId: { type: "string" }, compatibility: { type: "string", enum: ["compatible", "breaking"] } }, required: ["artifactId"] },
+  },
+  {
+    name: "integration_propose",
+    title: "Propose integration sets",
+    description: "Propose integration sets along architecture boundaries: named artifact combinations with usage scenarios. Members are artifact names or other set names (their future bundles). The engine validates cycles, coverage and version references.",
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string" },
-        task: { type: "string" },
-        conversation: { type: "string" },
-        instruction: { type: "string" },
-        idempotencyKey: { type: "string", minLength: 1 },
-        source: { type: "object" },
+        integrationSets: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              parentTaskId: { type: "string" },
+              policy: { type: "string", enum: ["none", "contract", "targeted", "full"] },
+              members: { type: "array", items: { type: "string" } },
+              scenarios: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    expectedBehavior: { type: "array", items: { type: "string" } },
+                    participants: { type: "array", items: { type: "string" } },
+                    requirementIds: { type: "array", items: { type: "string" } },
+                    fixtureRefs: { type: "array", items: artifactVersionRef },
+                  },
+                  required: ["name", "expectedBehavior"],
+                },
+              },
+            },
+            required: ["name", "members", "scenarios"],
+          },
+        },
       },
-      required: ["conversation"],
+      required: ["integrationSets"],
     },
   },
   {
-    name: "task_handoff",
-    title: "Compile task handoff",
-    description: "Compile execution-focused context so another agent can immediately continue a task.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        taskId: { type: "string" },
-        query: { type: "string" },
-        targetAgent: { type: "string" },
-      },
-    },
+    name: "integration_run",
+    title: "Start an integration run",
+    description: "Pin the exact artifact versions of an integration set and start a run. Returns the scenarios to execute, or the cached passing run when this exact combination was already verified.",
+    inputSchema: { type: "object", properties: { setRef: { type: "string", description: "Integration set ID or name" } }, required: ["setRef"] },
   },
   {
-    name: "task_run",
-    title: "Run task management analysis",
-    description: "Ask the independent Task Agent to analyze or manage one or more persistent tasks.",
+    name: "integration_report",
+    title: "Report integration results",
+    description: "Report scenario results for a running integration. All scenarios passing promotes a Verified Bundle; failures are classified, revert members to verified, and unknown causes spawn a diagnostic task.",
     inputSchema: {
       type: "object",
       properties: {
-        instruction: { type: "string" },
-        taskIds: { type: "array", items: { type: "string" } },
-        query: { type: "string" },
+        runId: { type: "string" },
+        scenarios: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { scenarioId: { type: "string" }, status: { type: "string", enum: ["passed", "failed"] }, observed: { type: "string" } },
+            required: ["scenarioId", "status"],
+          },
+        },
+        failure: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["producer_violation", "consumer_violation", "contract_mismatch", "architecture_issue", "interaction_issue", "unknown"] },
+            affectedTaskIds: { type: "array", items: { type: "string" } },
+            evidenceRefs: { type: "array", items: artifactVersionRef },
+            recommendedActions: { type: "array", items: { type: "string" } },
+          },
+        },
       },
-      required: ["instruction"],
+      required: ["runId", "scenarios"],
     },
   },
 ]

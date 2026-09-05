@@ -1,337 +1,891 @@
 import { randomUUID } from "node:crypto"
 import type {
-  ArtifactRef,
   ArtifactType,
-  EventSource,
+  ArtifactVersion,
+  ArtifactVersionRef,
+  ContextPolicy,
+  ContractItem,
+  ContractVersionRef,
+  Criterion,
   EventType,
+  IntegrationPolicy,
+  Requirement,
+  RequirementKind,
   Task,
-  TaskEvent,
-  TaskRecord,
-  TaskSnapshot,
+  TaskCategory,
+  TaskContract,
+  TaskGraphEvent,
   TaskStatus,
-  TaskRelation,
-  TaskRelationType,
+  TaskSummary,
 } from "#task-domain"
-import { projectSnapshot } from "./project-snapshot.ts"
-
-export interface TaskRepository {
-  transaction<T>(operation: () => T): T
-  create(task: Task, event: TaskEvent, snapshot: TaskSnapshot): void
-  find(id: string): Task | undefined
-  search(query: string, limit: number): Task[]
-  events(taskId: string): TaskEvent[]
-  artifacts(taskId: string): ArtifactRef[]
-  snapshot(taskId: string): TaskSnapshot | undefined
-  append(event: TaskEvent, task: Task, snapshot: TaskSnapshot): void
-  addArtifact(artifact: ArtifactRef, event: TaskEvent, task: Task, snapshot: TaskSnapshot): void
-  findEventByDedupeKey(taskId: string, dedupeKey: string): TaskEvent | undefined
-  addRelation(relation: TaskRelation): void
-  relations(taskId: string): TaskRelation[]
-  receipt(taskId: string, key: string): { fingerprint: string; result: string } | undefined
-  saveReceipt(taskId: string, key: string, fingerprint: string, result: string): void
-}
+import { DEFAULT_CONTEXT_POLICY, isAtomic } from "#task-domain"
+import type { TaskGraphStore } from "#task-store"
 
 export interface CreateTaskInput {
   title: string
-  objective: string
-  status?: TaskStatus
-  parentTaskId?: string
-  source?: EventSource
+  goal: string
+  category?: TaskCategory
+  parentId?: string
+  dependencies?: string[]
+  acceptanceCriteria?: Array<string | Criterion>
+  requirements?: Array<{ description: string; kind?: RequirementKind }>
+  contextPolicy?: Partial<ContextPolicy>
+  integrationPolicy?: IntegrationPolicy
+  assignedRole?: string
 }
 
-export interface AppendEventInput {
+export interface DecompositionChildProposal {
+  key?: string
+  title: string
+  goal: string
+  category?: TaskCategory
+  dependencies?: string[]
+  acceptanceCriteria?: Array<string | Criterion>
+  requirements?: Array<{ description: string; kind?: RequirementKind }>
+  contextPolicy?: Partial<ContextPolicy>
+  integrationPolicy?: IntegrationPolicy
+  assignedRole?: string
+}
+
+export interface DecompositionProposal {
   taskId: string
-  type: EventType
-  content: string
-  metadata?: Record<string, unknown>
-  source?: EventSource
-  idempotencyKey?: string
+  children: DecompositionChildProposal[]
 }
 
-export class TaskEngine {
-  syncReceipt<T>(taskId: string, key: string, fingerprint: string): T | undefined {
-    const receipt = this.repository.receipt(taskId, key)
-    if (!receipt) return undefined
-    if (receipt.fingerprint !== fingerprint) throw new Error("idempotencyKey must not be reused with different input")
-    return JSON.parse(receipt.result) as T
-  }
+export interface PublishArtifactInput {
+  taskId: string
+  name: string
+  type: ArtifactType
+  contentRef?: string
+  content?: string
+  inputs?: ArtifactVersionRef[]
+  contractVersionRefs?: ContractVersionRef[]
+  compatibility?: "compatible" | "breaking"
+}
 
-  saveSyncReceipt(taskId: string, key: string, fingerprint: string, result: unknown): void {
-    this.repository.saveReceipt(taskId, key, fingerprint, JSON.stringify(result))
+export interface CompleteTaskInput {
+  taskId: string
+  summary: string
+  artifacts?: Array<Omit<PublishArtifactInput, "taskId">>
+  verification?: {
+    passed: boolean
+    evidence?: string
+    criteriaSatisfied?: string[]
+  }
+}
+
+export interface DefineContractInput {
+  contractId?: string
+  providerTaskId: string
+  consumerTaskId: string
+  provides: ContractItem[]
+  expects?: ContractItem[]
+  invariants?: string[]
+  compatibilityChecks?: string[]
+}
+
+export interface RunnableTask {
+  task: Task
+  rootId: string
+  path: string[]
+}
+
+export interface CompletionEvaluation {
+  complete: boolean
+  missing: string[]
+}
+
+export interface ImpactReport {
+  artifactId: string
+  fromVersion: number
+  compatibility: "compatible" | "breaking"
+  staleArtifactVersions: ArtifactVersionRef[]
+  staleBundles: ArtifactVersionRef[]
+  staleIntegrationSetIds: string[]
+  affectedTaskIds: string[]
+  reopenRecommendedTaskIds: string[]
+}
+
+export interface TaskLoadResult {
+  task: Task
+  children: Task[]
+  dependencies: Task[]
+  requirements: Requirement[]
+  outputVersions: ArtifactVersion[]
+  completion: CompletionEvaluation
+  summary: TaskSummary
+  recentEvents: TaskGraphEvent[]
+}
+
+const TERMINAL_FOR_DEPENDENCY: TaskStatus[] = ["verified", "integrated"]
+
+const MANUAL_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  pending: ["ready", "blocked", "failed"],
+  ready: ["running", "pending", "blocked", "failed"],
+  running: ["implemented", "failed", "blocked"],
+  implemented: ["verified", "failed", "stale", "pending"],
+  verified: ["integrating", "integrated", "stale", "pending"],
+  integrating: ["integrated", "verified", "stale"],
+  integrated: ["stale", "pending", "verified"],
+  blocked: ["pending", "ready", "failed"],
+  failed: ["pending"],
+  stale: ["pending"],
+}
+
+export class TaskGraphEngine {
+  readonly store: TaskGraphStore
+
+  constructor(store: TaskGraphStore) {
+    this.store = store
   }
 
   atomic<T>(operation: () => T): T {
-    return this.repository.transaction(operation)
-  }
-  private repository: TaskRepository
-
-  constructor(repository: TaskRepository) {
-    this.repository = repository
+    return this.store.transaction(operation)
   }
 
-  createTask(...args: Parameters<TaskEngine["createTaskLocked"]>): TaskRecord {
-    return this.repository.transaction(() => this.createTaskLocked(...args))
-  }
-
-  private createTaskLocked(input: CreateTaskInput): TaskRecord {
-    requireText(input.title, "title")
-    requireText(input.objective, "objective")
-    if (input.status && !isTaskStatus(input.status)) throw new Error(`Invalid task status: ${input.status}`)
-    if (input.parentTaskId) this.requireTask(input.parentTaskId)
-    const now = new Date().toISOString()
-    const task: Task = {
-      id: randomUUID(),
-      title: input.title.trim(),
-      objective: input.objective.trim(),
-      status: input.status ?? "planned",
-      parentTaskId: input.parentTaskId,
-      createdAt: now,
-      updatedAt: now,
-    }
-    const event = makeEvent(task.id, "task_created", task.title, { title: task.title, objective: task.objective, status: task.status, parentTaskId: task.parentTaskId }, input.source, now)
-    const snapshot = projectSnapshot(task, [event], [])
-    this.repository.create(task, event, snapshot)
-    if (input.parentTaskId) {
-      this.repository.addRelation({
-        id: randomUUID(),
-        fromTaskId: input.parentTaskId,
-        toTaskId: task.id,
-        type: "parent",
-        createdAt: now,
-      })
-    }
-    return { task, events: [event], snapshot, artifacts: [] }
-  }
-
-  searchTasks(query: string, limit = 10): Task[] {
-    return this.repository.search(query.trim(), Math.max(1, Math.min(limit, 50)))
-  }
-
-  getTask(...args: Parameters<TaskEngine["getTaskLocked"]>): TaskRecord {
-    return this.repository.transaction(() => this.getTaskLocked(...args))
-  }
-
-  getCurrentTask(taskId: string): TaskRecord {
-    return this.repository.transaction(() => {
-      const task = this.requireTask(taskId)
-      const snapshot = this.repository.snapshot(taskId)
-      if (!snapshot) return this.getTask(taskId)
-      return { task, snapshot, artifacts: snapshot.relevantArtifacts, events: [] }
+  createTask(input: CreateTaskInput): Task {
+    return this.atomic(() => {
+      requireText(input.title, "title")
+      requireText(input.goal, "goal")
+      if (input.parentId) this.requireDecomposableParent(input.parentId)
+      const dependencies = input.dependencies ?? []
+      for (const dependency of dependencies) this.requireTask(dependency)
+      const now = new Date().toISOString()
+      const task = this.buildTask(input, input.parentId, now)
+      this.store.insertTask(task)
+      for (const dependency of dependencies) {
+        if (input.parentId && this.isAncestorOf(dependency, task.id, input.parentId)) throw new Error("A task must not depend on its own ancestor")
+        this.store.addDependency(task.id, dependency, now)
+      }
+      this.assertNoDependencyCycle()
+      this.emit("TASK_CREATED", task.id, undefined, { title: task.title, parentId: task.parentId })
+      this.addRequirements(task.id, input.requirements ?? [])
+      this.refreshReadiness(task.id)
+      if (task.parentId) this.refreshAncestors(task.parentId)
+      return this.requireTask(task.id)
     })
   }
 
-  private getTaskLocked(taskId: string): TaskRecord {
-    const task = this.requireTask(taskId)
-    const events = this.repository.events(taskId)
-    const artifacts = this.repository.artifacts(taskId)
-    const snapshot = this.repository.snapshot(taskId) ?? projectSnapshot(task, events, artifacts)
-    return { task, events, snapshot, artifacts }
-  }
-
-  updateTask(...args: Parameters<TaskEngine["updateTaskLocked"]>): TaskRecord {
-    return this.repository.transaction(() => this.updateTaskLocked(...args))
-  }
-
-  private updateTaskLocked(taskId: string, changes: { title?: string; objective?: string }, source?: EventSource): TaskRecord {
-    const task = this.requireTask(taskId)
-    if (changes.title !== undefined) requireText(changes.title, "title")
-    if (changes.objective !== undefined) requireText(changes.objective, "objective")
-    const now = new Date().toISOString()
-    const updated: Task = {
-      ...task,
-      title: changes.title?.trim() ?? task.title,
-      objective: changes.objective?.trim() ?? task.objective,
-      updatedAt: now,
-    }
-    const metadata = { title: updated.title, objective: updated.objective }
-    const event = makeEvent(taskId, "task_updated", "Task metadata updated", metadata, source, now)
-    return this.persistEvent(updated, event)
-  }
-
-  appendEvent(...args: Parameters<TaskEngine["appendEventLocked"]>): TaskRecord {
-    return this.repository.transaction(() => this.appendEventLocked(...args))
-  }
-
-  private appendEventLocked(input: AppendEventInput): TaskRecord {
-    requireText(input.content, "content")
-    if (!isAppendableEventType(input.type)) throw new Error(`Invalid appendable event type: ${input.type}`)
-    if (input.idempotencyKey && this.repository.findEventByDedupeKey(input.taskId, input.idempotencyKey)) {
-      return this.getTask(input.taskId)
-    }
-    const task = this.requireTask(input.taskId)
-    const priorEvents = this.repository.events(input.taskId)
-    const lifecycle = { constraint_removed: "constraint", next_action_completed: "next_action" } as const
-    if (input.type === "constraint_removed" || input.type === "next_action_completed") {
-      const resolves = input.metadata?.resolves
-      if (typeof resolves !== "string" || !activeEventIds(priorEvents, lifecycle[input.type], input.type, "resolves").has(resolves)) {
-        throw new Error(`${input.type} requires metadata.resolves referencing an active ${lifecycle[input.type]}`)
+  proposeDecomposition(proposal: DecompositionProposal): { parent: Task; children: Task[] } {
+    return this.atomic(() => {
+      const parent = this.requireDecomposableParent(proposal.taskId)
+      if (!Array.isArray(proposal.children) || proposal.children.length === 0) throw new Error("Decomposition proposal requires at least one child")
+      const now = new Date().toISOString()
+      const existingTitles = new Set(this.store.childTasks(parent.id).map((child) => normalizeTitle(child.title)))
+      const keyed = new Map<string, string>()
+      const created: Task[] = []
+      for (const child of proposal.children) {
+        requireText(child.title, "child title")
+        requireText(child.goal, "child goal")
+        const normalized = normalizeTitle(child.title)
+        if (existingTitles.has(normalized)) throw new Error(`Duplicate responsibility in decomposition: ${child.title}`)
+        existingTitles.add(normalized)
+        const task = this.buildTask(child, parent.id, now)
+        this.store.insertTask(task)
+        created.push(task)
+        if (child.key) {
+          if (keyed.has(child.key)) throw new Error(`Duplicate child key: ${child.key}`)
+          keyed.set(child.key, task.id)
+        }
+        keyed.set(task.title, task.id)
       }
-    }
-    if (input.type === "status" && !isTaskStatus(input.metadata?.status)) {
-      throw new Error("status event requires metadata.status")
-    }
-    if (input.type === "blocker_resolved") {
-      const resolves = input.metadata?.resolves
-      if (typeof resolves !== "string" || !activeEventIds(priorEvents, "blocker", "blocker_resolved", "resolves").has(resolves)) {
-        throw new Error("blocker_resolved event requires metadata.resolves referencing an active blocker")
+      proposal.children.forEach((child, index) => {
+        const task = created[index]!
+        for (const dependency of child.dependencies ?? []) {
+          const resolved = keyed.get(dependency) ?? (this.store.findTask(dependency) ? dependency : undefined)
+          if (!resolved) throw new Error(`Invalid dependency reference: ${dependency}`)
+          if (resolved === task.id) throw new Error("A task cannot depend on itself")
+          if (this.isAncestorOf(resolved, task.id, parent.id)) throw new Error("A task must not depend on its own ancestor")
+          this.store.addDependency(task.id, resolved, now)
+        }
+      })
+      this.assertNoDependencyCycle()
+      proposal.children.forEach((child, index) => {
+        const task = created[index]!
+        this.emit("TASK_CREATED", task.id, undefined, { title: task.title, parentId: parent.id })
+        this.addRequirements(task.id, child.requirements ?? [])
+      })
+      this.emit("TASK_DECOMPOSED", parent.id, { childIds: created.map((task) => task.id) })
+      for (const task of created) this.refreshReadiness(task.id)
+      this.refreshAncestors(parent.id)
+      return { parent: this.requireTask(parent.id), children: created.map((task) => this.requireTask(task.id)) }
+    })
+  }
+
+  searchTasks(query: string, limit = 10): Task[] {
+    return this.store.searchTasks(query.trim(), Math.max(1, Math.min(limit, 50)))
+  }
+
+  loadTask(taskId: string): TaskLoadResult {
+    return this.atomic(() => {
+      const task = this.requireTask(taskId)
+      return {
+        task,
+        children: this.store.childTasks(taskId),
+        dependencies: task.dependencies.map((id) => this.requireTask(id)),
+        requirements: this.store.requirementsOf([taskId]),
+        outputVersions: task.outputArtifactRefs.map((ref) => this.requireArtifactVersion(ref)),
+        completion: this.evaluateCompletion(taskId),
+        summary: this.summarize(taskId),
+        recentEvents: this.store.eventsFor(taskId, 20),
       }
-    }
-    if (input.type === "decision" && input.metadata?.supersedes !== undefined) {
-      const supersedes = input.metadata.supersedes
-      if (typeof supersedes !== "string" || !activeEventIds(priorEvents, "decision", "decision", "supersedes").has(supersedes)) {
-        throw new Error("decision metadata.supersedes must reference an active decision")
+    })
+  }
+
+  resolveRunnable(rootId?: string): RunnableTask[] {
+    return this.atomic(() => {
+      const scope = rootId ? this.subtreeIds(this.requireTask(rootId).id) : undefined
+      const candidates: Task[] = []
+      for (const task of this.allTasks()) {
+        if (scope && !scope.has(task.id)) continue
+        if (!isAtomic(task)) continue
+        this.refreshReadiness(task.id)
+        const refreshed = this.requireTask(task.id)
+        if (refreshed.status === "ready") candidates.push(refreshed)
       }
-    }
-    const now = new Date().toISOString()
-    const nextStatus = input.type === "status" && isTaskStatus(input.metadata?.status)
-      ? input.metadata.status
-      : task.status
-    const updated = { ...task, status: nextStatus, updatedAt: now }
-    const event = makeEvent(task.id, input.type, input.content.trim(), input.metadata, input.source, now, input.idempotencyKey)
-    return this.persistEvent(updated, event)
+      const ordered = topologicalOrder(candidates)
+      return ordered.map((task) => ({ task, rootId: this.rootOf(task.id).id, path: this.pathOf(task.id) }))
+    })
   }
 
-  completeTask(taskId: string, content = "Task completed", source?: EventSource): TaskRecord {
-    return this.appendEvent({ taskId, type: "status", content, metadata: { status: "completed" }, source })
+  startTask(taskId: string, worker?: { agent?: string; sessionId?: string; role?: string }): Task {
+    return this.atomic(() => {
+      let task = this.requireTask(taskId)
+      if (!isAtomic(task)) throw new Error("Only atomic tasks can be started; decompose or pick a runnable leaf")
+      this.refreshReadiness(taskId)
+      task = this.requireTask(taskId)
+      if (task.status !== "ready") {
+        const blocking = task.dependencies.filter((id) => !TERMINAL_FOR_DEPENDENCY.includes(this.requireTask(id).status))
+        throw new Error(blocking.length > 0
+          ? `Task is not ready; waiting on dependencies: ${blocking.join(", ")}`
+          : `Task is not ready (status: ${task.status})`)
+      }
+      if (worker?.role && !this.store.findRole(worker.role)) throw new Error(`Unknown role: ${worker.role}`)
+      this.setStatus(task, "running", undefined, worker ? { worker } : undefined)
+      return this.requireTask(taskId)
+    })
   }
 
-  linkArtifact(...args: Parameters<TaskEngine["linkArtifactLocked"]>): TaskRecord {
-    return this.repository.transaction(() => this.linkArtifactLocked(...args))
+  completeTask(input: CompleteTaskInput): Task {
+    return this.atomic(() => {
+      requireText(input.summary, "summary")
+      let task = this.requireTask(input.taskId)
+      if (!isAtomic(task)) throw new Error("Composite tasks complete through their children and integrations")
+      if (!["running", "implemented"].includes(task.status)) throw new Error(`Task cannot accept results in status ${task.status}`)
+      for (const artifact of input.artifacts ?? []) {
+        this.publishArtifact({ ...artifact, taskId: task.id })
+      }
+      task = this.requireTask(input.taskId)
+      if (task.status === "running") this.setStatus(task, "implemented", undefined, { summary: input.summary })
+      task = this.requireTask(input.taskId)
+      const verification = input.verification
+      if (verification?.passed) {
+        const satisfied = new Set(verification.criteriaSatisfied ?? [])
+        const unmet = task.acceptanceCriteria.filter((criterion) => !satisfied.has(criterion.id))
+        if (unmet.length > 0) throw new Error(`Acceptance criteria not reported as satisfied: ${unmet.map((criterion) => criterion.id).join(", ")}`)
+        this.setStatus(task, "verified", undefined, { evidence: verification.evidence })
+        task = this.requireTask(input.taskId)
+        this.afterTaskSettled(task.id)
+      } else if (verification) {
+        this.annotate(task, verification.evidence ? `Local verification failed: ${verification.evidence}` : "Local verification failed")
+      }
+      return this.requireTask(input.taskId)
+    })
   }
 
-  private linkArtifactLocked(input: {
-    taskId: string
-    type: ArtifactType
-    uri: string
-    description?: string
-    source?: EventSource
-    idempotencyKey?: string
-    metadata?: Record<string, unknown>
-  }): TaskRecord {
-    requireText(input.uri, "uri")
-    if (!isArtifactType(input.type)) throw new Error(`Invalid artifact type: ${input.type}`)
-    if (input.idempotencyKey && this.repository.findEventByDedupeKey(input.taskId, input.idempotencyKey)) {
-      return this.getTask(input.taskId)
-    }
-    const task = this.requireTask(input.taskId)
-    const now = new Date().toISOString()
-    const artifact: ArtifactRef = {
-      id: randomUUID(),
-      taskId: task.id,
-      type: input.type,
-      uri: input.uri.trim(),
-      description: input.description?.trim(),
-      createdAt: now,
-    }
-    const event = makeEvent(task.id, "artifact", input.description?.trim() || artifact.uri, { ...input.metadata, artifactId: artifact.id, artifact }, input.source, now, input.idempotencyKey)
-    const updated = { ...task, updatedAt: now }
-    const events = [...this.repository.events(task.id), event]
-    const artifacts = [...this.repository.artifacts(task.id), artifact]
-    const snapshot = projectSnapshot(updated, events, artifacts)
-    this.repository.addArtifact(artifact, event, updated, snapshot)
-    return { task: updated, events, snapshot, artifacts }
+  failTask(taskId: string, reason: string): Task {
+    return this.atomic(() => {
+      requireText(reason, "reason")
+      const task = this.requireTask(taskId)
+      if (!MANUAL_TRANSITIONS[task.status].includes("failed")) throw new Error(`Task cannot fail from status ${task.status}`)
+      this.setStatus(task, "failed", reason)
+      this.blockDependents(taskId, `Dependency failed: ${task.title}`)
+      if (task.parentId) this.refreshAncestors(task.parentId)
+      return this.requireTask(taskId)
+    })
   }
 
-  addRelation(...args: Parameters<TaskEngine["addRelationLocked"]>): TaskRelation {
-    return this.repository.transaction(() => this.addRelationLocked(...args))
+  reopenTask(taskId: string, reason: string): Task {
+    return this.atomic(() => {
+      requireText(reason, "reason")
+      const task = this.requireTask(taskId)
+      if (!["implemented", "verified", "integrating", "integrated", "blocked", "failed", "stale"].includes(task.status)) {
+        throw new Error(`Task cannot be reopened from status ${task.status}`)
+      }
+      this.setStatus(task, "pending", reason, undefined, "TASK_REOPENED")
+      this.refreshReadiness(taskId)
+      this.unblockDependents(taskId)
+      if (task.parentId) this.refreshAncestors(task.parentId)
+      return this.requireTask(taskId)
+    })
   }
 
-  private addRelationLocked(fromTaskId: string, toTaskId: string, type: TaskRelationType): TaskRelation {
-    if (type === "child") return this.addRelation(toTaskId, fromTaskId, "parent")
-    this.requireTask(fromTaskId)
-    this.requireTask(toTaskId)
-    if (fromTaskId === toTaskId) throw new Error("A task cannot relate to itself")
-    if (!isRelationType(type)) throw new Error(`Invalid task relation type: ${type}`)
-    const existing = this.repository.relations(fromTaskId).find((item) => item.fromTaskId === fromTaskId && item.toTaskId === toTaskId && item.type === type)
-    if (existing) return existing
-    if (type === "parent") {
-      const child = this.requireTask(toTaskId)
-      if (child.parentTaskId && child.parentTaskId !== fromTaskId) throw new Error("Task already has a different parent")
-      const visited = new Set<string>()
-      let ancestor: Task | undefined = this.requireTask(fromTaskId)
-      while (ancestor) {
-        if (ancestor.id === toTaskId || visited.has(ancestor.id)) throw new Error("Task hierarchy must not contain a cycle")
-        visited.add(ancestor.id)
-        ancestor = ancestor.parentTaskId ? this.requireTask(ancestor.parentTaskId) : undefined
+  publishArtifact(input: PublishArtifactInput): ArtifactVersion {
+    return this.atomic(() => {
+      const task = this.requireTask(input.taskId)
+      requireText(input.name, "artifact name")
+      if (!isArtifactType(input.type)) throw new Error(`Invalid artifact type: ${input.type}`)
+      if (input.type === "bundle") throw new Error("Bundle artifacts are promoted by the integration engine, not published directly")
+      if (!["running", "implemented"].includes(task.status)) throw new Error(`Task in status ${task.status} cannot publish artifacts; start or reopen it first`)
+      const contentRef = input.contentRef?.trim() || (input.content !== undefined ? `inline:${randomUUID()}` : undefined)
+      if (!contentRef) throw new Error("Artifact requires contentRef or inline content")
+      const inputs = input.inputs ?? []
+      for (const ref of inputs) this.requireArtifactVersion(ref)
+      for (const ref of input.contractVersionRefs ?? []) {
+        if (!this.store.findContract(ref.contractId, ref.version)) throw new Error(`Unknown contract version: ${ref.contractId}@${ref.version}`)
       }
       const now = new Date().toISOString()
-      this.persistEvent({ ...child, parentTaskId: fromTaskId, updatedAt: now },
-        makeEvent(toTaskId, "task_updated", "Task parent linked", { parentTaskId: fromTaskId }, undefined, now))
+      const head = this.store.findArtifactByName(input.name.trim())
+      let artifactId: string
+      let version: number
+      if (head) {
+        if (head.type !== input.type) throw new Error(`Artifact ${head.name} already exists with type ${head.type}`)
+        artifactId = head.id
+        version = head.latestVersion + 1
+      } else {
+        artifactId = randomUUID()
+        version = 1
+        this.store.insertArtifact({ id: artifactId, name: input.name.trim(), type: input.type, latestVersion: 1, createdAt: now })
+      }
+      const artifactVersion: ArtifactVersion = {
+        artifactId,
+        version,
+        type: input.type,
+        producerTaskId: task.id,
+        inputs,
+        contractVersionRefs: input.contractVersionRefs ?? [],
+        contentRef,
+        content: input.content,
+        status: "valid",
+        createdAt: now,
+      }
+      this.store.insertArtifactVersion(artifactVersion)
+      if (head) this.store.updateArtifactLatest(artifactId, version)
+      const refs = { artifactId, version, name: input.name.trim() }
+      this.emit(head ? "ARTIFACT_VERSIONED" : "ARTIFACT_CREATED", task.id, refs)
+      const outputs = task.outputArtifactRefs.filter((ref) => ref.artifactId !== artifactId)
+      outputs.push({ artifactId, version })
+      this.store.updateTask({ ...this.requireTask(task.id), outputArtifactRefs: outputs, updatedAt: now })
+      if (head) this.propagateStale(artifactId, version, input.compatibility ?? "compatible")
+      if (input.type === "architecture" && head) this.emit("ARCHITECTURE_REVISED", task.id, refs)
+      return artifactVersion
+    })
+  }
+
+  defineContract(input: DefineContractInput): TaskContract {
+    return this.atomic(() => {
+      const provider = this.requireTask(input.providerTaskId)
+      const consumer = this.requireTask(input.consumerTaskId)
+      if (provider.id === consumer.id) throw new Error("A contract requires distinct provider and consumer tasks")
+      if (!Array.isArray(input.provides) || input.provides.length === 0) throw new Error("Contract requires at least one provided item")
+      const now = new Date().toISOString()
+      const existing = input.contractId ? this.store.findContract(input.contractId) : undefined
+      if (input.contractId && !existing) throw new Error(`Unknown contract: ${input.contractId}`)
+      if (existing && (existing.providerTaskId !== provider.id || existing.consumerTaskId !== consumer.id)) {
+        throw new Error("Contract provider and consumer cannot change across versions")
+      }
+      const contract: TaskContract = {
+        id: existing?.id ?? randomUUID(),
+        providerTaskId: provider.id,
+        consumerTaskId: consumer.id,
+        provides: input.provides,
+        expects: input.expects ?? [],
+        invariants: input.invariants ?? [],
+        compatibilityChecks: input.compatibilityChecks ?? [],
+        version: (existing?.version ?? 0) + 1,
+        createdAt: now,
+      }
+      this.store.insertContract(contract)
+      for (const task of [provider, consumer]) {
+        const refs = task.contractRefs.filter((ref) => ref.contractId !== contract.id)
+        refs.push({ contractId: contract.id, version: contract.version })
+        this.store.updateTask({ ...this.requireTask(task.id), contractRefs: refs, updatedAt: now })
+      }
+      this.emit("CONTRACT_UPDATED", provider.id, { contractId: contract.id, version: contract.version, consumerTaskId: consumer.id })
+      return contract
+    })
+  }
+
+  addRequirement(taskId: string, description: string, kind: RequirementKind = "requirement"): Requirement {
+    return this.atomic(() => {
+      this.requireTask(taskId)
+      requireText(description, "description")
+      if (!["requirement", "constraint"].includes(kind)) throw new Error(`Invalid requirement kind: ${kind}`)
+      const requirement: Requirement = {
+        id: randomUUID(),
+        taskId,
+        description: description.trim(),
+        kind,
+        version: 1,
+        status: "open",
+        createdAt: new Date().toISOString(),
+      }
+      this.store.insertRequirement(requirement)
+      this.emit("REQUIREMENT_ADDED", taskId, { requirementId: requirement.id }, { description: requirement.description, kind })
+      return requirement
+    })
+  }
+
+  satisfyRequirement(requirementId: string, evidence: Record<string, unknown>): Requirement {
+    return this.atomic(() => {
+      const requirement = this.store.findRequirement(requirementId)
+      if (!requirement) throw new Error(`Requirement not found: ${requirementId}`)
+      if (requirement.status === "satisfied") return requirement
+      const updated: Requirement = { ...requirement, status: "satisfied" }
+      this.store.updateRequirement(updated)
+      this.emit("REQUIREMENT_SATISFIED", requirement.taskId, { requirementId }, evidence)
+      return updated
+    })
+  }
+
+  evaluateCompletion(taskId: string): CompletionEvaluation {
+    const task = this.requireTask(taskId)
+    const missing: string[] = []
+    const children = this.store.childTasks(taskId)
+    for (const child of children) {
+      if (!TERMINAL_FOR_DEPENDENCY.includes(child.status)) missing.push(`child not verified: ${child.title} (${child.status})`)
     }
-    const relation: TaskRelation = { id: randomUUID(), fromTaskId, toTaskId, type, createdAt: new Date().toISOString() }
-    this.repository.addRelation(relation)
-    const task = this.requireTask(fromTaskId)
-    this.persistEvent({ ...task, updatedAt: relation.createdAt },
-      makeEvent(fromTaskId, "relation", `Task relation added: ${type}`, { relation }, undefined, relation.createdAt))
-    return relation
+    for (const set of this.store.integrationSetsByParent(taskId)) {
+      if (set.status !== "passed") missing.push(`integration set not passed: ${set.name} (${set.status})`)
+      const bundle = set.outputBundleRef ? this.store.findBundle(set.outputBundleRef.artifactId, set.outputBundleRef.version) : undefined
+      if (set.status === "passed" && bundle?.status !== "valid") missing.push(`bundle not valid: ${set.name}`)
+    }
+    for (const requirement of this.store.requirementsOf([taskId])) {
+      if (requirement.kind === "requirement" && requirement.status !== "satisfied") missing.push(`requirement not satisfied: ${requirement.description}`)
+    }
+    for (const ref of task.outputArtifactRefs) {
+      if (this.requireArtifactVersion(ref).status === "stale") missing.push(`stale output artifact: ${ref.artifactId}@${ref.version}`)
+    }
+    if (children.length === 0 && !TERMINAL_FOR_DEPENDENCY.includes(task.status)) missing.push(`task not verified (${task.status})`)
+    return { complete: missing.length === 0, missing }
   }
 
-  getRelations(taskId: string): TaskRelation[] {
-    this.requireTask(taskId)
-    return this.repository.relations(taskId)
+  calculateImpact(artifactId: string, compatibility: "compatible" | "breaking" = "compatible"): ImpactReport {
+    const head = this.store.findArtifact(artifactId)
+    if (!head) throw new Error(`Artifact not found: ${artifactId}`)
+    return this.collectImpact(artifactId, head.latestVersion, compatibility)
   }
 
-  hasProcessed(taskId: string, idempotencyKey: string): boolean {
-    return Boolean(this.repository.findEventByDedupeKey(taskId, idempotencyKey))
+  summarize(taskId: string): TaskSummary {
+    const subtree = [...this.subtreeIds(taskId)]
+    const completedWork: string[] = []
+    const openQuestions: string[] = []
+    const failureRefs: string[] = []
+    const bundles: ArtifactVersionRef[] = []
+    const decisionRefs: ArtifactVersionRef[] = []
+    for (const id of subtree) {
+      const task = this.requireTask(id)
+      if (TERMINAL_FOR_DEPENDENCY.includes(task.status) && id !== taskId) completedWork.push(task.title)
+      if (["blocked", "stale", "failed"].includes(task.status) && task.statusReason) openQuestions.push(`${task.title}: ${task.statusReason}`)
+      for (const ref of task.outputArtifactRefs) {
+        const version = this.requireArtifactVersion(ref)
+        if ((version.type === "decision" || version.type === "architecture") && version.status === "valid") decisionRefs.push(ref)
+      }
+      for (const set of this.store.integrationSetsByParent(id)) {
+        if (set.outputBundleRef && this.store.findBundle(set.outputBundleRef.artifactId, set.outputBundleRef.version)?.status === "valid") {
+          bundles.push(set.outputBundleRef)
+        }
+        for (const run of this.store.runsOf(set.id)) {
+          if (run.status === "failed") failureRefs.push(run.id)
+        }
+      }
+    }
+    return { taskId, completedWork, verifiedBundles: bundles, decisionRefs, failureRefs, openQuestions }
   }
 
-  private persistEvent(task: Task, event: TaskEvent): TaskRecord {
-    const events = [...this.repository.events(task.id), event]
-    const artifacts = this.repository.artifacts(task.id)
-    const snapshot = projectSnapshot(task, events, artifacts)
-    this.repository.append(event, task, snapshot)
-    return { task, events, snapshot, artifacts }
+  ancestorsOf(taskId: string): Task[] {
+    const chain: Task[] = []
+    let current = this.requireTask(taskId)
+    const visited = new Set<string>([current.id])
+    while (current.parentId) {
+      if (visited.has(current.parentId)) throw new Error("Task hierarchy must not contain a cycle")
+      current = this.requireTask(current.parentId)
+      visited.add(current.id)
+      chain.unshift(current)
+    }
+    return chain
   }
 
-  private requireTask(taskId: string): Task {
-    const task = this.repository.find(taskId)
+  rootOf(taskId: string): Task {
+    const ancestors = this.ancestorsOf(taskId)
+    return ancestors[0] ?? this.requireTask(taskId)
+  }
+
+  pathOf(taskId: string): string[] {
+    return [...this.ancestorsOf(taskId).map((task) => task.title), this.requireTask(taskId).title]
+  }
+
+  subtreeIds(taskId: string): Set<string> {
+    const ids = new Set<string>([taskId])
+    const queue = [taskId]
+    while (queue.length > 0) {
+      for (const child of this.store.childTaskIds(queue.shift()!)) {
+        if (!ids.has(child)) {
+          ids.add(child)
+          queue.push(child)
+        }
+      }
+    }
+    return ids
+  }
+
+  requireTask(taskId: string): Task {
+    const task = this.store.findTask(taskId)
     if (!task) throw new Error(`Task not found: ${taskId}`)
     return task
   }
+
+  requireArtifactVersion(ref: ArtifactVersionRef): ArtifactVersion {
+    const version = this.store.findArtifactVersion(ref.artifactId, ref.version)
+    if (!version) throw new Error(`Unknown artifact version: ${ref.artifactId}@${ref.version}`)
+    return version
+  }
+
+  markTaskIntegrating(taskId: string): void {
+    const task = this.requireTask(taskId)
+    if (task.status === "verified") this.setStatus(task, "integrating")
+  }
+
+  markTaskIntegrated(taskId: string): void {
+    const task = this.requireTask(taskId)
+    if (["verified", "integrating"].includes(task.status)) {
+      this.setStatus(task, "integrated")
+      this.afterTaskSettled(taskId)
+    }
+  }
+
+  revertTaskToVerified(taskId: string, reason?: string): void {
+    const task = this.requireTask(taskId)
+    if (["integrating", "integrated"].includes(task.status)) this.setStatus(task, "verified", reason)
+  }
+
+  markTaskStale(taskId: string, reason: string): void {
+    const task = this.requireTask(taskId)
+    if (["implemented", "verified", "integrating", "integrated"].includes(task.status)) {
+      this.setStatus(task, "stale", reason)
+      if (task.parentId) this.refreshAncestors(task.parentId)
+    }
+  }
+
+  refreshReadiness(taskId: string): void {
+    const task = this.requireTask(taskId)
+    if (!isAtomic(task)) return
+    const satisfied = task.dependencies.every((id) => TERMINAL_FOR_DEPENDENCY.includes(this.requireTask(id).status))
+    const failedUpstream = task.dependencies.filter((id) => this.requireTask(id).status === "failed")
+    if (task.status === "pending" && satisfied) this.setStatus(task, "ready")
+    else if (task.status === "ready" && !satisfied) this.setStatus(task, "pending", "Dependencies are no longer satisfied")
+    else if (task.status === "pending" && failedUpstream.length > 0) {
+      this.setStatus(task, "blocked", `Dependency failed: ${failedUpstream.map((id) => this.requireTask(id).title).join(", ")}`)
+    } else if (task.status === "blocked" && failedUpstream.length === 0) {
+      this.setStatus(task, satisfied ? "ready" : "pending")
+    }
+  }
+
+  afterTaskSettled(taskId: string): void {
+    for (const dependent of this.store.dependentIds(taskId)) this.refreshReadiness(dependent)
+    const task = this.requireTask(taskId)
+    if (task.parentId) this.refreshAncestors(task.parentId)
+    for (const ref of task.outputArtifactRefs) {
+      for (const set of this.store.integrationSetsByMember(ref.artifactId)) this.refreshIntegrationSetReadiness(set.id)
+    }
+  }
+
+  refreshIntegrationSetReadiness(setId: string): void {
+    const set = this.store.findIntegrationSet(setId)
+    if (!set || !["pending", "stale", "failed"].includes(set.status)) return
+    const ready = set.memberRefs.every((member) => {
+      const latest = this.latestValidVersion(member.artifactId)
+      if (!latest) return false
+      const producer = this.requireTask(latest.producerTaskId)
+      return TERMINAL_FOR_DEPENDENCY.includes(producer.status) || producer.status === "integrating"
+    })
+    if (ready && set.status === "pending") {
+      this.store.updateIntegrationSet({ ...set, status: "ready", updatedAt: new Date().toISOString() })
+    }
+  }
+
+  latestValidVersion(artifactId: string): ArtifactVersion | undefined {
+    const versions = this.store.artifactVersions(artifactId)
+    for (let index = versions.length - 1; index >= 0; index--) {
+      if (versions[index]!.status === "valid") return versions[index]
+    }
+    return undefined
+  }
+
+  refreshAncestors(taskId: string): void {
+    let current: Task | undefined = this.requireTask(taskId)
+    while (current) {
+      const children = this.store.childTasks(current.id)
+      if (children.length > 0) this.applyCompositeStatus(current, children)
+      current = current.parentId ? this.requireTask(current.parentId) : undefined
+    }
+  }
+
+  emit(type: EventType, taskId?: string, refs?: Record<string, unknown>, payload?: Record<string, unknown>): TaskGraphEvent {
+    const event: TaskGraphEvent = { id: randomUUID(), type, taskId, refs, payload, createdAt: new Date().toISOString() }
+    this.store.insertEvent(event)
+    return event
+  }
+
+  private applyCompositeStatus(task: Task, children: Task[]): void {
+    const statuses = new Set(children.map((child) => child.status))
+    let next: TaskStatus
+    let reason: string | undefined
+    if (statuses.has("failed")) {
+      next = "blocked"
+      reason = `Child task failed: ${children.filter((child) => child.status === "failed").map((child) => child.title).join(", ")}`
+    } else if (children.every((child) => TERMINAL_FOR_DEPENDENCY.includes(child.status))) {
+      const sets = this.store.integrationSetsByParent(task.id)
+      const evaluation = this.evaluateCompletion(task.id)
+      if (evaluation.complete) next = sets.length > 0 ? "integrated" : "verified"
+      else if (sets.length > 0) next = "integrating"
+      else {
+        next = "running"
+        reason = evaluation.missing.join("; ")
+      }
+    } else if (statuses.has("stale")) {
+      next = "stale"
+      reason = "A child task is stale"
+    } else if (["running", "implemented", "integrating", "verified", "integrated"].some((status) => statuses.has(status as TaskStatus))) {
+      next = "running"
+    } else if (statuses.has("blocked") && [...statuses].every((status) => ["blocked", "pending", "ready"].includes(status))) {
+      next = children.every((child) => child.status === "blocked") ? "blocked" : "pending"
+    } else {
+      next = "pending"
+    }
+    if (task.status !== next) this.setStatus(task, next, reason, undefined, next === "integrated" ? "TASK_INTEGRATED" : undefined, true)
+  }
+
+  private collectImpact(artifactId: string, fromVersion: number, compatibility: "compatible" | "breaking"): ImpactReport {
+    const staleArtifactVersions: ArtifactVersionRef[] = []
+    const affectedTasks = new Set<string>()
+    const visited = new Set<string>()
+    const queue: ArtifactVersionRef[] = []
+    for (let version = 1; version < fromVersion; version++) queue.push({ artifactId, version })
+    while (queue.length > 0) {
+      const ref = queue.shift()!
+      for (const dependent of this.store.lineageDependents(ref.artifactId, ref.version)) {
+        const key = `${dependent.artifactId}@${dependent.version}`
+        if (visited.has(key)) continue
+        visited.add(key)
+        staleArtifactVersions.push(dependent)
+        const version = this.store.findArtifactVersion(dependent.artifactId, dependent.version)
+        if (version) affectedTasks.add(version.producerTaskId)
+        queue.push(dependent)
+      }
+    }
+    const staleBundles: ArtifactVersionRef[] = []
+    for (const bundle of this.store.validBundles()) {
+      if (bundle.memberRefs.some((member) => member.artifactId === artifactId && member.version < fromVersion)
+        || bundle.memberRefs.some((member) => staleArtifactVersions.some((stale) => stale.artifactId === member.artifactId && stale.version === member.version))) {
+        staleBundles.push({ artifactId: bundle.artifactId, version: bundle.version })
+      }
+    }
+    const staleIntegrationSetIds = [...new Set([
+      ...this.store.integrationSetsByMember(artifactId).map((set) => set.id),
+      ...staleArtifactVersions.flatMap((ref) => this.store.integrationSetsByMember(ref.artifactId).map((set) => set.id)),
+    ])]
+    return {
+      artifactId,
+      fromVersion,
+      compatibility,
+      staleArtifactVersions,
+      staleBundles,
+      staleIntegrationSetIds,
+      affectedTaskIds: [...affectedTasks],
+      reopenRecommendedTaskIds: compatibility === "breaking" ? [...affectedTasks] : [],
+    }
+  }
+
+  private propagateStale(artifactId: string, newVersion: number, compatibility: "compatible" | "breaking"): void {
+    const impact = this.collectImpact(artifactId, newVersion, compatibility)
+    for (const ref of impact.staleArtifactVersions) {
+      const version = this.store.findArtifactVersion(ref.artifactId, ref.version)
+      if (version?.status === "valid") {
+        this.store.markArtifactVersionStale(ref.artifactId, ref.version)
+        this.emit("ARTIFACT_STALE", version.producerTaskId, { artifactId: ref.artifactId, version: ref.version, cause: `${artifactId}@${newVersion}` })
+      }
+    }
+    for (const ref of impact.staleBundles) {
+      const bundle = this.store.findBundle(ref.artifactId, ref.version)
+      if (bundle?.status === "valid") {
+        this.store.markBundleStale(ref.artifactId, ref.version)
+        this.store.markArtifactVersionStale(ref.artifactId, ref.version)
+        this.emit("BUNDLE_STALE", undefined, { artifactId: ref.artifactId, version: ref.version, integrationSetId: bundle.integrationSetId, cause: `${artifactId}@${newVersion}` })
+      }
+    }
+    const now = new Date().toISOString()
+    for (const setId of impact.staleIntegrationSetIds) {
+      const set = this.store.findIntegrationSet(setId)
+      if (set && ["ready", "passed", "failed"].includes(set.status)) {
+        this.store.updateIntegrationSet({ ...set, status: "stale", updatedAt: now })
+        if (set.parentTaskId) this.refreshAncestors(set.parentTaskId)
+      }
+    }
+    for (const taskId of impact.affectedTaskIds) {
+      if (compatibility === "breaking") this.markTaskStale(taskId, `Contract-breaking upstream change: ${artifactId}@${newVersion}`)
+      else this.revertTaskToVerified(taskId, `Upstream change requires reintegration: ${artifactId}@${newVersion}`)
+    }
+    for (const set of this.store.integrationSetsByMember(artifactId)) {
+      for (const member of set.memberRefs) {
+        if (member.artifactId !== artifactId) continue
+        const producer = this.requireTask(this.requireArtifactVersion({ artifactId, version: newVersion }).producerTaskId)
+        if (["integrating", "integrated"].includes(producer.status)) this.revertTaskToVerified(producer.id, "New artifact version requires reintegration")
+      }
+    }
+  }
+
+  private blockDependents(taskId: string, reason: string): void {
+    for (const dependentId of this.store.dependentIds(taskId)) {
+      const dependent = this.requireTask(dependentId)
+      if (["pending", "ready"].includes(dependent.status)) {
+        this.setStatus(dependent, "blocked", reason)
+        if (dependent.parentId) this.refreshAncestors(dependent.parentId)
+      }
+    }
+  }
+
+  private unblockDependents(taskId: string): void {
+    for (const dependentId of this.store.dependentIds(taskId)) this.refreshReadiness(dependentId)
+  }
+
+  private annotate(task: Task, reason: string): void {
+    this.store.updateTask({ ...this.requireTask(task.id), statusReason: reason, updatedAt: new Date().toISOString() })
+  }
+
+  private setStatus(task: Task, to: TaskStatus, reason?: string, payload?: Record<string, unknown>, eventOverride?: EventType, derived = false): void {
+    const current = this.requireTask(task.id)
+    if (current.status === to) return
+    if (!derived && !MANUAL_TRANSITIONS[current.status].includes(to)) {
+      throw new Error(`Invalid state transition: ${current.status} → ${to}`)
+    }
+    this.store.updateTask({ ...current, status: to, statusReason: reason, updatedAt: new Date().toISOString() })
+    const eventType = eventOverride ?? STATUS_EVENTS[to]
+    if (eventType) this.emit(eventType, task.id, undefined, { from: current.status, to, reason, ...payload })
+  }
+
+  private requireDecomposableParent(taskId: string): Task {
+    const parent = this.store.findTask(taskId)
+    if (!parent) throw new Error(`Missing parent task: ${taskId}`)
+    if (["integrated", "verified", "failed"].includes(parent.status)) {
+      throw new Error(`Task in status ${parent.status} cannot be decomposed; reopen it first`)
+    }
+    return parent
+  }
+
+  private buildTask(input: CreateTaskInput | DecompositionChildProposal, parentId: string | undefined, now: string): Task {
+    if (input.category !== undefined && !isTaskCategory(input.category)) throw new Error(`Invalid task category: ${input.category}`)
+    if (input.integrationPolicy !== undefined && !isIntegrationPolicy(input.integrationPolicy)) throw new Error(`Invalid integration policy: ${input.integrationPolicy}`)
+    if (input.assignedRole && !this.store.findRole(input.assignedRole)) throw new Error(`Unknown role: ${input.assignedRole}`)
+    return {
+      id: randomUUID(),
+      parentId,
+      title: input.title.trim(),
+      goal: input.goal.trim(),
+      category: input.category ?? "general",
+      status: "pending",
+      childIds: [],
+      dependencies: [],
+      acceptanceCriteria: (input.acceptanceCriteria ?? []).map((criterion) =>
+        typeof criterion === "string" ? { id: randomUUID(), description: criterion } : criterion),
+      contextPolicy: { ...DEFAULT_CONTEXT_POLICY, ...input.contextPolicy },
+      inputArtifactRefs: [],
+      outputArtifactRefs: [],
+      contractRefs: [],
+      assignedRole: input.assignedRole,
+      integrationPolicy: input.integrationPolicy,
+      createdAt: now,
+      updatedAt: now,
+    }
+  }
+
+  private addRequirements(taskId: string, requirements: Array<{ description: string; kind?: RequirementKind }>): void {
+    for (const requirement of requirements) this.addRequirement(taskId, requirement.description, requirement.kind ?? "requirement")
+  }
+
+  private isAncestorOf(candidateId: string, taskId: string, parentId: string): boolean {
+    let current: string | undefined = parentId
+    while (current) {
+      if (current === candidateId) return true
+      current = this.store.findTask(current)?.parentId
+    }
+    return false
+  }
+
+  private assertNoDependencyCycle(): void {
+    const adjacency = new Map<string, string[]>()
+    const link = (from: string, to: string) => {
+      const list = adjacency.get(from) ?? []
+      list.push(to)
+      adjacency.set(from, list)
+    }
+    for (const edge of this.store.allDependencies()) link(edge.taskId, edge.dependsOnTaskId)
+    for (const task of this.allTasks()) {
+      if (task.parentId) link(task.parentId, task.id)
+    }
+    const state = new Map<string, "visiting" | "done">()
+    const visit = (node: string): void => {
+      const seen = state.get(node)
+      if (seen === "done") return
+      if (seen === "visiting") throw new Error("Dependency graph must not contain a cycle")
+      state.set(node, "visiting")
+      for (const next of adjacency.get(node) ?? []) visit(next)
+      state.set(node, "done")
+    }
+    for (const node of adjacency.keys()) visit(node)
+  }
+
+  private allTasks(): Task[] {
+    return this.store.searchTasks("", 10_000)
+  }
 }
 
-function makeEvent(
-  taskId: string,
-  type: EventType,
-  content: string,
-  metadata: Record<string, unknown> | undefined,
-  source: EventSource | undefined,
-  createdAt: string,
-  dedupeKey?: string,
-): TaskEvent {
-  return { id: randomUUID(), taskId, type, content, metadata, source, dedupeKey, createdAt }
+const STATUS_EVENTS: Partial<Record<TaskStatus, EventType>> = {
+  ready: "TASK_READY",
+  running: "TASK_STARTED",
+  implemented: "TASK_IMPLEMENTED",
+  verified: "TASK_VERIFIED",
+  integrated: "TASK_INTEGRATED",
+  blocked: "TASK_BLOCKED",
+  failed: "TASK_FAILED",
+  stale: "TASK_STALE",
 }
 
-function requireText(value: string, field: string): void {
+function topologicalOrder(tasks: Task[]): Task[] {
+  const byId = new Map(tasks.map((task) => [task.id, task]))
+  const ordered: Task[] = []
+  const state = new Map<string, "visiting" | "done">()
+  const visit = (task: Task): void => {
+    const seen = state.get(task.id)
+    if (seen) return
+    state.set(task.id, "visiting")
+    for (const dependency of task.dependencies) {
+      const inScope = byId.get(dependency)
+      if (inScope) visit(inScope)
+    }
+    state.set(task.id, "done")
+    ordered.push(task)
+  }
+  for (const task of tasks) visit(task)
+  return ordered
+}
+
+function normalizeTitle(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, " ")
+}
+
+function requireText(value: unknown, field: string): void {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} must not be empty`)
 }
 
-function isTaskStatus(value: unknown): value is TaskStatus {
-  return ["planned", "active", "blocked", "completed", "cancelled"].includes(String(value))
+function isTaskCategory(value: unknown): value is TaskCategory {
+  return ["requirement", "research", "architecture", "implementation", "qa", "integration", "diagnostic", "general"].includes(String(value))
 }
 
-function isAppendableEventType(value: unknown): value is AppendEventInput["type"] {
-  return ["decision", "progress", "finding", "constraint", "constraint_removed", "blocker", "blocker_resolved", "next_action", "next_action_completed", "status"].includes(String(value))
+function isIntegrationPolicy(value: unknown): value is IntegrationPolicy {
+  return ["none", "contract", "targeted", "full"].includes(String(value))
 }
 
 function isArtifactType(value: unknown): value is ArtifactType {
-  return ["file", "commit", "pr", "issue", "document", "url", "test", "other"].includes(String(value))
+  return ["research", "architecture", "code", "test", "bundle", "decision", "note"].includes(String(value))
 }
-
-function isRelationType(value: unknown): value is TaskRelationType {
-  return ["parent", "child", "depends_on", "blocks", "related", "supersedes"].includes(String(value))
-}
-
-function activeEventIds(events: TaskEvent[], addType: EventType, removeType: EventType, metadataKey: string): Set<string> {
-  const active = new Set<string>()
-  for (const event of events) {
-    if (event.type === removeType) {
-      const removed = event.metadata?.[metadataKey]
-      if (typeof removed === "string") active.delete(removed)
-    }
-    if (event.type === addType) active.add(event.id)
-  }
-  return active
-}
-
-export { projectSnapshot } from "./project-snapshot.ts"

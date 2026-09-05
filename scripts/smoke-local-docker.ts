@@ -5,11 +5,12 @@ import { join } from "node:path"
 import { auth } from "@modelcontextprotocol/sdk/client/auth.js"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { LocalOAuth } from "../packages/host-integration/src/oauth.ts"
+import { LocalOAuth } from "./local-oauth.ts"
+import { tools } from "../packages/protocol-mcp/src/index.ts"
 
 // Uses only accounts generated for this local Docker fixture. No tokens/passwords are logged.
 const directory = fileURLToPath(new URL("../data/local-docker/", import.meta.url))
-const config = JSON.parse(readFileSync(join(directory, "codex-connection.json"), "utf8"))
+const config = JSON.parse(readFileSync(join(directory, "smoke-connection.json"), "utf8"))
 const settings = JSON.parse(readFileSync(join(directory, "settings.json"), "utf8"))
 const resource = config.TASK_AGENT_RESOURCE as string
 async function login(username: "owner" | "stranger", scope: string, suffix: string = username) {
@@ -49,26 +50,37 @@ try {
   assert.equal((await fetch(resource, { method: "POST", headers, body: initialize })).status, 401)
   assert.equal((await fetch(resource, { method: "POST", headers: { ...headers, Authorization: `Bearer ${stranger.tokens()!.access_token}` }, body: initialize })).status, 403)
   assert.equal((await fetch(resource, { method: "POST", headers: { ...headers, Authorization: `Bearer ${(owner.tokens() as any).id_token}` }, body: initialize })).status, 401)
-  const denied = await fetch(resource, { method: "POST", headers: { ...headers, Authorization: `Bearer ${reader.tokens()!.access_token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "task_run", arguments: { instruction: "must not run" } } }) })
+  const denied = await fetch(resource, { method: "POST", headers: { ...headers, Authorization: `Bearer ${reader.tokens()!.access_token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "task_create", arguments: { title: "must not run", goal: "denied" } } }) })
   assert.equal((await denied.json() as any).result.isError, true)
   assert.equal(await auth(owner, { serverUrl: resource, fetchFn: owner.fetch }), "AUTHORIZED")
   await client.connect(new StreamableHTTPClientTransport(new URL(resource), { authProvider: owner, fetch: owner.fetch }))
-  assert.equal((await client.listTools()).tools.length, 4)
+  assert.equal((await client.listTools()).tools.length, tools.length)
   console.log("PASS: verified HTTPS, browser authorization code + PKCE, refresh, MCP, owner isolation, ID-token rejection and write-scope enforcement")
-  if (process.env.TASK_AGENT_SMOKE_MODEL === "1") {
-    const title = `Docker 실사용 검증 ${Date.now()}`
-    const created = await client.callTool({ name: "task_run", arguments: { instruction: `제목이 '${title}'이고 목표가 '정규화 설계 검증'인 테스트 Task를 정확히 하나 생성해.` } }, undefined, { timeout: 180000 })
-    assert.ok(!created.isError, "Real-model task creation failed")
-    const context = await client.callTool({ name: "task_context", arguments: { query: title } }, undefined, { timeout: 180000 })
-    const taskId = (context.structuredContent as any)?.context?.task?.id
-    assert.ok(taskId)
-    const proposal = await client.callTool({ name: "task_sync", arguments: { taskId, conversation: "사용자: 정규화 단계를 따로 두는 것도 괜찮을 것 같은데? 아직 결정하지 말고 후보로만 생각해 봐.", idempotencyKey: `docker-proposal-${taskId}` } }, undefined, { timeout: 180000 })
-    assert.ok(!proposal.isError)
-    assert.equal((proposal.structuredContent as any).appended.length, 0)
-    const synced = await client.callTool({ name: "task_sync", arguments: { taskId, conversation: "사용자: 정규화 단계를 독립 단계로 분리하기로 확정했어.", idempotencyKey: `docker-smoke-${taskId}` } }, undefined, { timeout: 180000 })
-    assert.ok(!synced.isError, "Real-model sync failed")
-    const handoff = await client.callTool({ name: "task_handoff", arguments: { taskId } })
-    assert.equal((handoff.structuredContent as any).context.importantDecisions.length, 1, `Expected confirmed decision; sync result: ${JSON.stringify(synced.structuredContent)}`)
-    console.log(`PASS: container OpenCode create → context → sync → handoff; test task ${taskId}`)
+  if (process.env.TASK_AGENT_SMOKE_WRITE === "1") {
+    const stamp = Date.now()
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 60000 })
+      assert.ok(!result.isError, `${name} failed: ${JSON.stringify(result.content)}`)
+      return result.structuredContent as any
+    }
+    const root = await call("task_create", { title: `Docker smoke ${stamp}`, goal: "로컬 배포에서 Task Graph 전체 흐름 검증" })
+    const decomposed = await call("task_propose_decomposition", { taskId: root.id, children: [
+      { key: "a", title: `smoke impl A ${stamp}`, goal: "A 구현" },
+      { key: "b", title: `smoke impl B ${stamp}`, goal: "B 구현", dependencies: ["a"] },
+    ] })
+    const [childA, childB] = decomposed.children
+    const runnable = await call("task_get_runnable", { rootId: root.id })
+    assert.equal(runnable.items[0].task.id, childA.id)
+    await call("task_start", { taskId: childA.id, agent: "smoke" })
+    await call("task_complete", { taskId: childA.id, summary: "A done", artifacts: [{ name: `smoke-a-${stamp}`, type: "code", contentRef: "smoke://a" }], verification: { passed: true } })
+    await call("task_start", { taskId: childB.id, agent: "smoke" })
+    await call("task_complete", { taskId: childB.id, summary: "B done", artifacts: [{ name: `smoke-b-${stamp}`, type: "code", contentRef: "smoke://b" }], verification: { passed: true } })
+    const proposal = await call("integration_propose", { integrationSets: [{ name: `smoke set ${stamp}`, parentTaskId: root.id, members: [`smoke-a-${stamp}`, `smoke-b-${stamp}`], scenarios: [{ name: "combined", expectedBehavior: ["A and B work together"] }] }] })
+    const run = await call("integration_run", { setRef: proposal.sets[0].id })
+    await call("integration_report", { runId: run.run.id, scenarios: run.scenarios.map((scenario: any) => ({ scenarioId: scenario.id, status: "passed" })) })
+    const loaded = await call("task_load", { taskId: root.id })
+    assert.equal(loaded.task.status, "integrated", `Root status: ${loaded.task.status}`)
+    assert.equal(loaded.completion.complete, true)
+    console.log(`PASS: remote task graph flow — create, decompose, runnable, start, complete, integration, bundle promotion; root task ${root.id}`)
   }
 } finally { await client.close(); owner.close(); stranger.close(); reader.close() }
