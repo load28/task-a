@@ -22,6 +22,23 @@
 10. **실패는 새로운 Graph를 만든다.** 원인 불명의 Integration 실패는 Diagnostic Task를 자동 생성하고, 원인 분류 후 영향 Task만 선택적으로 stale/reopen한다. Architecture 자체도 reopen 대상이 될 수 있다.
 11. **LLM은 제안하고 Engine이 결정한다.** 분해·Integration 구성은 Proposal로 제출되어 검증(cycle, 중복 책임, 잘못된 참조, 상태 전이) 후 적용된다. 상태 전이는 Agent가 제출한 Result를 근거로 Engine이 판단한다.
 12. **Context는 대화가 아니라 Graph에서 생성한다.** Task ancestry, dependency, artifact lineage, integration membership, contract 관계를 기준으로 필요한 정보만 컴파일한다.
+13. **시스템은 자기개선한다.** Agent는 작업에서 배운 것을 메모리에 남기고, 같은 주제의 두 번째 실행은 첫 번째보다 나아진다("Agents save what they learn to memory, so the second run on a topic is better than the first").
+
+## 자기개선 (Learning 루프)
+
+Learning은 1급 객체다(`learnings` 테이블).
+
+```
+type Learning = {
+  id, sourceTaskId?, sourceRunId?,
+  kind: "insight" | "pitfall" | "convention" | "failure_pattern" | "improvement",
+  description, tags[], appliedCount, createdAt
+}
+```
+
+- **축적**: `task_complete`의 `learnings` 필드 또는 `learning_record`로 기록한다. Integration 실패는 Engine이 failure pattern으로 자동 기록한다. 모든 기록은 `LEARNING_RECORDED` Event를 남긴다.
+- **환류**: Context Builder가 Task의 제목·목표·카테고리·조상 제목에서 추출한 키워드로 Learning을 검색해 Context의 `Learnings` 섹션으로 주입한다. 키워드 일치가 필수 조건이고, 같은 Root subtree·의존 Task에서 나온 Learning은 가산점을 받는다. 주입될 때마다 `appliedCount`가 증가하여 어떤 Learning이 실제로 재사용되는지 측정한다.
+- **경계**: Learning은 정성적 메모리이며 강제 조건이 아니다. 반드시 지켜져야 할 교훈은 Agent가 `requirement_add`로 Requirement/Constraint로 승격시킨다. Requirement는 Integration Scenario로 검증되지만 Learning은 참고 정보로만 전달된다.
 
 ## 네 종류의 Graph
 
@@ -47,7 +64,7 @@ pending → ready → running → implemented → verified → integrating → i
 
 ## 코어 객체
 
-`Task`, `TaskDependency`, `Requirement`, `Artifact`, `ArtifactVersion`, `ArtifactLineage`, `TaskContract`, `IntegrationSet`, `IntegrationScenario`, `IntegrationRun`, `VerifiedBundle`, `Role`, `Event`가 1급 객체다(`packages/task-domain`). 저장 구조는 SQLite의 15개 테이블로 정규화되어 있다(`packages/task-store`). 설계는 초기 저장소로 PostgreSQL을 예시했으나, 동일한 관계형 스키마를 기존 운영 구성과 같은 SQLite(`node:sqlite`) 위에 구현했다. 테이블 구성이 같으므로 필요 시 PostgreSQL로 이전할 수 있다.
+`Task`, `TaskDependency`, `Requirement`, `Artifact`, `ArtifactVersion`, `ArtifactLineage`, `TaskContract`, `IntegrationSet`, `IntegrationScenario`, `IntegrationRun`, `VerifiedBundle`, `Role`, `Learning`, `Event`가 1급 객체다(`packages/task-domain`). 저장 구조는 SQLite의 16개 테이블로 정규화되어 있다(`packages/task-store`). 설계는 초기 저장소로 PostgreSQL을 예시했으나, 동일한 관계형 스키마를 기존 운영 구성과 같은 SQLite(`node:sqlite`) 위에 구현했다. 테이블 구성이 같으므로 필요 시 PostgreSQL로 이전할 수 있다.
 
 ## 구현 Phase
 

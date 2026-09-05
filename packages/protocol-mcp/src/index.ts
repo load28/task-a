@@ -13,7 +13,8 @@ A prompt becomes a root task (task_create); tasks decompose progressively via pr
 Sessions are workers: resume work by searching (task_search), loading (task_load), asking for runnable leaf tasks (task_get_runnable) and compiling graph-based context (task_get_context).
 Execute one atomic task at a time: task_start, do the work, then task_complete with a summary, published artifacts and local verification. The engine, not the agent, decides state transitions.
 Task results are versioned artifacts (artifact_publish) with lineage and contracts (contract_define). Upstream changes mark downstream artifacts, bundles and integrations stale; impact_analyze reports the blast radius.
-Combinations of artifacts are verified separately: integration_propose defines integration sets and scenarios along architecture boundaries, integration_run pins exact artifact versions, and integration_report records scenario results. Passing runs promote Verified Bundles that parents consume instead of raw artifacts; failures classify causes and can spawn diagnostic tasks.`
+Combinations of artifacts are verified separately: integration_propose defines integration sets and scenarios along architecture boundaries, integration_run pins exact artifact versions, and integration_report records scenario results. Passing runs promote Verified Bundles that parents consume instead of raw artifacts; failures classify causes and can spawn diagnostic tasks.
+The system self-improves: record what you learn while completing tasks (task_complete learnings, learning_record) — insights, pitfalls, conventions, failure patterns. The engine feeds relevant learnings back into every task context, so the second run on a topic is better than the first.`
 
 export class TaskAgentMcpServer {
   private agent: TaskAgent
@@ -115,7 +116,7 @@ function failure(id: JsonRpcRequest["id"], fallbackCode: number, message: string
   return { jsonrpc: "2.0", id: id ?? null, error: { code: fallbackCode, message } }
 }
 
-export const READ_ONLY_TOOLS = ["task_search", "task_load", "task_get_runnable", "task_get_context", "impact_analyze"]
+export const READ_ONLY_TOOLS = ["task_search", "task_load", "task_get_runnable", "task_get_context", "impact_analyze", "learning_search"]
 
 const artifactVersionRef = {
   type: "object",
@@ -207,6 +208,19 @@ export const tools = [
           properties: { passed: { type: "boolean" }, evidence: { type: "string" }, criteriaSatisfied: { type: "array", items: { type: "string" } } },
           required: ["passed"],
         },
+        learnings: {
+          type: "array",
+          description: "Durable lessons from this task (insights, pitfalls, conventions) fed back into future task contexts",
+          items: {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              kind: { type: "string", enum: ["insight", "pitfall", "convention", "failure_pattern", "improvement"] },
+              tags: { type: "array", items: { type: "string" } },
+            },
+            required: ["description"],
+          },
+        },
       },
       required: ["taskId", "summary"],
     },
@@ -264,6 +278,31 @@ export const tools = [
     title: "Analyze change impact",
     description: "Compute the downstream blast radius of an artifact's latest version via lineage: stale artifact versions, bundles, integration sets and affected tasks.",
     inputSchema: { type: "object", properties: { artifactId: { type: "string" }, compatibility: { type: "string", enum: ["compatible", "breaking"] } }, required: ["artifactId"] },
+  },
+  {
+    name: "learning_record",
+    title: "Record a learning",
+    description: "Save a durable lesson to memory (insight, pitfall, convention, failure pattern or improvement idea). Relevant learnings are automatically fed into future task contexts so the second run on a topic is better than the first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceTaskId: { type: "string" },
+        sourceRunId: { type: "string" },
+        kind: { type: "string", enum: ["insight", "pitfall", "convention", "failure_pattern", "improvement"] },
+        description: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["description"],
+    },
+  },
+  {
+    name: "learning_search",
+    title: "Search learnings",
+    description: "Search recorded learnings by keywords, or pass taskId to get the learnings the engine considers relevant to that task.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" }, taskId: { type: "string" }, limit: { type: "number" } },
+    },
   },
   {
     name: "integration_propose",

@@ -36,6 +36,7 @@ Task Graph  Context   Integration
 4. `task_start` → 작업 → `task_complete` — Agent는 결과만 제출하고 상태 전이는 Engine이 판단한다.
 5. `artifact_publish` — 결과는 lineage·contract가 기록된 버전 Artifact가 된다. 재발행 시 downstream이 stale된다.
 6. `integration_propose` → `integration_run` → `integration_report` — Architecture Boundary 단위 조합을 Scenario로 검증하고, 통과한 정확한 버전 조합을 Verified Bundle로 승격한다. 실패는 원인 분류 후 필요한 Task만 reopen하거나 Diagnostic Task를 만든다.
+7. `learning_record` / `task_complete`의 `learnings` — 작업에서 배운 것(insight·pitfall·convention·failure pattern)을 Learning으로 축적하고, Engine이 이후 Task Context에 관련 Learning을 자동 주입한다. 같은 주제의 두 번째 실행이 첫 번째보다 나아진다.
 
 ## 실행
 
@@ -66,6 +67,7 @@ MCP Tool과 HTTP `/v1/<operation>`은 같은 operation 집합을 노출합니다
 | `task_create` `task_search` `task_load` `task_get_runnable` `task_get_context` | Task 생성·검색·로드·Runnable 해석·Context 컴파일 |
 | `task_propose_decomposition` `task_start` `task_complete` `task_fail` `task_reopen` | Proposal 기반 분해와 lifecycle 결과 제출 |
 | `artifact_publish` `contract_define` `requirement_add` `impact_analyze` | Artifact 버전 발행, Contract 정의, Requirement/Constraint 등록, 영향 분석 |
+| `learning_record` `learning_search` | 자기개선 Learning 축적·조회 |
 | `integration_propose` `integration_run` `integration_report` | Integration Set 제안·실행·결과 보고 |
 
 ## 경계

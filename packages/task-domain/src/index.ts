@@ -242,6 +242,24 @@ export interface Role {
   constraints: string[]
 }
 
+export type LearningKind =
+  | "insight"
+  | "pitfall"
+  | "convention"
+  | "failure_pattern"
+  | "improvement"
+
+export interface Learning {
+  id: string
+  sourceTaskId?: string
+  sourceRunId?: string
+  kind: LearningKind
+  description: string
+  tags: string[]
+  appliedCount: number
+  createdAt: string
+}
+
 export type EventType =
   | "TASK_CREATED"
   | "TASK_DECOMPOSED"
@@ -268,6 +286,7 @@ export type EventType =
   | "BUNDLE_STALE"
   | "DIAGNOSTIC_CREATED"
   | "ARCHITECTURE_REVISED"
+  | "LEARNING_RECORDED"
 
 export interface TaskGraphEvent {
   id: string

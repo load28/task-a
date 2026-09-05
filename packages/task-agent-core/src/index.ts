@@ -1,4 +1,4 @@
-import type { ArtifactVersion, Requirement, Task, TaskContract } from "#task-domain"
+import type { ArtifactVersion, Learning, Requirement, Task, TaskContract } from "#task-domain"
 import type {
   CompleteTaskInput,
   CreateTaskInput,
@@ -6,6 +6,7 @@ import type {
   DefineContractInput,
   ImpactReport,
   PublishArtifactInput,
+  RecordLearningInput,
   RunnableTask,
   TaskGraphEngine,
   TaskLoadResult,
@@ -40,6 +41,8 @@ export interface TaskAgent {
   defineContract(input: DefineContractInput): Promise<TaskContract>
   addRequirement(input: { taskId: string; description: string; kind?: "requirement" | "constraint" }): Promise<Requirement>
   calculateImpact(input: { artifactId: string; compatibility?: "compatible" | "breaking" }): Promise<ImpactReport>
+  recordLearning(input: RecordLearningInput): Promise<Learning>
+  searchLearnings(input: { query?: string; taskId?: string; limit?: number }): Promise<Learning[]>
   proposeIntegration(input: IntegrationProposal): Promise<IntegrationProposalResult>
   runIntegration(input: { setRef: string }): Promise<StartRunResult>
   reportIntegration(input: { runId: string } & RunReport): Promise<ReportRunResult>
@@ -127,6 +130,17 @@ export class TaskAgentService implements TaskAgent {
     return this.engine.calculateImpact(input.artifactId, input.compatibility)
   }
 
+  async recordLearning(input: RecordLearningInput): Promise<Learning> {
+    validateObject(input)
+    return this.engine.recordLearning(input)
+  }
+
+  async searchLearnings(input: { query?: string; taskId?: string; limit?: number }): Promise<Learning[]> {
+    validateObject(input)
+    if (input.taskId) return this.engine.relevantLearnings(input.taskId, input.limit)
+    return this.engine.searchLearnings(input.query ?? "", input.limit)
+  }
+
   async proposeIntegration(input: IntegrationProposal): Promise<IntegrationProposalResult> {
     validateObject(input)
     return this.integration.proposeIntegration(input)
@@ -158,6 +172,8 @@ export const OPERATIONS = [
   "contract_define",
   "requirement_add",
   "impact_analyze",
+  "learning_record",
+  "learning_search",
   "integration_propose",
   "integration_run",
   "integration_report",
@@ -193,6 +209,10 @@ export async function dispatchOperation(agent: TaskAgent, operation: string, inp
       return agent.addRequirement(input as Parameters<TaskAgent["addRequirement"]>[0])
     case "impact_analyze":
       return agent.calculateImpact(input as Parameters<TaskAgent["calculateImpact"]>[0])
+    case "learning_record":
+      return agent.recordLearning(input as Parameters<TaskAgent["recordLearning"]>[0])
+    case "learning_search":
+      return agent.searchLearnings(input as Parameters<TaskAgent["searchLearnings"]>[0])
     case "integration_propose":
       return agent.proposeIntegration(input as Parameters<TaskAgent["proposeIntegration"]>[0])
     case "integration_run":

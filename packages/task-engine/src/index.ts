@@ -9,6 +9,8 @@ import type {
   Criterion,
   EventType,
   IntegrationPolicy,
+  Learning,
+  LearningKind,
   Requirement,
   RequirementKind,
   Task,
@@ -72,6 +74,15 @@ export interface CompleteTaskInput {
     evidence?: string
     criteriaSatisfied?: string[]
   }
+  learnings?: Array<Omit<RecordLearningInput, "sourceTaskId" | "sourceRunId">>
+}
+
+export interface RecordLearningInput {
+  sourceTaskId?: string
+  sourceRunId?: string
+  kind?: LearningKind
+  description: string
+  tags?: string[]
 }
 
 export interface DefineContractInput {
@@ -275,6 +286,9 @@ export class TaskGraphEngine {
       for (const artifact of input.artifacts ?? []) {
         this.publishArtifact({ ...artifact, taskId: task.id })
       }
+      for (const learning of input.learnings ?? []) {
+        this.recordLearning({ ...learning, sourceTaskId: task.id })
+      }
       task = this.requireTask(input.taskId)
       if (task.status === "running") this.setStatus(task, "implemented", undefined, { summary: input.summary })
       task = this.requireTask(input.taskId)
@@ -436,6 +450,61 @@ export class TaskGraphEngine {
       this.emit("REQUIREMENT_SATISFIED", requirement.taskId, { requirementId }, evidence)
       return updated
     })
+  }
+
+  recordLearning(input: RecordLearningInput): Learning {
+    return this.atomic(() => {
+      requireText(input.description, "description")
+      if (input.kind !== undefined && !isLearningKind(input.kind)) throw new Error(`Invalid learning kind: ${input.kind}`)
+      if (input.sourceTaskId) this.requireTask(input.sourceTaskId)
+      const learning: Learning = {
+        id: randomUUID(),
+        sourceTaskId: input.sourceTaskId,
+        sourceRunId: input.sourceRunId,
+        kind: input.kind ?? "insight",
+        description: input.description.trim(),
+        tags: [...new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean))],
+        appliedCount: 0,
+        createdAt: new Date().toISOString(),
+      }
+      this.store.insertLearning(learning)
+      this.emit("LEARNING_RECORDED", input.sourceTaskId, { learningId: learning.id, runId: input.sourceRunId }, { kind: learning.kind, description: learning.description })
+      return learning
+    })
+  }
+
+  relevantLearnings(taskId: string, limit = 10): Learning[] {
+    const task = this.requireTask(taskId)
+    const terms = tokenize([task.title, task.goal, task.category, ...this.ancestorsOf(taskId).map((ancestor) => ancestor.title)].join(" "))
+    const proximity = new Set([...this.subtreeIds(this.rootOf(taskId).id), ...task.dependencies])
+    const scored: Array<{ learning: Learning; score: number }> = []
+    for (const learning of this.store.allLearnings()) {
+      if (learning.sourceTaskId === taskId) continue
+      const text = `${learning.description} ${learning.tags.join(" ")}`.toLowerCase()
+      let score = terms.filter((term) => text.includes(term)).length
+      if (score === 0) continue
+      if (learning.sourceTaskId && proximity.has(learning.sourceTaskId)) score += 1
+      scored.push({ learning, score })
+    }
+    return scored
+      .sort((a, b) => b.score - a.score || b.learning.createdAt.localeCompare(a.learning.createdAt))
+      .slice(0, Math.max(1, Math.min(limit, 50)))
+      .map((entry) => entry.learning)
+  }
+
+  searchLearnings(query: string, limit = 20): Learning[] {
+    const terms = tokenize(query)
+    const all = this.store.allLearnings()
+    if (terms.length === 0) return all.slice(0, Math.max(1, Math.min(limit, 100)))
+    return all
+      .map((learning) => {
+        const text = `${learning.description} ${learning.tags.join(" ")}`.toLowerCase()
+        return { learning, score: terms.filter((term) => text.includes(term)).length }
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || b.learning.createdAt.localeCompare(a.learning.createdAt))
+      .slice(0, Math.max(1, Math.min(limit, 100)))
+      .map((entry) => entry.learning)
   }
 
   evaluateCompletion(taskId: string): CompletionEvaluation {
@@ -888,4 +957,12 @@ function isIntegrationPolicy(value: unknown): value is IntegrationPolicy {
 
 function isArtifactType(value: unknown): value is ArtifactType {
   return ["research", "architecture", "code", "test", "bundle", "decision", "note"].includes(String(value))
+}
+
+function isLearningKind(value: unknown): value is LearningKind {
+  return ["insight", "pitfall", "convention", "failure_pattern", "improvement"].includes(String(value))
+}
+
+function tokenize(text: string): string[] {
+  return [...new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((term) => term.length > 1))]
 }

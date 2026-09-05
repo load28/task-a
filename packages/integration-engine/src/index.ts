@@ -343,6 +343,17 @@ export class IntegrationEngine {
       this.engine.revertTaskToVerified(producer.id, `Integration failed: ${set.name}`)
     }
     this.engine.emit("INTEGRATION_FAILED", set.parentTaskId, { integrationSetId: set.id, runId: run.id }, { failureType: failure.type, affectedTaskIds: failure.affectedTaskIds })
+    const observations = run.scenarioResults
+      .filter((result) => result.status === "failed" && result.observed)
+      .map((result) => result.observed)
+      .join("; ")
+    this.engine.recordLearning({
+      sourceTaskId: set.parentTaskId,
+      sourceRunId: run.id,
+      kind: "failure_pattern",
+      description: `Integration ${set.name} failed (${failure.type}) on scenarios: ${failedScenarios.map((scenario) => scenario.name).join(", ")}${observations ? ` — ${observations}` : ""}`,
+      tags: [set.name, failure.type, ...failedScenarios.map((scenario) => scenario.name)],
+    })
     let diagnosticTask: Task | undefined
     if (failure.type === "unknown") {
       diagnosticTask = this.engine.createTask({

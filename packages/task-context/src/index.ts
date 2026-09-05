@@ -1,4 +1,4 @@
-import type { ArtifactVersionRef, Criterion, TaskSummary } from "#task-domain"
+import type { ArtifactVersionRef, Criterion, Learning, TaskSummary } from "#task-domain"
 import type { TaskGraphEngine } from "#task-engine"
 
 export interface ContextArtifact {
@@ -33,6 +33,7 @@ export interface TaskContext {
   verifiedBundles: ContextArtifact[]
   contracts: ContextContract[]
   knownFailures: string[]
+  learnings: Learning[]
   acceptanceCriteria: Criterion[]
   dependencies: Array<{ id: string; title: string; status: string }>
   childSummary?: TaskSummary
@@ -159,6 +160,9 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskC
       }
     }
 
+    const learnings = engine.relevantLearnings(taskId)
+    for (const learning of learnings) store.incrementLearningApplied(learning.id)
+
     const context: TaskContext = {
       task: { id: task.id, title: task.title, goal: task.goal, category: task.category, status: task.status },
       path: engine.pathOf(taskId),
@@ -171,6 +175,7 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskC
       verifiedBundles,
       contracts,
       knownFailures: [...knownFailures],
+      learnings,
       acceptanceCriteria: task.acceptanceCriteria,
       dependencies: dependencies.map((dependency) => ({ id: dependency.id, title: dependency.title, status: dependency.status })),
       childSummary: task.childIds.length > 0 ? engine.summarize(taskId) : undefined,
@@ -213,6 +218,7 @@ export function formatTaskContext(context: TaskContext): string {
     ["Contracts", context.contracts.map((contract) =>
       `${contract.role} of ${contract.contractId}@${contract.version} with ${contract.counterpartTaskTitle}; provides: ${contract.provides.join(", ") || "-"}; expects: ${contract.expects.join(", ") || "-"}${contract.invariants.length ? `; invariants: ${contract.invariants.join(", ")}` : ""}`)],
     ["Known Failures", context.knownFailures],
+    ["Learnings", context.learnings.map((learning) => `[${learning.kind}] ${learning.description}`)],
     ["Dependencies", context.dependencies.map((dependency) => `${dependency.title} (${dependency.status})`)],
     ["Acceptance Criteria", context.acceptanceCriteria.map((criterion) => `${criterion.id}: ${criterion.description}`)],
     ["Completed Work", context.childSummary?.completedWork],

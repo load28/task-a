@@ -8,6 +8,7 @@ import type {
   IntegrationRun,
   IntegrationScenario,
   IntegrationSet,
+  Learning,
   Requirement,
   Role,
   Task,
@@ -422,6 +423,30 @@ export class TaskGraphStore {
     return row ? toRole(row) : undefined
   }
 
+  insertLearning(learning: Learning): void {
+    this.db.prepare(`
+      INSERT INTO learnings (id, source_task_id, source_run_id, kind, description, tags_json, applied_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(learning.id, learning.sourceTaskId ?? null, learning.sourceRunId ?? null, learning.kind, learning.description, JSON.stringify(learning.tags), learning.appliedCount, learning.createdAt)
+  }
+
+  findLearning(id: string): Learning | undefined {
+    const row = this.db.prepare("SELECT * FROM learnings WHERE id = ?").get(id) as Row | undefined
+    return row ? toLearning(row) : undefined
+  }
+
+  allLearnings(): Learning[] {
+    return (this.db.prepare("SELECT * FROM learnings ORDER BY created_at DESC, rowid DESC").all() as Row[]).map(toLearning)
+  }
+
+  learningsBySourceTask(taskId: string): Learning[] {
+    return (this.db.prepare("SELECT * FROM learnings WHERE source_task_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map(toLearning)
+  }
+
+  incrementLearningApplied(id: string): void {
+    this.db.prepare("UPDATE learnings SET applied_count = applied_count + 1 WHERE id = ?").run(id)
+  }
+
   insertEvent(event: TaskGraphEvent): void {
     this.db.prepare("INSERT INTO events (id, type, task_id, refs_json, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(event.id, event.type, event.taskId ?? null, event.refs ? JSON.stringify(event.refs) : null, event.payload ? JSON.stringify(event.payload) : null, event.createdAt)
@@ -602,6 +627,18 @@ export class TaskGraphStore {
         constraints_json TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS learnings (
+        id TEXT PRIMARY KEY,
+        source_task_id TEXT REFERENCES tasks(id),
+        source_run_id TEXT,
+        kind TEXT NOT NULL,
+        description TEXT NOT NULL,
+        tags_json TEXT NOT NULL,
+        applied_count INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_learnings_task ON learnings(source_task_id);
+
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
@@ -750,6 +787,19 @@ function toRole(row: Row): Role {
     capabilities: parseJson(row.capabilities_json) ?? [],
     allowedTools: parseJson(row.allowed_tools_json) ?? [],
     constraints: parseJson(row.constraints_json) ?? [],
+  }
+}
+
+function toLearning(row: Row): Learning {
+  return {
+    id: String(row.id),
+    sourceTaskId: row.source_task_id == null ? undefined : String(row.source_task_id),
+    sourceRunId: row.source_run_id == null ? undefined : String(row.source_run_id),
+    kind: String(row.kind) as Learning["kind"],
+    description: String(row.description),
+    tags: parseJson(row.tags_json) ?? [],
+    appliedCount: Number(row.applied_count),
+    createdAt: String(row.created_at),
   }
 }
 
