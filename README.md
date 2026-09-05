@@ -1,25 +1,43 @@
 # Task Agent
 
-OpenCode를 내부 Agent Harness로 사용하는 독립형 Persistent Work Context Manager입니다. Host Agent는 네 가지 Gateway operation만 호출하며, Task 상태는 SQLite 기반 Event Log와 materialized Snapshot으로 관리합니다.
+자연어 요청을 영속적인 재귀형 Task Graph로 변환하는 Agent Task Runtime입니다. Prompt는 입력이고, Task가 실제 상태이며, Session(GPT·Claude·기타 Agent)은 Worker입니다. 각 Task는 버전된 Artifact를 생성하고, 여러 Artifact 조합은 Integration Graph에서 별도로 검증되며, 검증을 통과한 조합만 Verified Bundle로 상위 Task에 승격됩니다.
 
-## 현재 구현 범위
+핵심 개념과 설계 원칙은 [설계 문서](docs/architecture.md)에 정리했습니다.
 
-- Task, Event, Snapshot, Artifact, Relation 도메인과 deterministic Task Engine
-- SQLite 저장소와 트랜잭션 기반 Event/Snapshot 갱신
-- 목적별 Task Context Compiler와 Agent 간 Handoff
-- OpenCode SDK Harness와 8개 Custom Task Tool
-- MCP 2025-06-18 stdio 및 HTTP Gateway
-- source 추적과 sync idempotency
+## 시스템 구성
+
+```
+GPT / Claude / Other Agent
+          │  MCP / HTTP
+          ↓
+     Task Agent (Orchestrator)
+          │
+  ┌───────┼────────────┐
+  ↓       ↓            ↓
+Task Graph  Context   Integration
+ Engine     Engine     Engine
+          │
+      Task Store (SQLite)
+```
+
+- `packages/task-domain` — Task, Dependency, Requirement, Artifact/Version/Lineage, Contract, Integration Set/Scenario/Run, Verified Bundle, Role, Event의 1급 도메인 모델
+- `packages/task-store` — SQLite 저장소(tasks, task_dependencies, task_requirements, artifacts, artifact_versions, artifact_lineage, contracts, contract_versions, integration_sets, integration_members, integration_scenarios, integration_runs, verified_bundles, roles, events)
+- `packages/task-engine` — Graph Engine: Proposal 기반 분해 검증·적용, 상태 전이 결정, Runnable Leaf 해석, Stale 전파, Change Impact 분석, 완료 조건 평가
+- `packages/integration-engine` — Integration Set/Scenario/Run, Integration Identity 캐시, Verified Bundle 승격, 실패 분류와 Diagnostic Task 생성
+- `packages/task-context` — Graph 기반 Context Builder(Context Policy 상속, Bundle 우선 소비, Known Failure 수집)
+- `packages/task-agent-core` — 최소 외부 API를 제공하는 Orchestrator
+- `packages/protocol-mcp` / `packages/protocol-http` — MCP 2025-06-18 stdio·인증 원격 MCP·HTTP Gateway
+
+## 핵심 흐름
+
+1. `task_create` — 요청을 Root Task로 변환한다.
+2. `task_propose_decomposition` — LLM이 분해를 제안하면 Engine이 cycle·중복 책임·의존성을 검증한 뒤 적용한다.
+3. `task_get_runnable` / `task_get_context` — 다른 세션에서도 실행 가능한 Leaf와 Graph 기반 Context를 받아 이어간다.
+4. `task_start` → 작업 → `task_complete` — Agent는 결과만 제출하고 상태 전이는 Engine이 판단한다.
+5. `artifact_publish` — 결과는 lineage·contract가 기록된 버전 Artifact가 된다. 재발행 시 downstream이 stale된다.
+6. `integration_propose` → `integration_run` → `integration_report` — Architecture Boundary 단위 조합을 Scenario로 검증하고, 통과한 정확한 버전 조합을 Verified Bundle로 승격한다. 실패는 원인 분류 후 필요한 Task만 reopen하거나 Diagnostic Task를 만든다.
 
 ## 실행
-
-AWS 없이 운영과 같은 HTTPS·인증 흐름을 시험하려면 [로컬 Docker 서버](deploy/local/README.md)를 사용합니다.
-
-기본 사용 방식은 [Codex·Claude 대화 안에서 사용하기](docs/in-host-experience.md)다. “이 작업 이어서 하자”라고 말하면 MCP 연결 계층이 컨텍스트 조회·필요 시 로그인 링크·기록 연결을 제공한다. 별도 로그인 CLI나 work 실행기는 필요하지 않다. 최초 MCP·훅 등록과 서버 배포는 필요하다.
-
-AWS에서 본인 인증 후 여러 장소에서 연결하는 구성은 [배포 절차](deploy/README.md)를 따른다. 원격 모드는 `npm run remote`이며 공식 MCP SDK의 Streamable HTTP와 Cognito 호환 JWT 검증을 사용한다. 기존 `npm start`는 로컬/직접 HTTP 통합용이며 원격 배포에는 사용하지 않는다.
-
-자연스러운 기록을 위한 Host 지침과 평가 범위는 [Host 연동](docs/host-integration.md)에 정리했다. Task Agent가 전달되지 않은 대화를 자동 수집하지는 않는다.
 
 Node.js 24 이상이 필요합니다.
 
@@ -29,55 +47,31 @@ npm run check
 node apps/task-agent/src/mcp.ts
 ```
 
-기본 데이터베이스는 `data/tasks.db`입니다. 경로는 `TASK_AGENT_DB`로 변경할 수 있습니다. OpenCode 연결 없이 MCP 프로토콜이나 구조화된 Engine 경로만 확인하려면 `TASK_AGENT_DISABLE_OPENCODE=1`을 사용합니다.
+기본 데이터베이스는 `data/tasks.db`이며 `TASK_AGENT_DB`로 변경합니다. 상대 경로는 이 저장소 기준으로 해석합니다.
 
-상대 DB 경로와 기본 경로는 서비스 저장소를 기준으로 해석합니다. MCP Host의 작업 디렉터리와 무관하게 같은 Task 저장소와 OpenCode Tool을 사용합니다.
-
-Host의 MCP 설정에서는 이 저장소를 작업 디렉터리로 지정하고 `node apps/task-agent/src/mcp.ts`를 stdio 서버 명령으로 등록합니다. 자연어 `task_sync`와 `task_run`은 OpenCode에 구성된 모델 인증을 사용합니다.
-
-외부 Gateway operation은 다음 네 가지입니다.
-
-| Operation | MCP Tool | HTTP |
+| 모드 | 명령 | 용도 |
 |---|---|---|
-| Context | `task_context` | `POST /v1/context` |
-| Sync | `task_sync` | `POST /v1/sync` |
-| Handoff | `task_handoff` | `POST /v1/handoff` |
-| Run | `task_run` | `POST /v1/run` |
+| MCP stdio | `npm run mcp` | 호스트 Agent의 로컬 MCP 연결 |
+| HTTP | `npm start` | 로컬/직접 HTTP 통합 (`/v1/<operation>`) |
+| 원격 MCP | `npm run remote` | JWT 인증 Streamable HTTP 배포용 |
 
-HTTP 서버는 `npm start`로 실행합니다. 기본 주소는 `127.0.0.1:7331`이며 `TASK_AGENT_HOST`, `TASK_AGENT_PORT`, `TASK_AGENT_TOKEN`으로 변경합니다. Token을 지정하면 `/health` 이외의 요청에 `Authorization: Bearer <token>`이 필요합니다.
+HTTP 서버 기본 주소는 `127.0.0.1:7331`이며 `TASK_AGENT_HOST`, `TASK_AGENT_PORT`, `TASK_AGENT_TOKEN`으로 변경합니다. 외부 인터페이스 바인딩에는 Token이 필수입니다. 원격 모드 배포는 [배포 절차](deploy/README.md), AWS 없이 검증하려면 [로컬 Docker 서버](deploy/local/README.md)를 사용합니다.
 
-외부 인터페이스에 바인딩할 때는 Token이 필수입니다. MCP는 initialize → notifications/initialized 이후 Tool을 호출합니다. stdin이 닫히면 처리 중인 요청을 마친 뒤 Harness도 종료합니다.
+## 외부 API
 
-`sync`에는 대화와 지시를 전달합니다. Host가 가공한 `events` 입력은 허용하지 않습니다. `idempotencyKey`를 지정한 재시도는 최초 응답을 그대로 반환하며 모델을 다시 호출하지 않습니다. 같은 키로 다른 입력을 보내면 오류를 반환합니다. 한 sync의 이벤트·Artifact·Snapshot·재시도 기록은 함께 커밋하거나 함께 롤백합니다.
+MCP Tool과 HTTP `/v1/<operation>`은 같은 operation 집합을 노출합니다.
 
-```json
-{
-  "mcpServers": {
-    "task-agent": {
-      "command": "node",
-      "args": ["/absolute/path/task-agent/apps/task-agent/src/mcp.ts"],
-      "env": {
-        "TASK_AGENT_DB": "/absolute/path/task-agent/data/tasks.db"
-      }
-    }
-  }
-}
-```
+| Operation | 역할 |
+|---|---|
+| `task_create` `task_search` `task_load` `task_get_runnable` `task_get_context` | Task 생성·검색·로드·Runnable 해석·Context 컴파일 |
+| `task_propose_decomposition` `task_start` `task_complete` `task_fail` `task_reopen` | Proposal 기반 분해와 lifecycle 결과 제출 |
+| `artifact_publish` `contract_define` `requirement_add` `impact_analyze` | Artifact 버전 발행, Contract 정의, Requirement/Constraint 등록, 영향 분석 |
+| `integration_propose` `integration_run` `integration_report` | Integration Set 제안·실행·결과 보고 |
 
 ## 경계
 
-의존성 방향은 `protocol → task-agent-core → task-engine → task-domain`입니다. `opencode-harness`는 Core의 `TaskReasoner` 포트만 구현하며 Domain과 Engine은 OpenCode를 import하지 않습니다.
+의존성 방향은 `protocol → task-agent-core → (task-engine · integration-engine · task-context) → task-domain`입니다. LLM은 Graph를 직접 수정하지 않고 Proposal과 Result만 제출하며, 상태 전이·검증·Stale 전파는 모두 Engine이 수행합니다. 모든 변경은 `events` 테이블에 Event로 남습니다.
 
-Task의 현재 상태는 Event History에서 다시 투영할 수 있습니다. Decision 대체는 `metadata.supersedes`를 사용합니다. Blocker 해제, Constraint 철회(`constraint_removed`), Next Action 완료(`next_action_completed`)는 `metadata.resolves`로 활성 Event를 가리키며 과거 기록을 보존합니다.
+## 구현 범위
 
-자연어 추출에는 실제 대화의 근거 인용을 요구합니다. 인용과 Harness Session ID는 이벤트에 남습니다. 모델 판단 중 Task가 바뀌면 최신 상태로 최대 세 번 추출을 시도합니다. 인용 검증은 사용자의 발언을 실제 사실로 입증하는 검증은 아닙니다.
-
-OpenCode는 별도 프로세스로 격리됩니다. Custom Tool은 Node bridge를 통해 Task Engine만 호출하므로 OpenCode의 Bun 런타임이 Domain이나 Storage에 침투하지 않습니다.
-
-현재 sync는 OpenCode의 구조화된 이벤트 추출 뒤 Core가 Engine에 일괄 반영하는 방식입니다. 추출·Task 선택 세션의 쓰기 Tool은 차단하고, 자유 작업인 run은 Task Tool을 호출할 수 있습니다. 모든 operation을 OpenCode Tool Loop로 수행하는 원래 설계와는 이 부분이 다릅니다.
-
-점검 결과와 남은 구현 범위는 [설계 점검 기록](docs/design-review.md)에 정리했습니다.
-
-## 실제 모델 평가
-
-`node scripts/evaluate-agent.ts`는 가상 컴파일러 대화를 구성된 외부 모델 제공자에게 보내므로 명시적으로 실행할 때만 사용합니다. 별도 임시 DB에서 작업 생성, 미확정 제안 제외, 확정 상태 저장, 완료 후 다른 Host 서비스의 Handoff 조회를 검증합니다. 임시 DB 경로를 출력하고 검사 후에도 보존합니다. 일반 `npm run check`는 외부 모델을 호출하지 않습니다.
+설계의 Phase 1–4(Task Graph, Artifact/Contract, Integration/Bundle/Stale, Diagnostic/Impact)가 구현되어 있습니다. Phase 5(Multi Agent 병렬 orchestration, Role Engine 고도화, OpenCode Execution Harness 연동)는 이 코어 위에 확장할 다음 단계입니다.
