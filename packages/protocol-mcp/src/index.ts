@@ -15,6 +15,7 @@ Execute one atomic task at a time: task_start, do the work, then task_complete w
 Task results are versioned artifacts (artifact_publish) with lineage and contracts (contract_define). Upstream changes mark downstream artifacts, bundles and integrations stale; impact_analyze reports the blast radius.
 Combinations of artifacts are verified separately: integration_propose defines integration sets and scenarios along architecture boundaries, integration_run pins exact artifact versions, and integration_report records scenario results. Passing runs promote Verified Bundles that parents consume instead of raw artifacts; failures classify causes and can spawn diagnostic tasks.
 The system self-improves: record what you learn while completing tasks (task_complete learnings, learning_record) — insights, pitfalls, conventions, failure patterns, each with an importance score. The engine feeds relevant learnings back into every task context (ranked by relevance, recency, importance and graph proximity), so the second run on a topic is better than the first.
+Work can also run without you: orchestrate_run drives a task to completion through an execution harness — it resolves runnable leaves, decides decompose or execute for each, submits results, verifies integrations, and stops for a human when a task repeatedly fails or needs a decision. Roles (role_list, role_define) carry the principles, tools and constraints each worker executes under.
 Keep the memory coherent: learning_record returns semantically similar existing learnings — when the new lesson contradicts or replaces one, mark the old one with learning_supersede (history is kept, retrieval excludes it). When failure patterns accumulate, the engine creates a reflection task to synthesize them into higher-level learnings.`
 
 export class TaskAgentMcpServer {
@@ -117,7 +118,7 @@ function failure(id: JsonRpcRequest["id"], fallbackCode: number, message: string
   return { jsonrpc: "2.0", id: id ?? null, error: { code: fallbackCode, message } }
 }
 
-export const READ_ONLY_TOOLS = ["task_search", "task_load", "task_get_runnable", "task_get_context", "impact_analyze", "learning_search"]
+export const READ_ONLY_TOOLS = ["task_search", "task_load", "task_get_runnable", "task_get_context", "impact_analyze", "learning_search", "role_list"]
 
 const artifactVersionRef = {
   type: "object",
@@ -392,6 +393,49 @@ export const tools = [
         },
       },
       required: ["runId", "scenarios"],
+    },
+  },
+  {
+    name: "role_define",
+    title: "Define a worker role",
+    description: "Create or update a role that workers execute tasks under: principles, capabilities, allowed tools and constraints. Tasks pick a role through assignedRole or their category.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string" },
+        principles: { type: "array", items: { type: "string" } },
+        capabilities: { type: "array", items: { type: "string" } },
+        allowedTools: { type: "array", items: { type: "string" } },
+        constraints: { type: "array", items: { type: "string" } },
+      },
+      required: ["id", "name", "description"],
+    },
+  },
+  {
+    name: "role_list",
+    title: "List worker roles",
+    description: "List the roles available to workers, including the defaults seeded by the orchestrator.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "orchestrate_run",
+    title: "Run the orchestration loop",
+    description: "Drive a task to completion without a human in the loop: the orchestrator resolves runnable leaves, asks the execution harness to decompose or execute each one, submits results, verifies integrations, and stops for a human when a task repeatedly fails or needs a decision. Pass taskId, or title and goal to create the root task first. Long running; bound it with maxRuns and maxIterations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        title: { type: "string" },
+        goal: { type: "string" },
+        concurrency: { type: "number" },
+        maxAttemptsPerTask: { type: "number" },
+        maxDepth: { type: "number" },
+        maxRuns: { type: "number" },
+        maxIterations: { type: "number" },
+        autoIntegration: { type: "boolean" },
+      },
     },
   },
 ]

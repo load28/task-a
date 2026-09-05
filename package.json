@@ -11,13 +11,15 @@
     "#integration-engine": "./packages/integration-engine/src/index.ts",
     "#task-store": "./packages/task-store/src/index.ts",
     "#task-context": "./packages/task-context/src/index.ts",
-    "#task-agent-core": "./packages/task-agent-core/src/index.ts"
+    "#task-agent-core": "./packages/task-agent-core/src/index.ts",
+    "#task-orchestrator": "./packages/task-orchestrator/src/index.ts"
   },
   "scripts": {
     "start": "node apps/task-agent/src/main.ts",
     "http": "node apps/task-agent/src/http.ts",
     "mcp": "node apps/task-agent/src/mcp.ts",
     "remote": "node apps/task-agent/src/remote.ts",
+    "orchestrate": "node apps/task-agent/src/orchestrate.ts",
     "test": "node --test",
     "check": "tsc --noEmit && node --test"
   },
