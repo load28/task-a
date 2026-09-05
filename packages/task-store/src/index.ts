@@ -20,7 +20,8 @@ import type {
 interface Row { [key: string]: unknown }
 
 export class TaskGraphStore {
-  private db: DatabaseSync
+  /** Extensions share this connection so graph updates and delivery receipts commit atomically. */
+  readonly db: DatabaseSync
   private transactionDepth = 0
 
   constructor(filename = ":memory:") {
@@ -29,6 +30,11 @@ export class TaskGraphStore {
     this.db.exec("PRAGMA busy_timeout = 10000")
     this.db.exec("PRAGMA foreign_keys = ON")
     this.db.exec("PRAGMA journal_mode = WAL")
+    const columns=this.db.prepare("PRAGMA table_info(tasks)").all().map(row=>row.name)
+    if(columns.includes("objective")&&!columns.includes("goal")){
+      this.db.close()
+      throw new Error("Legacy Task Agent database: use npm run migrate:legacy -- <source.db> <new.db> <workspace>, then set TASK_AGENT_DB to the new database")
+    }
     this.migrate()
   }
 

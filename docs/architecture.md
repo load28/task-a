@@ -1,6 +1,6 @@
 # 설계 — 재귀형 Task Graph + Integration Graph 기반 Task Agent
 
-이 문서는 시스템의 최종 설계와 현재 구현의 대응 관계를 정리한다.
+이 문서는 그래프 도메인 모델을 정리한다. 현재 실행 구조는 [OpenCode 서버 중심 최종 설계](automatic-host-plan.md)를 따른다.
 
 ## 한 문장 정의
 
@@ -11,7 +11,7 @@
 ## 설계 원칙
 
 1. **Prompt는 입력이다.** Prompt → Task. 이후 작업은 최초 Prompt가 아니라 Task 상태를 사용한다.
-2. **Session은 Worker다.** GPT/Claude/기타 세션은 언제든 종료될 수 있고, 영속 상태는 Task Store에 있다.
+2. **실행 Session은 OpenCode가 소유한다.** Claude Code·Codex는 대화 인터페이스이고, OpenCode 기본·하위 세션이 작업을 수행한다. 영속 태스크 상태는 Task Store에 있다.
 3. **Task는 재귀적으로 분해한다.** Task → Subtask → Atomic Task. 처음부터 모두 쪼개지 않고 진행하면서 점진적으로 분해한다. Atomic 기준: 1 Agent + 1 clear objective + 1 bounded context + 1 independently verifiable result.
 4. **Hierarchy와 Dependency를 분리한다.** Hierarchy는 "무엇의 일부인가"(`parentId`), Dependency는 "무엇이 먼저 필요한가"(`dependencies`)다.
 5. **Task 성공과 Integration 성공을 분리한다.** A ✓ B ✓ C ✓ 여도 A+B+C ✗ 일 수 있다. `implemented`/`verified`와 `integrated`는 다른 상태다.
@@ -44,23 +44,13 @@ type Learning = {
 - **반추(reflection)**: failure pattern이 임계치(기본 5건)만큼 쌓이면 Engine이 해당 Learning들을 합성하도록 지시하는 Reflection Task(diagnostic 카테고리)를 자동 생성한다(`REFLECTION_CREATED`). Agent는 이를 수행하며 상위 통찰을 기록하고 원본 패턴을 supersede한다(Generative Agents의 reflection).
 - **경계**: Learning은 정성적 메모리이며 강제 조건이 아니다. 반드시 지켜져야 할 교훈은 Agent가 `requirement_add`로 Requirement/Constraint로 승격시킨다. Requirement는 Integration Scenario로 검증되지만 Learning은 참고 정보로만 전달된다.
 
-## 자동 Orchestration (Phase 5)
+## OpenCode 서버 하네스
 
-Task Graph는 "다음에 실행 가능한 것"까지 계산하지만 그것을 실행하지는 않는다. 실행 주체를 프로그램이 직접 호출하는 것이 Orchestration Loop이며, `packages/task-orchestrator`에 있다.
+OpenCode의 기본 에이전트가 원문 요청을 해석하고 그래프 도구로 태스크를 관리한다. 계획·실행·통합·진단·반추에서 필요한 추론과 도구 실행은 같은 서버의 native harness가 수행한다. 그래프 엔진은 실행 가능한 노드와 맥락을 계산하고, 제출된 제안과 결과를 검증한다.
 
-```
-resolveRunnable → plan(분해할지 실행할지) → execute(실제 작업) → completeTask
-                                                        ↓
-                            자식이 모두 끝난 상위 Task → integration_plan → integration_run → integration_report
-```
+계획 에이전트는 읽기 전용 분석을 수행하고, 작업 에이전트는 구현과 검증을 수행한다. 기본 에이전트가 native task 도구로 위임한다. 파일 충돌 범위와 태스크 소유권을 지키도록 지시하며, 그래프의 task_start가 중복 claim을 거부한다. 역할 레코드는 작업 맥락이며 실제 도구 권한은 OpenCode 에이전트 설정으로 적용한다.
 
-- **실행 주체 추상화**: `TaskExecutor`는 `ExecutorRequest`(kind, instruction, Graph에서 컴파일한 context, 응답 JSON Schema, Role)를 받아 구조화 출력을 돌려주는 단일 인터페이스다. 기본 구현은 Claude Code CLI를 non-interactive 모드로 띄우는 `ClaudeCliExecutor`이고(`claude -p --output-format json --json-schema`, [Run Claude Code programmatically](https://code.claude.com/docs/en/headless)), 다른 하네스는 같은 인터페이스로 교체한다.
-- **LLM은 제안하고 Engine이 결정한다(원칙 11)**: 네 종류의 응답(`plan`, `execute`, `integration_plan`, `integration_verify`)은 모두 JSON Schema로 강제되고, Engine의 기존 검증 경로(`proposeDecomposition`, `completeTask`, `proposeIntegration`, `reportRun`)를 그대로 통과한다. Orchestrator는 상태를 직접 쓰지 않는다.
-- **점진적 분해(원칙 3)**: `plan` 단계가 Atomic 기준으로 판단해 `execute`/`decompose`/`blocked` 중 하나를 고른다. 분해 깊이 상한에 도달하면 분해 선택지를 닫는다.
-- **Task 성공과 Integration 성공의 분리(원칙 5)**: 자식이 모두 verified가 되어도 그 조합을 검증하기 전에는 완료로 판정하지 않는다. Orchestrator는 완료 판정 전에 Integration 계획 단계를 한 번 거치고, 검증할 조합이 없다는 판단(`needed=false`)이 나온 뒤에야 완료로 넘어간다.
-- **Role Engine**: 기본 Role 5종(researcher, architect, implementer, qa, diagnostician)이 시드되고, Task는 `assignedRole` 또는 category로 Role을 고른다. Role의 `allowedTools`는 하네스의 도구 허용 목록으로, principles·constraints는 system prompt로 전달된다. 판단 단계(`plan`, `integration_plan`)는 읽기 전용 도구로 제한한다.
-- **병렬 실행**: `concurrency`만큼 Runnable Leaf를 동시에 실행한다. 상태 전이는 단일 프로세스의 SQLite 트랜잭션에서 직렬화되지만 하네스는 작업 디렉터리를 공유하므로, 파일이 겹치지 않는 Task에만 올린다.
-- **정지 정책**: 재시도 한도를 넘긴 Task, Worker가 `blocked`으로 돌려준 Task, 반복 실패한 Integration Set은 사유와 함께 handoff로 기록하고 그 서브트리만 포기한다. 나머지 그래프는 계속 진행하며, 예산(`maxRuns`, `maxIterations`)을 넘으면 전체를 멈춘다. 자동 복구를 무한히 시도하지 않는 것이 기본값이다.
+전달 서비스는 메시지·세션 ID와 요청 순서만 관리한다. 별도 Orchestration Loop를 실행하지 않는다. `packages/task-orchestrator`의 이전 루프는 호환성 테스트용으로 남아 있고 현재 진입점에 연결하지 않는다.
 
 ## 네 종류의 Graph
 
@@ -96,6 +86,6 @@ pending → ready → running → implemented → verified → integrating → i
 | 2 | Artifact, Version, Lineage, Contract | 구현됨 |
 | 3 | Integration Set/Scenario, Verified Bundle, Stale Propagation | 구현됨 |
 | 4 | Diagnostic Graph, Impact Analysis, Selective Reopen, Integration Planner 검증 | 구현됨 |
-| 5 | Multi Agent 병렬 실행, Role Engine, Execution Harness, 자동 orchestration | 구현됨 |
+| 5 | OpenCode native 기본·하위 에이전트, 서버 세션, Graph MCP, 호스트 전달 연동 | 구현됨; 실제 모델 검증은 인증 필요 |
 
-Role은 도메인·저장소에 1급으로 존재하며(`roles` 테이블, `assignedRole`), Task Agent API는 Worker 식별 정보(`agent`, `sessionId`, `role`)를 `task_start`에서 받는다. Execution Harness는 `task_get_context` 출력물을 입력으로 받아 `task_complete`/`artifact_publish`로 결과를 제출한다. 실행 하네스 자체는 배포 이미지에 포함하지 않으므로, 원격 모드에서 `orchestrate_run`을 쓰려면 사용할 CLI를 이미지에 함께 설치한다.
+Role은 도메인·저장소에 존재하며, Task Graph API는 Worker 식별 정보(`agent`, `sessionId`, `role`)를 `task_start`에서 받는다. OpenCode는 `task_get_context`를 읽고 `task_complete`/`artifact_publish`로 결과를 제출한다. 로컬·원격 Graph MCP는 실행 하네스를 기동하지 않는다.

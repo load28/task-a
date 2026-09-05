@@ -21,11 +21,21 @@
     "remote": "node apps/task-agent/src/remote.ts",
     "orchestrate": "node apps/task-agent/src/orchestrate.ts",
     "test": "node --test",
-    "check": "tsc --noEmit && node --test"
+    "check": "tsc --noEmit && node --test",
+    "host:install": "node scripts/host-setup.ts install",
+    "host:status": "node scripts/host-setup.ts status",
+    "host:stop": "node scripts/host-setup.ts stop",
+    "host:uninstall": "node scripts/host-setup.ts uninstall",
+    "migrate:legacy": "node scripts/migrate-legacy.ts",
+    "evaluate:host": "node scripts/evaluate-automatic-host.ts",
+    "host:doctor": "node scripts/host-setup.ts doctor"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "jose": "^6.2.11"
+    "@opencode-ai/sdk": "^1.18.29",
+    "ajv": "^8.20.0",
+    "jose": "^6.2.11",
+    "opencode-ai": "^1.18.29"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

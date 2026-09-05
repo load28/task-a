@@ -6,7 +6,7 @@ import { AGENT_INSTRUCTIONS, READ_ONLY_TOOLS, TaskAgentMcpServer, tools } from "
 import { OwnerAuthenticator, AccessError, type Principal } from "../../task-auth/src/index.ts"
 import type { TaskAgent } from "#task-agent-core"
 
-export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
+export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator, backend?: TaskAgentMcpServer) {
   let active = 0
   let windowStart = Date.now()
   let requests = 0
@@ -23,13 +23,24 @@ export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
     res.setHeader("X-Content-Type-Options", "nosniff")
     if (req.headers.origin && req.headers.origin !== origin) return send(res, 403, { error: "Origin denied" })
     if (req.method === "GET" && req.url === "/health") return send(res, 200, { healthy: true })
-    if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(req.url ?? "")) return send(res, 200, auth.metadata())
+    if (
+      req.method === "GET" &&
+      ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(req.url ?? "")
+    )
+      return send(res, 200, auth.metadata())
     if (req.url !== "/mcp") return send(res, 404, { error: "Not found" })
-    if (Date.now() - windowStart >= 60000) { windowStart = Date.now(); requests = 0 }
-    if (++requests > 120 || active >= 4) { res.setHeader("Retry-After", "60"); return send(res, 429, { error: "Rate limit exceeded" }) }
+    if (Date.now() - windowStart >= 60000) {
+      windowStart = Date.now()
+      requests = 0
+    }
+    if (++requests > 120 || active >= 4) {
+      res.setHeader("Retry-After", "60")
+      return send(res, 429, { error: "Rate limit exceeded" })
+    }
     let principal: Principal
-    try { principal = await auth.authenticate(req.headers.authorization) }
-    catch (error) {
+    try {
+      principal = await auth.authenticate(req.headers.authorization)
+    } catch (error) {
       if (!(error instanceof AccessError)) throw error
       res.setHeader("WWW-Authenticate", auth.challenge())
       return send(res, error.status, { error: error.message })
@@ -38,9 +49,15 @@ export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
       res.setHeader("WWW-Authenticate", auth.challenge())
       return send(res, 403, { error: "Read scope required" })
     }
-    if (req.method !== "POST") { res.setHeader("Allow", "POST"); return send(res, 405, { error: "Method not allowed" }) }
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST")
+      return send(res, 405, { error: "Method not allowed" })
+    }
     // Authentication awaits JWKS retrieval; recheck after the await to bound concurrency.
-    if (active >= 4) { res.setHeader("Retry-After", "5"); return send(res, 429, { error: "Too many active requests" }) }
+    if (active >= 4) {
+      res.setHeader("Retry-After", "5")
+      return send(res, 429, { error: "Too many active requests" })
+    }
     active++
     let sdk: Server | undefined
     try {
@@ -52,21 +69,45 @@ export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
         chunks.push(Buffer.from(chunk))
       }
       let body: unknown
-      try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")) }
-      catch { return send(res, 400, { error: "Invalid JSON" }) }
-      const delegate = new TaskAgentMcpServer(agent)
-      await delegate.handle({ jsonrpc: "2.0", id: 0, method: "initialize" })
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+      } catch {
+        return send(res, 400, { error: "Invalid JSON" })
+      }
+      const delegate = backend ?? new TaskAgentMcpServer(agent)
+      const init = await delegate.handle({ jsonrpc: "2.0", id: 0, method: "initialize" })
       await delegate.handle({ jsonrpc: "2.0", method: "notifications/initialized" })
-      sdk = new Server({ name: "task-agent", version: "1.0.0" }, { capabilities: { tools: {} }, instructions: AGENT_INSTRUCTIONS })
-      sdk.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map((tool) => {
-        const readOnly = READ_ONLY_TOOLS.includes(tool.name)
-        const securitySchemes = [{ type: "oauth2", scopes: readOnly ? [auth.config.readScope] : [auth.config.readScope, auth.config.writeScope] }]
-        return { ...tool, inputSchema: { ...tool.inputSchema, type: "object" as const }, securitySchemes, _meta: { securitySchemes }, annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: false } }
-      }) }))
+      sdk = new Server(
+        { name: "task-agent", version: "1.0.0" },
+        { capabilities: { tools: {} }, instructions: (init?.result as any)?.instructions ?? AGENT_INSTRUCTIONS },
+      )
+      const listing = await delegate.handle({ jsonrpc: "2.0", id: 0, method: "tools/list" })
+      const exposed = (listing?.result as { tools: typeof tools }).tools
+      sdk.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: exposed.map((tool) => {
+          const readOnly = READ_ONLY_TOOLS.includes(tool.name)
+          const securitySchemes = [
+            {
+              type: "oauth2",
+              scopes: readOnly ? [auth.config.readScope] : [auth.config.readScope, auth.config.writeScope],
+            },
+          ]
+          return {
+            ...tool,
+            inputSchema: { ...tool.inputSchema, type: "object" as const },
+            securitySchemes,
+            _meta: { securitySchemes },
+            annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: false },
+          }
+        }),
+      }))
       sdk.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-        if (!READ_ONLY_TOOLS.includes(params.name) && !principal.scopes.has(auth.config.writeScope)) return {
-          isError: true, content: [{ type: "text" as const, text: "Write authorization required" }], _meta: { "mcp/www_authenticate": [auth.challenge(auth.config.writeScope)] },
-        }
+        if (!READ_ONLY_TOOLS.includes(params.name) && !principal.scopes.has(auth.config.writeScope))
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: "Write authorization required" }],
+            _meta: { "mcp/www_authenticate": [auth.challenge(auth.config.writeScope)] },
+          }
         const result = await delegate.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params })
         if (result?.error) return { isError: true, content: [{ type: "text" as const, text: "Invalid tool request" }] }
         return result!.result as { content: { type: "text"; text: string }[] }
@@ -74,7 +115,10 @@ export function createRemoteServer(agent: TaskAgent, auth: OwnerAuthenticator) {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
       await sdk.connect(transport)
       await transport.handleRequest(req, res, body)
-    } finally { active--; await sdk?.close() }
+    } finally {
+      active--
+      await sdk?.close()
+    }
   }
 }
 

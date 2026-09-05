@@ -27,15 +27,27 @@ test("MCP gateway serves the task graph operations end to end", async (t) => {
   assert.equal((list!.result as any).tools.length, tools.length)
 
   const call = async (name: string, args: Record<string, unknown>) => {
-    const outcome = await server.handle({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name, arguments: args } })
+    const outcome = await server.handle({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name, arguments: args },
+    })
     const result = outcome!.result as any
     assert.ok(!result.isError, `${name}: ${JSON.stringify(result.content)}`)
     return result.structuredContent
   }
-  const root = await call("task_create", { title: "MCP Root", goal: "goal", requirements: [{ description: "제약", kind: "constraint" }] })
+  const root = await call("task_create", {
+    title: "MCP Root",
+    goal: "goal",
+    requirements: [{ description: "제약", kind: "constraint" }],
+  })
   const decomposed = await call("task_propose_decomposition", {
     taskId: root.id,
-    children: [{ key: "a", title: "A", goal: "a" }, { key: "b", title: "B", goal: "b", dependencies: ["a"] }],
+    children: [
+      { key: "a", title: "A", goal: "a" },
+      { key: "b", title: "B", goal: "b", dependencies: ["a"] },
+    ],
   })
   const runnable = await call("task_get_runnable", { rootId: root.id })
   assert.equal(runnable.items.length, 1)
@@ -52,17 +64,27 @@ test("MCP gateway serves the task graph operations end to end", async (t) => {
   assert.ok(context.context.inheritedConstraints.includes("제약"))
   const search = await call("task_search", { query: "MCP Root" })
   assert.equal(search.items[0].id, root.id)
-  const failed = await server.handle({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "task_start", arguments: { taskId: root.id } } })
+  const failed = await server.handle({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: { name: "task_start", arguments: { taskId: root.id } },
+  })
   assert.equal((failed!.result as any).isError, true)
-  const unknown = await server.handle({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "task_sync", arguments: {} } })
+  const unknown = await server.handle({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "task_sync", arguments: {} },
+  })
   assert.equal((unknown!.error as any).code, -32602)
 })
 
 test("HTTP gateway maps /v1 routes onto the same operations", async (t) => {
   const { store, agent } = service()
   t.after(() => store.close())
-  const created = await dispatchHttpOperation(agent, "/v1/task_create", { title: "HTTP Root", goal: "goal" }) as any
-  const loaded = await dispatchHttpOperation(agent, "/v1/task_load", { taskId: created.id }) as any
+  const created = (await dispatchHttpOperation(agent, "/v1/task_create", { title: "HTTP Root", goal: "goal" })) as any
+  const loaded = (await dispatchHttpOperation(agent, "/v1/task_load", { taskId: created.id })) as any
   assert.equal(loaded.task.id, created.id)
   await assert.rejects(dispatchHttpOperation(agent, "/v1/task_sync", {}), /Not found/)
   await assert.rejects(dispatchHttpOperation(agent, "/v1/task_load", { taskId: "missing" }), /Task not found/)
@@ -75,7 +97,11 @@ test("HTTP gateway maps /v1 routes onto the same operations", async (t) => {
   const denied = await fetch(`${url}/v1/task_search`, { method: "POST", body: "{}" })
   assert.equal(denied.status, 401)
   const headers = { Authorization: "Bearer secret", "Content-Type": "application/json" }
-  const searched = await fetch(`${url}/v1/task_search`, { method: "POST", headers, body: JSON.stringify({ query: "HTTP" }) })
+  const searched = await fetch(`${url}/v1/task_search`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query: "HTTP" }),
+  })
   assert.equal(searched.status, 200)
   assert.equal(((await searched.json()) as any)[0].id, created.id)
   const invalid = await fetch(`${url}/v1/task_create`, { method: "POST", headers, body: JSON.stringify({ title: "" }) })
@@ -84,14 +110,21 @@ test("HTTP gateway maps /v1 routes onto the same operations", async (t) => {
   assert.equal(missing.status, 404)
 })
 
-test("MCP와 HTTP가 Role·Orchestration operation을 함께 노출한다", async (t) => {
+test("그래프 MCP는 Role만 노출하고 별도 Orchestration 도구는 제공하지 않는다", async (t) => {
   const { store, agent } = service()
   t.after(() => store.close())
 
-  for (const name of ["role_define", "role_list", "orchestrate_run"]) {
+  for (const name of ["role_define", "role_list"]) {
     assert.ok(OPERATIONS.includes(name as (typeof OPERATIONS)[number]), `${name} is missing from OPERATIONS`)
-    assert.ok(tools.some((tool) => tool.name === name), `${name} is missing from the MCP tool list`)
+    assert.ok(
+      tools.some((tool) => tool.name === name),
+      `${name} is missing from the MCP tool list`,
+    )
   }
+  assert.equal(
+    tools.some((tool) => tool.name === "orchestrate_run"),
+    false,
+  )
   assert.ok(READ_ONLY_TOOLS.includes("role_list"))
 
   await dispatchHttpOperation(agent, "/v1/role_define", {
@@ -100,7 +133,10 @@ test("MCP와 HTTP가 Role·Orchestration operation을 함께 노출한다", asyn
     description: "변경을 검토한다",
     allowedTools: ["Read", "Grep"],
   })
-  const roles = await dispatchHttpOperation(agent, "/v1/role_list", {}) as Array<{ id: string }>
+  const roles = (await dispatchHttpOperation(agent, "/v1/role_list", {})) as Array<{ id: string }>
   assert.ok(roles.some((role) => role.id === "reviewer"))
-  await assert.rejects(dispatchHttpOperation(agent, "/v1/orchestrate_run", { title: "x", goal: "y" }), /Orchestrator is not configured/)
+  await assert.rejects(
+    dispatchHttpOperation(agent, "/v1/orchestrate_run", { title: "x", goal: "y" }),
+    /Orchestrator is not configured/,
+  )
 })
