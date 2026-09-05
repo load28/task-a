@@ -13,6 +13,7 @@ import type {
   LearningKind,
   Requirement,
   RequirementKind,
+  Role,
   Task,
   TaskCategory,
   TaskContract,
@@ -47,6 +48,16 @@ export interface DecompositionChildProposal {
   contextPolicy?: Partial<ContextPolicy>
   integrationPolicy?: IntegrationPolicy
   assignedRole?: string
+}
+
+export interface RoleInput {
+  id: string
+  name: string
+  description: string
+  principles?: string[]
+  capabilities?: string[]
+  allowedTools?: string[]
+  constraints?: string[]
 }
 
 export interface DecompositionProposal {
@@ -235,6 +246,33 @@ export class TaskGraphEngine {
       this.refreshAncestors(parent.id)
       return { parent: this.requireTask(parent.id), children: created.map((task) => this.requireTask(task.id)) }
     })
+  }
+
+  defineRole(input: RoleInput): Role {
+    return this.atomic(() => {
+      requireText(input.id, "role id")
+      requireText(input.name, "role name")
+      requireText(input.description, "role description")
+      const role: Role = {
+        id: input.id.trim(),
+        name: input.name.trim(),
+        description: input.description.trim(),
+        principles: input.principles ?? [],
+        capabilities: input.capabilities ?? [],
+        allowedTools: input.allowedTools ?? [],
+        constraints: input.constraints ?? [],
+      }
+      this.store.upsertRole(role)
+      return this.store.findRole(role.id)!
+    })
+  }
+
+  listRoles(): Role[] {
+    return this.store.listRoles()
+  }
+
+  rootTasks(): Task[] {
+    return this.store.rootTasks()
   }
 
   searchTasks(query: string, limit = 10): Task[] {

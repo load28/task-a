@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { TaskGraphStore } from "#task-store"
 import { TaskGraphEngine } from "#task-engine"
 import { IntegrationEngine } from "#integration-engine"
-import { TaskAgentService } from "#task-agent-core"
+import { OPERATIONS, TaskAgentService } from "#task-agent-core"
 import { TaskAgentMcpServer, tools, READ_ONLY_TOOLS } from "../packages/protocol-mcp/src/index.ts"
 import { TaskAgentHttpServer, dispatchHttpOperation } from "../packages/protocol-http/src/index.ts"
 
@@ -82,4 +82,25 @@ test("HTTP gateway maps /v1 routes onto the same operations", async (t) => {
   assert.equal(invalid.status, 400)
   const missing = await fetch(`${url}/v1/nope`, { method: "POST", headers, body: "{}" })
   assert.equal(missing.status, 404)
+})
+
+test("MCP와 HTTP가 Role·Orchestration operation을 함께 노출한다", async (t) => {
+  const { store, agent } = service()
+  t.after(() => store.close())
+
+  for (const name of ["role_define", "role_list", "orchestrate_run"]) {
+    assert.ok(OPERATIONS.includes(name as (typeof OPERATIONS)[number]), `${name} is missing from OPERATIONS`)
+    assert.ok(tools.some((tool) => tool.name === name), `${name} is missing from the MCP tool list`)
+  }
+  assert.ok(READ_ONLY_TOOLS.includes("role_list"))
+
+  await dispatchHttpOperation(agent, "/v1/role_define", {
+    id: "reviewer",
+    name: "Reviewer",
+    description: "변경을 검토한다",
+    allowedTools: ["Read", "Grep"],
+  })
+  const roles = await dispatchHttpOperation(agent, "/v1/role_list", {}) as Array<{ id: string }>
+  assert.ok(roles.some((role) => role.id === "reviewer"))
+  await assert.rejects(dispatchHttpOperation(agent, "/v1/orchestrate_run", { title: "x", goal: "y" }), /Orchestrator is not configured/)
 })

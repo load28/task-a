@@ -423,6 +423,14 @@ export class TaskGraphStore {
     return row ? toRole(row) : undefined
   }
 
+  listRoles(): Role[] {
+    return (this.db.prepare("SELECT * FROM roles ORDER BY id").all() as Row[]).map(toRole)
+  }
+
+  rootTasks(): Task[] {
+    return (this.db.prepare("SELECT * FROM tasks WHERE parent_id IS NULL ORDER BY created_at, rowid").all() as Row[]).map((row) => this.toTask(row))
+  }
+
   insertLearning(learning: Learning): void {
     this.transaction(() => {
       this.db.prepare(`

@@ -1,4 +1,4 @@
-import type { ArtifactVersion, Learning, Requirement, Task, TaskContract } from "#task-domain"
+import type { ArtifactVersion, Learning, Requirement, Role, Task, TaskContract } from "#task-domain"
 import type {
   CompleteTaskInput,
   CreateTaskInput,
@@ -7,6 +7,7 @@ import type {
   ImpactReport,
   PublishArtifactInput,
   RecordLearningInput,
+  RoleInput,
   RunnableTask,
   SupersedeLearningInput,
   TaskGraphEngine,
@@ -25,6 +26,22 @@ import { buildTaskContext, formatTaskContext, type TaskContext } from "#task-con
 export interface ContextResult {
   context: TaskContext
   text: string
+}
+
+export interface OrchestrationRequest {
+  taskId?: string
+  title?: string
+  goal?: string
+  concurrency?: number
+  maxAttemptsPerTask?: number
+  maxDepth?: number
+  maxRuns?: number
+  maxIterations?: number
+  autoIntegration?: boolean
+}
+
+export interface OrchestrationRunner {
+  run(request: OrchestrationRequest & { taskId: string }): Promise<unknown>
 }
 
 export interface TaskAgent {
@@ -48,15 +65,24 @@ export interface TaskAgent {
   proposeIntegration(input: IntegrationProposal): Promise<IntegrationProposalResult>
   runIntegration(input: { setRef: string }): Promise<StartRunResult>
   reportIntegration(input: { runId: string } & RunReport): Promise<ReportRunResult>
+  defineRole(input: RoleInput): Promise<Role>
+  listRoles(): Promise<Role[]>
+  orchestrate(input: OrchestrationRequest): Promise<unknown>
 }
 
 export class TaskAgentService implements TaskAgent {
   private engine: TaskGraphEngine
   private integration: IntegrationEngine
+  private orchestrator?: OrchestrationRunner
 
-  constructor(engine: TaskGraphEngine, integration: IntegrationEngine) {
+  constructor(engine: TaskGraphEngine, integration: IntegrationEngine, orchestrator?: OrchestrationRunner) {
     this.engine = engine
     this.integration = integration
+    this.orchestrator = orchestrator
+  }
+
+  attachOrchestrator(orchestrator: OrchestrationRunner): void {
+    this.orchestrator = orchestrator
   }
 
   async createTask(input: CreateTaskInput): Promise<Task> {
@@ -163,6 +189,30 @@ export class TaskAgentService implements TaskAgent {
     requireId(input, "runId")
     return this.integration.reportRun(input.runId, { scenarios: input.scenarios, failure: input.failure })
   }
+
+  async defineRole(input: RoleInput): Promise<Role> {
+    requireId(input, "id")
+    return this.engine.defineRole(input)
+  }
+
+  async listRoles(): Promise<Role[]> {
+    return this.engine.listRoles()
+  }
+
+  async orchestrate(request: OrchestrationRequest): Promise<unknown> {
+    validateObject(request)
+    const input = request as OrchestrationRequest
+    if (!this.orchestrator) throw new Error("Orchestrator is not configured on this runtime")
+    let taskId = input.taskId
+    if (!taskId) {
+      if (typeof input.title !== "string" || typeof input.goal !== "string") {
+        throw new Error("orchestrate requires taskId, or title and goal to create a root task")
+      }
+      const task = await this.createTask({ title: input.title, goal: input.goal })
+      taskId = task.id
+    }
+    return this.orchestrator.run({ ...input, taskId })
+  }
 }
 
 export const OPERATIONS = [
@@ -186,6 +236,9 @@ export const OPERATIONS = [
   "integration_propose",
   "integration_run",
   "integration_report",
+  "role_define",
+  "role_list",
+  "orchestrate_run",
 ] as const
 
 export async function dispatchOperation(agent: TaskAgent, operation: string, input: Record<string, any>): Promise<unknown> {
@@ -230,6 +283,12 @@ export async function dispatchOperation(agent: TaskAgent, operation: string, inp
       return agent.runIntegration(input as Parameters<TaskAgent["runIntegration"]>[0])
     case "integration_report":
       return agent.reportIntegration(input as Parameters<TaskAgent["reportIntegration"]>[0])
+    case "role_define":
+      return agent.defineRole(input as Parameters<TaskAgent["defineRole"]>[0])
+    case "role_list":
+      return agent.listRoles()
+    case "orchestrate_run":
+      return agent.orchestrate(input as Parameters<TaskAgent["orchestrate"]>[0])
   }
   throw new UnknownOperationError(operation)
 }
