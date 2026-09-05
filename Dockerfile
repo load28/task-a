@@ -8,7 +8,7 @@ COPY --chown=node:node .opencode/tools ./.opencode/tools
 COPY --chown=node:node .opencode/lib ./.opencode/lib
 COPY --chown=node:node opencode.json ./opencode.json
 COPY --chown=node:node scripts/backup.ts ./scripts/backup.ts
-RUN mkdir -p /data /home/node/.local/share /home/node/.cache /home/node/.config && chown -R node:node /data /home/node /app/.opencode
+RUN mkdir -p /data /home/node/.local/share/opencode /home/node/.cache /home/node/.config && chown -R node:node /data /home/node /app/.opencode
 USER node
 ENV NODE_ENV=production TASK_AGENT_DB=/data/tasks.db TASK_AGENT_HOST=0.0.0.0 TASK_AGENT_PORT=7331
 EXPOSE 7331

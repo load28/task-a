@@ -1,0 +1,20 @@
+{
+  auto_https disable_redirects
+}
+https://localhost:8443, https://proxy:8443 {
+  tls internal
+  request_body {
+    max_size 1MB
+  }
+  @identity path /realms/* /resources/*
+  handle @identity {
+    reverse_proxy identity:8080
+  }
+  handle /.well-known/oauth-authorization-server/realms/task-agent {
+    rewrite * /realms/task-agent/.well-known/openid-configuration
+    reverse_proxy identity:8080
+  }
+  handle {
+    reverse_proxy agent:7331
+  }
+}

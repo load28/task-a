@@ -13,6 +13,8 @@ OpenCode를 내부 Agent Harness로 사용하는 독립형 Persistent Work Conte
 
 ## 실행
 
+AWS 없이 운영과 같은 HTTPS·인증 흐름을 시험하려면 [로컬 Docker 서버](deploy/local/README.md)를 사용합니다.
+
 기본 사용 방식은 [Codex·Claude 대화 안에서 사용하기](docs/in-host-experience.md)다. “이 작업 이어서 하자”라고 말하면 MCP 연결 계층이 컨텍스트 조회·필요 시 로그인 링크·기록 연결을 제공한다. 별도 로그인 CLI나 work 실행기는 필요하지 않다. 최초 MCP·훅 등록과 서버 배포는 필요하다.
 
 AWS에서 본인 인증 후 여러 장소에서 연결하는 구성은 [배포 절차](deploy/README.md)를 따른다. 원격 모드는 `npm run remote`이며 공식 MCP SDK의 Streamable HTTP와 Cognito 호환 JWT 검증을 사용한다. 기존 `npm start`는 로컬/직접 HTTP 통합용이며 원격 배포에는 사용하지 않는다.

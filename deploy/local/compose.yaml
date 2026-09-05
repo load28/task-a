@@ -1,0 +1,90 @@
+name: task-agent-local
+services:
+  agent:
+    build:
+      context: ../..
+    image: task-agent:local
+    init: true
+    restart: unless-stopped
+    env_file: ../../data/local-docker/agent.env
+    environment:
+      NODE_EXTRA_CA_CERTS: /trust/root.crt
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - tasks:/data
+      - harness:/home/node/.local/share
+      - ../../data/local-docker/opencode-auth.json:/home/node/.local/share/opencode/auth.json
+      - trust:/trust:ro
+    tmpfs: ["/tmp:uid=1000,gid=1000,mode=1770"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 3g
+    cpus: 2
+    stop_grace_period: 160s
+    depends_on:
+      ca-export: { condition: service_completed_successfully }
+      init-storage: { condition: service_completed_successfully }
+      identity: { condition: service_started }
+  init-storage:
+    image: caddy:2.10.2-alpine
+    entrypoint: /bin/sh
+    command: ["-c", "mkdir -p /harness/opencode && chown 1000:1000 /harness /harness/opencode"]
+    volumes: ["harness:/harness"]
+  proxy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:8443:8443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /data/caddy/pki/authorities/local/root.crt"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  ca-export:
+    image: caddy:2.10.2-alpine
+    entrypoint: /bin/sh
+    command: ["-c", "cp /data/caddy/pki/authorities/local/root.crt /trust/root.crt && chmod 644 /trust/root.crt"]
+    volumes:
+      - certificates:/data:ro
+      - trust:/trust
+    depends_on:
+      proxy: { condition: service_healthy }
+  identity:
+    image: quay.io/keycloak/keycloak:26.7.3
+    command: ["start", "--import-realm"]
+    restart: unless-stopped
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://identity-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?Run the local preparation step}
+      KC_HOSTNAME: https://localhost:8443
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ../../data/local-docker/realm.json:/opt/keycloak/data/import/task-agent-realm.json:ro
+    depends_on:
+      identity-db: { condition: service_healthy }
+  identity-db:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:?Run the local preparation step}
+    volumes: ["identity:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+volumes:
+  tasks:
+  harness:
+  certificates:
+  trust:
+  identity:
