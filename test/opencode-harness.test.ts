@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { OpenCodeConnection } from "../packages/opencode-harness/src/index.ts"
+import { MANAGER_PROMPT } from "../packages/opencode-harness/src/agents.ts"
 
 test("OpenCode 연결은 Basic 인증을 전달하고 외부 평문 서버를 거부한다", async () => {
   const seen: string[] = []
@@ -28,4 +29,11 @@ test("OpenCode 연결은 Basic 인증을 전달하고 외부 평문 서버를 �
     await connection.close()
     await new Promise<void>((ok) => server.close(() => ok()))
   }
+})
+
+test("관리자 지침은 새 개발의 계획 승인과 명시적 재개를 구분한다", () => {
+  assert.match(MANAGER_PROMPT, /explicitly asks to continue, resume, or pick up/)
+  assert.match(MANAGER_PROMPT, /before creating, reopening, claiming, or executing any Task/)
+  assert.match(MANAGER_PROMPT, /Do not create a root, dispatch workers, modify files, or run tests until the user actually approves/)
+  assert.match(MANAGER_PROMPT, /show the plan.*change the plan.*revise the plan/s)
 })

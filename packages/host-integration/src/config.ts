@@ -13,6 +13,7 @@ export interface HostConfig {
   graphMcpUrl?: string
   model?: string
   autoContinue: boolean
+  maxWorkers?: number
   maxRuns: number
 }
 export function socketPath(directory: string): string {
@@ -39,6 +40,7 @@ export function loadConfig(path: string): HostConfig {
     w.path = realpathSync(w.path)
   }
   if (!Number.isInteger(c.maxRuns) || c.maxRuns < 1 || c.maxRuns > 1000) throw new Error("Invalid maxRuns")
+  if (c.maxWorkers !== undefined && (!Number.isInteger(c.maxWorkers) || c.maxWorkers < 1 || c.maxWorkers > 16)) throw new Error("Invalid maxWorkers")
   return c
 }
 export function workspaceFor(config: HostConfig, cwd: string): HostConfig["workspaces"][number] | undefined {

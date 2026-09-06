@@ -370,6 +370,7 @@ async function hook(path: string, host: string, input: unknown): Promise<any> {
   return new Promise((ok, fail) => {
     const child = spawn(process.execPath, [resolve("scripts/host-hook.ts"), path, host], {
       stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, TASK_AGENT_INTERNAL: "" },
     })
     let out = "",
       err = ""
@@ -472,7 +473,41 @@ test("실제 stdio Graph MCP가 검증 증거와 수락 조건을 확인하며 �
   try {
     await client.connect(transport)
     const list = await client.listTools()
-    assert.equal(list.tools.length, 22)
+    const toolNames = new Set(list.tools.map((tool) => tool.name))
+    for (const name of [
+      "task_create",
+      "task_search",
+      "task_load",
+      "task_get_runnable",
+      "task_propose_decomposition",
+      "task_start",
+      "task_complete",
+      "task_fail",
+      "task_reopen",
+      "task_get_context",
+      "artifact_publish",
+      "contract_define",
+      "requirement_add",
+      "impact_analyze",
+      "learning_record",
+      "learning_supersede",
+      "learning_search",
+      "integration_propose",
+      "integration_run",
+      "integration_report",
+      "role_define",
+      "role_list",
+    ])
+      assert.ok(toolNames.has(name), `Graph MCP must expose its core ${name} tool`)
+    for (const name of [
+      "work_plan_create_draft",
+      "work_plan_load",
+      "work_plan_approve",
+      "work_plan_revise",
+      "work_plan_impact",
+      "work_plan_present",
+    ])
+      assert.ok(toolNames.has(name), `Graph MCP must expose the ${name} work-plan tool`)
     const created = await client.callTool({
       name: "task_create",
       arguments: {

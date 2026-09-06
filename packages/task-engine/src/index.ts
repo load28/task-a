@@ -1,3 +1,4 @@
+import { normalizeScopes } from "./scheduling.ts"
 import { randomUUID } from "node:crypto"
 import type {
   ArtifactType,
@@ -20,11 +21,18 @@ import type {
   TaskGraphEvent,
   TaskStatus,
   TaskSummary,
+  PlanImpactReport,
+  PlanNode,
+  PlanRevision,
+  PlanTaskLink,
+  UserPlanView,
+  WorkPlan,
 } from "#task-domain"
 import { DEFAULT_CONTEXT_POLICY, isAtomic } from "#task-domain"
 import type { TaskGraphStore } from "#task-store"
 
 export interface CreateTaskInput {
+  writeScopes?: string[]
   title: string
   goal: string
   category?: TaskCategory
@@ -38,6 +46,7 @@ export interface CreateTaskInput {
 }
 
 export interface DecompositionChildProposal {
+  writeScopes?: string[]
   key?: string
   title: string
   goal: string
@@ -106,6 +115,22 @@ export interface SupersedeLearningInput {
 
 export interface TaskGraphEngineOptions {
   reflectionThreshold?: number
+}
+
+export interface CreateDraftPlanInput {
+  title: string
+  goal: string
+  requestText: string
+  summary: string
+  nodes: PlanNode[]
+}
+
+export interface ReviseWorkPlanInput {
+  planId: string
+  baseVersion: number
+  nodes: PlanNode[]
+  summary: string
+  changeSummary?: string
 }
 
 export interface DefineContractInput {
@@ -277,6 +302,131 @@ export class TaskGraphEngine {
 
   searchTasks(query: string, limit = 10): Task[] {
     return this.store.searchTasks(query.trim(), Math.max(1, Math.min(limit, 50)))
+  }
+
+  createDraftPlan(input: CreateDraftPlanInput): UserPlanView {
+    return this.atomic(() => {
+      requireText(input.title, "plan title")
+      requireText(input.goal, "plan goal")
+      requireText(input.requestText, "request text")
+      requireText(input.summary, "plan summary")
+      this.validatePlanNodes(input.nodes)
+      const now = new Date().toISOString()
+      const plan: WorkPlan = { id: randomUUID(), title: input.title.trim(), goal: input.goal.trim(), requestText: input.requestText.trim(), state: "awaiting_approval", currentRevision: 1, createdAt: now, updatedAt: now }
+      const revision: PlanRevision = { planId: plan.id, version: 1, state: "awaiting_approval", summary: input.summary.trim(), createdAt: now }
+      this.store.insertWorkPlan(plan)
+      this.store.insertPlanRevision(revision, input.nodes)
+      return this.userPlanView(plan, revision, input.nodes, [])
+    })
+  }
+
+  loadWorkPlan(ref: { planId?: string; rootTaskId?: string }): { plan: WorkPlan; revision: PlanRevision; userView: UserPlanView; links: PlanTaskLink[]; impact?: PlanImpactReport } {
+    return this.atomic(() => {
+      const plan = ref.planId ? this.requireWorkPlan(ref.planId) : ref.rootTaskId ? this.store.findWorkPlanByRootTask(ref.rootTaskId) : undefined
+      if (!plan) throw new Error("Work plan not found")
+      const revision = this.requirePlanRevision(plan.id, plan.currentRevision)
+      const nodes = this.store.planNodes(plan.id, revision.version)
+      const links = this.store.planLinks(plan.id, revision.version)
+      const impact = revision.version > 1 ? this.analyzePlanImpact({ planId: plan.id, toVersion: revision.version }) : undefined
+      return { plan, revision, links, impact, userView: this.userPlanView(plan, revision, nodes, links, impact) }
+    })
+  }
+
+  presentWorkPlan(input: { planId: string }): UserPlanView {
+    return this.loadWorkPlan(input).userView
+  }
+
+  reviseWorkPlan(input: ReviseWorkPlanInput): { revision: PlanRevision; impact: PlanImpactReport; userView: UserPlanView } {
+    return this.atomic(() => {
+      const plan = this.requireWorkPlan(input.planId)
+      if (plan.currentRevision !== input.baseVersion) throw new Error("Plan revision is stale")
+      this.validatePlanNodes(input.nodes)
+      requireText(input.summary, "plan summary")
+      const prior = this.requirePlanRevision(plan.id, plan.currentRevision)
+      if (prior.state === "awaiting_approval") throw new Error("Approve, reject, or replace the pending plan revision first")
+      const now = new Date().toISOString()
+      const revision: PlanRevision = { planId: plan.id, version: plan.currentRevision + 1, state: "awaiting_approval", summary: input.summary.trim(), changeSummary: input.changeSummary?.trim(), createdAt: now }
+      this.store.insertPlanRevision(revision, input.nodes)
+      const updated = { ...plan, state: "revision_pending" as const, currentRevision: revision.version, updatedAt: now }
+      this.store.updateWorkPlan(updated)
+      const impact = this.analyzePlanImpact({ planId: plan.id, fromVersion: prior.version, toVersion: revision.version })
+      return { revision, impact, userView: this.userPlanView(updated, revision, input.nodes, [], impact) }
+    })
+  }
+
+  analyzePlanImpact(input: { planId: string; fromVersion?: number; toVersion?: number }): PlanImpactReport {
+    const plan = this.requireWorkPlan(input.planId)
+    const toVersion = input.toVersion ?? plan.currentRevision
+    const fromVersion = input.fromVersion ?? Math.max(1, toVersion - 1)
+    const oldNodes = new Map(this.store.planNodes(plan.id, fromVersion).map((node) => [node.nodeId, node]))
+    const nextNodes = new Map(this.store.planNodes(plan.id, toVersion).map((node) => [node.nodeId, node]))
+    const addedNodeIds = [...nextNodes.keys()].filter((id) => !oldNodes.has(id))
+    const removedNodeIds = [...oldNodes.keys()].filter((id) => !nextNodes.has(id))
+    const changedNodeIds = [...nextNodes.keys()].filter((id) => oldNodes.has(id) && JSON.stringify(oldNodes.get(id)) !== JSON.stringify(nextNodes.get(id)))
+    const priorLinks = new Map(this.store.planLinks(plan.id, fromVersion).map((link) => [link.nodeId, link]))
+    const reusedNodeIds = [...nextNodes.keys()].filter((id) => priorLinks.has(id) && !changedNodeIds.includes(id))
+    const reopenedNodeIds = changedNodeIds.filter((id) => {
+      const task = priorLinks.get(id) && this.store.findTask(priorLinks.get(id)!.taskId)
+      return !!task && ["implemented", "verified", "integrating", "integrated", "blocked", "failed", "stale"].includes(task.status)
+    })
+    return { planId: plan.id, fromVersion, toVersion, addedNodeIds, changedNodeIds, removedNodeIds, reusedNodeIds, reopenedNodeIds, recommendations: removedNodeIds.length || changedNodeIds.length ? ["Review changed work and rerun affected verification after approval."] : [] }
+  }
+
+  approveWorkPlan(input: { planId: string; version: number; approvalSource: string }): { plan: WorkPlan; rootTaskId: string; createdTaskIds: string[]; userView: UserPlanView } {
+    return this.atomic(() => {
+      const plan = this.requireWorkPlan(input.planId)
+      const revision = this.requirePlanRevision(plan.id, input.version)
+      requireText(input.approvalSource, "approval source")
+      if (revision.state === "approved") {
+        if (!plan.rootTaskId) throw new Error("Approved work plan is missing its root task")
+        return { plan, rootTaskId: plan.rootTaskId, createdTaskIds: [], userView: this.userPlanView(plan, revision, this.store.planNodes(plan.id, revision.version), this.store.planLinks(plan.id, revision.version)) }
+      }
+      if (revision.state !== "awaiting_approval" || plan.currentRevision !== revision.version) throw new Error("Work plan revision is not awaiting approval")
+      const nodes = this.store.planNodes(plan.id, revision.version)
+      const priorLinks = revision.version > 1 ? new Map(this.store.planLinks(plan.id, revision.version - 1).map((link) => [link.nodeId, link])) : new Map<string, PlanTaskLink>()
+      const root = plan.rootTaskId ? this.requireTask(plan.rootTaskId) : this.createTask({ title: plan.title, goal: plan.goal, category: "general" })
+      const taskIds = new Map<string, string>()
+      const createdTaskIds: string[] = plan.rootTaskId ? [] : [root.id]
+      const pending = [...nodes]
+      while (pending.length) {
+        const index = pending.findIndex((node) => !node.parentNodeId || taskIds.has(node.parentNodeId))
+        if (index < 0) throw new Error("Plan node parent graph must be acyclic")
+        const node = pending.splice(index, 1)[0]!
+        const prior = priorLinks.get(node.nodeId)
+        const unchanged = prior && JSON.stringify(this.store.planNodes(plan.id, revision.version - 1).find((old) => old.nodeId === node.nodeId)) === JSON.stringify(node)
+        if (unchanged) {
+          taskIds.set(node.nodeId, prior.taskId)
+          this.store.insertPlanLink({ ...prior, revision: revision.version, action: "reuse" })
+          continue
+        }
+        if (prior) {
+          const oldTask = this.requireTask(prior.taskId)
+          if (oldTask.status === "running") throw new Error("Cannot revise a running plan task until it is stopped and recovered")
+          if (["implemented", "verified", "integrating", "integrated", "blocked", "failed", "stale"].includes(oldTask.status)) {
+            const reopened = this.reopenTask(oldTask.id, `Plan revision ${revision.version}: ${revision.changeSummary ?? "changed work"}`)
+            taskIds.set(node.nodeId, reopened.id)
+            this.store.insertPlanLink({ planId: plan.id, revision: revision.version, nodeId: node.nodeId, taskId: reopened.id, action: "reopen" })
+            continue
+          }
+        }
+        const parentId = node.parentNodeId ? taskIds.get(node.parentNodeId) : root.id
+        const task = this.createTask({ ...node.taskSpec, title: node.label, goal: node.taskSpec.goal || node.outcome, parentId })
+        taskIds.set(node.nodeId, task.id)
+        createdTaskIds.push(task.id)
+        this.store.insertPlanLink({ planId: plan.id, revision: revision.version, nodeId: node.nodeId, taskId: task.id, action: "create" })
+      }
+      for (const node of nodes) for (const dependency of node.dependsOnNodeIds) {
+        const taskId = taskIds.get(node.nodeId)!; const dependencyId = taskIds.get(dependency)!
+        if (!this.requireTask(taskId).dependencies.includes(dependencyId)) this.store.addDependency(taskId, dependencyId, new Date().toISOString())
+      }
+      this.assertNoDependencyCycle()
+      const now = new Date().toISOString()
+      const approved = { ...revision, state: "approved" as const, approval: { approvedAt: now, approvalSource: input.approvalSource } }
+      const active = { ...plan, rootTaskId: root.id, state: "active" as const, updatedAt: now }
+      this.store.updatePlanRevision(approved); this.store.updateWorkPlan(active)
+      for (const taskId of taskIds.values()) this.refreshReadiness(taskId)
+      return { plan: active, rootTaskId: root.id, createdTaskIds, userView: this.userPlanView(active, approved, nodes, this.store.planLinks(plan.id, revision.version)) }
+    })
   }
 
   loadTask(taskId: string): TaskLoadResult {
@@ -735,6 +885,57 @@ export class TaskGraphEngine {
     return task
   }
 
+  private requireWorkPlan(planId: string): WorkPlan {
+    const plan = this.store.findWorkPlan(planId)
+    if (!plan) throw new Error(`Work plan not found: ${planId}`)
+    return plan
+  }
+
+  private requirePlanRevision(planId: string, version: number): PlanRevision {
+    const revision = this.store.findPlanRevision(planId, version)
+    if (!revision) throw new Error(`Work plan revision not found: ${planId}@${version}`)
+    return revision
+  }
+
+  private validatePlanNodes(nodes: PlanNode[]): void {
+    if (!Array.isArray(nodes) || nodes.length === 0) throw new Error("Work plan requires at least one node")
+    const ids = new Set<string>()
+    for (const node of nodes) {
+      requireText(node.nodeId, "plan node id"); requireText(node.label, "plan node label"); requireText(node.outcome, "plan node outcome")
+      if (ids.has(node.nodeId)) throw new Error(`Duplicate plan node id: ${node.nodeId}`)
+      ids.add(node.nodeId)
+      if (!["research", "design", "implementation", "validation"].includes(node.stage)) throw new Error(`Invalid plan stage: ${node.stage}`)
+      if (node.stage === "research" && !["repository", "external_examples", "official_documentation"].includes(node.researchTrack ?? "")) throw new Error("Research plan nodes require a source track")
+      if (!node.taskSpec || typeof node.taskSpec !== "object") throw new Error("Plan node requires a task specification")
+      requireText(node.taskSpec.goal, "plan node task goal")
+    }
+    for (const node of nodes) {
+      if (node.parentNodeId && !ids.has(node.parentNodeId)) throw new Error(`Unknown plan parent node: ${node.parentNodeId}`)
+      for (const dependency of node.dependsOnNodeIds ?? []) {
+        if (!ids.has(dependency)) throw new Error(`Unknown plan dependency node: ${dependency}`)
+        if (dependency === node.nodeId) throw new Error("Plan node cannot depend on itself")
+      }
+    }
+    const edges = new Map(nodes.map((node) => [node.nodeId, [...(node.dependsOnNodeIds ?? []), ...(node.parentNodeId ? [node.parentNodeId] : [])]]))
+    const visiting = new Set<string>(); const done = new Set<string>()
+    const visit = (id: string) => { if (visiting.has(id)) throw new Error("Plan graph must not contain a cycle"); if (done.has(id)) return; visiting.add(id); for (const edge of edges.get(id) ?? []) visit(edge); visiting.delete(id); done.add(id) }
+    for (const id of ids) visit(id)
+  }
+
+  private userPlanView(plan: WorkPlan, revision: PlanRevision, nodes: PlanNode[], links: PlanTaskLink[], impact?: PlanImpactReport): UserPlanView {
+    const nodeById = new Map(nodes.map((node) => [node.nodeId, node]))
+    const linkByNode = new Map(links.map((link) => [link.nodeId, link]))
+    return {
+      title: plan.title, summary: revision.summary, revision: revision.version, state: plan.state === "revision_pending" ? plan.state : revision.state === "approved" ? plan.state : revision.state,
+      nodes: nodes.map((node) => ({
+        label: node.label, stage: node.stage, researchTrack: node.researchTrack, outcome: node.outcome,
+        dependsOn: node.dependsOnNodeIds.map((id) => nodeById.get(id)?.label ?? id),
+        status: linkByNode.get(node.nodeId) ? (this.store.findTask(linkByNode.get(node.nodeId)!.taskId)?.status ?? "unknown") : "not started",
+      })),
+      impact, approvalPrompt: revision.state === "awaiting_approval" ? "이 계획을 승인하면 작업을 시작합니다." : "계획 상태를 확인할 수 있습니다.",
+    }
+  }
+
   requireArtifactVersion(ref: ArtifactVersionRef): ArtifactVersion {
     const version = this.store.findArtifactVersion(ref.artifactId, ref.version)
     if (!version) throw new Error(`Unknown artifact version: ${ref.artifactId}@${ref.version}`)
@@ -982,6 +1183,7 @@ export class TaskGraphEngine {
       parentId,
       title: input.title.trim(),
       goal: input.goal.trim(),
+      writeScopes: normalizeScopes(input.writeScopes ?? ["."]),
       category: input.category ?? "general",
       status: "pending",
       childIds: [],

@@ -29,6 +29,7 @@ if (command === "install") {
         hosts: [...hosts],
         database: option("--database"),
         model: option("--model"),
+        maxWorkers: option("--max-workers") ? Number(option("--max-workers")) : undefined,
         opencodeUrl: option("--opencode-url"),
         graphMcpUrl: option("--graph-mcp-url"),
         verifyCommand: option("--verify-command"),
@@ -81,5 +82,5 @@ if (command === "install") {
   }
 } else
   throw new Error(
-    "Usage: host-setup.ts install|uninstall|status|stop|cancel [--host both|claude|codex] [--workspace path] [--model provider/model] [--verify-command command]",
+    "Usage: host-setup.ts install|uninstall|start|status|doctor|stop|cancel [--host both|claude|codex] [--workspace path] [--model provider/model] [--verify-command command] [--max-workers 1..16]",
   )

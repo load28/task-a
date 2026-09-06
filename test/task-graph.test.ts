@@ -167,3 +167,26 @@ test("recursive decomposition keeps hierarchy and dependencies separate", (t) =>
   assert.deepEqual(runnable.map((item) => item.task.title).sort(), ["Alternative Pattern", "Nested Pattern", "Pattern IR"])
   assert.deepEqual(engine.pathOf(deeper.children[0]!.id), ["Implementation", "Binding Analyzer", "Alternative Pattern"])
 })
+
+test("work plans are durable, user-facing, and approval-gated", (t) => {
+  const { store, engine } = fixture()
+  t.after(() => store.close())
+  const nodes = [
+    { nodeId: "repository", label: "현재 프로젝트 확인", stage: "research" as const, researchTrack: "repository" as const, outcome: "현재 구조를 이해한다", dependsOnNodeIds: [], taskSpec: { goal: "저장소 구조를 조사한다", category: "research" as const, writeScopes: [] } },
+    { nodeId: "examples", label: "유사 사례 조사", stage: "research" as const, researchTrack: "external_examples" as const, outcome: "유사 사례를 비교한다", dependsOnNodeIds: [], taskSpec: { goal: "외부 사례를 조사한다", category: "research" as const, writeScopes: [] } },
+    { nodeId: "docs", label: "공식 자료 확인", stage: "research" as const, researchTrack: "official_documentation" as const, outcome: "공식 제약을 확인한다", dependsOnNodeIds: [], taskSpec: { goal: "공식 문서를 조사한다", category: "research" as const, writeScopes: [] } },
+    { nodeId: "build", label: "만들기", stage: "implementation" as const, outcome: "변경을 구현한다", dependsOnNodeIds: ["repository", "examples", "docs"], taskSpec: { goal: "변경을 구현한다", category: "implementation" as const, writeScopes: ["src"] } },
+  ]
+  const draft = engine.createDraftPlan({ title: "승인 계획", goal: "승인 후 구현한다", requestText: "기능을 추가해줘", summary: "조사 후 구현합니다.", nodes })
+  assert.equal(draft.state, "awaiting_approval")
+  assert.equal(store.rootTasks().length, 0, "draft must not create Tasks")
+  const plan = store.db.prepare("SELECT id FROM work_plans").get() as { id: string }
+  const approved = engine.approveWorkPlan({ planId: plan.id, version: 1, approvalSource: "user" })
+  assert.equal(approved.createdTaskIds.length, 5)
+  assert.equal(engine.loadWorkPlan({ planId: plan.id }).userView.nodes[0]!.label, "현재 프로젝트 확인")
+  assert.equal(engine.approveWorkPlan({ planId: plan.id, version: 1, approvalSource: "user" }).createdTaskIds.length, 0)
+  const revised = engine.reviseWorkPlan({ planId: plan.id, baseVersion: 1, nodes: [...nodes, { nodeId: "validate", label: "확인하기", stage: "validation", outcome: "검증한다", dependsOnNodeIds: ["build"], taskSpec: { goal: "검증한다", category: "qa", writeScopes: [] } }], summary: "검증 단계를 추가합니다.", changeSummary: "검증 추가" })
+  assert.equal(revised.revision.version, 2)
+  assert.equal(engine.loadWorkPlan({ planId: plan.id }).links.length, 0, "unapproved revision must not alter links")
+  assert.equal(store.findPlanRevision(plan.id, 1)!.state, "approved", "prior revision remains immutable")
+})

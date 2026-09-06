@@ -21,6 +21,7 @@ export interface InstallOptions {
   opencodeUrl?: string
   graphMcpUrl?: string
   verifyCommand?: string
+  maxWorkers?: number
   autoContinue?: boolean
 }
 export const serviceRoot = fileURLToPath(new URL("../../../", import.meta.url))
@@ -96,6 +97,7 @@ function replaceToml(text: string, block: string): { text: string; previous: str
   return { text: kept.join("\n").trimEnd() + "\n" + block, previous: removed.join("\n") }
 }
 export function install(options: InstallOptions): { config: string; files: string[] } {
+  if (options.maxWorkers !== undefined && (!Number.isInteger(options.maxWorkers) || options.maxWorkers < 1 || options.maxWorkers > 16)) throw new Error("maxWorkers must be 1–16")
   const workspace = options.workspace ? realpathSync(options.workspace) : undefined
   const directory = resolve(options.home, ".task-agent")
   mkdirSync(directory, { recursive: true, mode: 0o700 })
@@ -116,6 +118,7 @@ export function install(options: InstallOptions): { config: string; files: strin
     model: options.model ?? existing.model,
     autoContinue: options.autoContinue ?? existing.autoContinue ?? true,
     maxRuns: existing.maxRuns ?? 50,
+    maxWorkers: options.maxWorkers ?? existing.maxWorkers ?? 3,
   }
   if (workspace) {
     const prior = config.workspaces.find((w) => w.path === workspace)

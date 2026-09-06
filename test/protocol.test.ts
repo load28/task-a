@@ -6,6 +6,7 @@ import { IntegrationEngine } from "#integration-engine"
 import { OPERATIONS, TaskAgentService } from "#task-agent-core"
 import { TaskAgentMcpServer, tools, READ_ONLY_TOOLS } from "../packages/protocol-mcp/src/index.ts"
 import { TaskAgentHttpServer, dispatchHttpOperation } from "../packages/protocol-http/src/index.ts"
+import { createGraphMcp } from "../packages/opencode-harness/src/graph-mcp.ts"
 
 function service() {
   const store = new TaskGraphStore()
@@ -139,4 +140,29 @@ test("그래프 MCP는 Role만 노출하고 별도 Orchestration 도구는 제�
     dispatchHttpOperation(agent, "/v1/orchestrate_run", { title: "x", goal: "y" }),
     /Orchestrator is not configured/,
   )
+})
+
+test("graph MCP persists approval-gated plans and keeps plan reads read-only", async (t) => {
+  const runtime = createGraphMcp(":memory:")
+  t.after(() => runtime.store.close())
+  const server = runtime.server
+  await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" })
+  await server.handle({ jsonrpc: "2.0", method: "notifications/initialized" })
+  const call = async (name: string, arguments_: Record<string, unknown>) => {
+    const response = await server.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: arguments_ } })
+    const result = response!.result as any
+    assert.ok(!result.isError, result.content?.[0]?.text)
+    return result.structuredContent
+  }
+  const draft = await call("work_plan_create_draft", {
+    operationId: "draft-plan", title: "Readable plan", goal: "Build safely", requestText: "build it", summary: "Inspect then build.",
+    nodes: [{ nodeId: "inspect", label: "현재 프로젝트 확인", stage: "research", researchTrack: "repository", outcome: "Understand the project", dependsOnNodeIds: [], taskSpec: { goal: "Inspect repository", category: "research", writeScopes: [] } }],
+  })
+  assert.equal(draft.nodes[0].status, "not started")
+  assert.equal(runtime.store.rootTasks().length, 0)
+  const planId = (runtime.store.db.prepare("SELECT id FROM work_plans").get() as any).id
+  const presented = await call("work_plan_present", { planId })
+  assert.equal(presented.nodes[0].label, "현재 프로젝트 확인")
+  await call("work_plan_approve", { operationId: "approve-plan", planId, version: 1, approvalSource: "test user" })
+  assert.equal(runtime.store.rootTasks().length, 1)
 })

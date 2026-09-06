@@ -161,6 +161,9 @@ export const READ_ONLY_TOOLS = [
   "impact_analyze",
   "learning_search",
   "role_list",
+  "work_plan_load",
+  "work_plan_impact",
+  "work_plan_present",
 ]
 
 const artifactVersionRef = {
@@ -191,6 +194,7 @@ const publishableArtifact = {
 }
 
 const taskFields = {
+  writeScopes: { type: "array", items: { type: "string" }, description: "Literal project-relative files/directories this task may modify. Omitted means exclusive project scope (.). Empty means read-only. Include generated outputs; . for installs and full builds." },
   title: { type: "string" },
   goal: { type: "string" },
   category: {
@@ -215,7 +219,44 @@ const taskFields = {
   assignedRole: { type: "string" },
 }
 
+const planNode = {
+  type: "object",
+  properties: {
+    nodeId: { type: "string" }, parentNodeId: { type: "string" }, label: { type: "string" },
+    stage: { type: "string", enum: ["research", "design", "implementation", "validation"] }, outcome: { type: "string" },
+    dependsOnNodeIds: { type: "array", items: { type: "string" } },
+    researchTrack: { type: "string", enum: ["repository", "external_examples", "official_documentation"] },
+    taskSpec: { type: "object", properties: taskFields, required: ["goal"] },
+  },
+  required: ["nodeId", "label", "stage", "outcome", "taskSpec"],
+}
+
 export const tools = [
+  {
+    name: "work_plan_create_draft", title: "Create an approval-gated work plan",
+    description: "Persist a proposed user-facing plan without creating or starting Tasks. Approval is required before materialization.",
+    inputSchema: { type: "object", properties: { title: { type: "string" }, goal: { type: "string" }, requestText: { type: "string" }, summary: { type: "string" }, nodes: { type: "array", items: planNode } }, required: ["title", "goal", "requestText", "summary", "nodes"] },
+  },
+  {
+    name: "work_plan_load", title: "Load a work plan", description: "Load a persisted plan, revision, links, and sanitized user view.",
+    inputSchema: { type: "object", properties: { planId: { type: "string" }, rootTaskId: { type: "string" } } },
+  },
+  {
+    name: "work_plan_approve", title: "Approve a work plan", description: "Approve an awaiting plan revision and materialize its Tasks exactly once.",
+    inputSchema: { type: "object", properties: { planId: { type: "string" }, version: { type: "number" }, approvalSource: { type: "string" } }, required: ["planId", "version", "approvalSource"] },
+  },
+  {
+    name: "work_plan_revise", title: "Revise a work plan", description: "Create an immutable next revision; it does not change Tasks until approved.",
+    inputSchema: { type: "object", properties: { planId: { type: "string" }, baseVersion: { type: "number" }, nodes: { type: "array", items: planNode }, summary: { type: "string" }, changeSummary: { type: "string" } }, required: ["planId", "baseVersion", "nodes", "summary"] },
+  },
+  {
+    name: "work_plan_impact", title: "Analyze work plan impact", description: "Explain added, changed, removed, reused, and reopened planned work.",
+    inputSchema: { type: "object", properties: { planId: { type: "string" }, fromVersion: { type: "number" }, toVersion: { type: "number" } }, required: ["planId"] },
+  },
+  {
+    name: "work_plan_present", title: "Present a work plan", description: "Return a nontechnical, sanitized work-plan graph for a user.",
+    inputSchema: { type: "object", properties: { planId: { type: "string" } }, required: ["planId"] },
+  },
   {
     name: "task_create",
     title: "Create a task",

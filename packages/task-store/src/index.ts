@@ -15,6 +15,10 @@ import type {
   TaskContract,
   TaskGraphEvent,
   VerifiedBundle,
+  WorkPlan,
+  PlanRevision,
+  PlanNode,
+  PlanTaskLink,
 } from "#task-domain"
 
 interface Row { [key: string]: unknown }
@@ -71,6 +75,43 @@ export class TaskGraphStore {
     })
   }
 
+  setWriteScopes(taskId: string, scopes: string[]): void {
+    this.db.prepare("INSERT OR REPLACE INTO task_write_scopes VALUES (?, ?)").run(taskId, JSON.stringify(scopes))
+  }
+
+  insertWorkPlan(plan: WorkPlan): void {
+    this.db.prepare("INSERT INTO work_plans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(plan.id, plan.title, plan.goal, plan.requestText, plan.rootTaskId ?? null, plan.state, plan.currentRevision, plan.createdAt, plan.updatedAt)
+  }
+  updateWorkPlan(plan: WorkPlan): void {
+    this.db.prepare("UPDATE work_plans SET title=?, goal=?, request_text=?, root_task_id=?, state=?, current_revision=?, updated_at=? WHERE id=?").run(plan.title, plan.goal, plan.requestText, plan.rootTaskId ?? null, plan.state, plan.currentRevision, plan.updatedAt, plan.id)
+  }
+  findWorkPlan(id: string): WorkPlan | undefined {
+    const row = this.db.prepare("SELECT * FROM work_plans WHERE id=?").get(id) as Row | undefined
+    return row ? toWorkPlan(row) : undefined
+  }
+  findWorkPlanByRootTask(rootTaskId: string): WorkPlan | undefined {
+    const row = this.db.prepare("SELECT * FROM work_plans WHERE root_task_id=?").get(rootTaskId) as Row | undefined
+    return row ? toWorkPlan(row) : undefined
+  }
+  insertPlanRevision(revision: PlanRevision, nodes: PlanNode[]): void {
+    this.db.prepare("INSERT INTO plan_revisions (plan_id, version, state, summary, change_summary, approval_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(revision.planId, revision.version, revision.state, revision.summary, revision.changeSummary ?? null, revision.approval ? JSON.stringify(revision.approval) : null, revision.createdAt)
+    for (const node of nodes) this.db.prepare("INSERT INTO plan_revision_nodes (plan_id, revision, node_id, parent_node_id, label, stage, outcome, depends_on_json, research_track, task_spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(revision.planId, revision.version, node.nodeId, node.parentNodeId ?? null, node.label, node.stage, node.outcome, JSON.stringify(node.dependsOnNodeIds), node.researchTrack ?? null, JSON.stringify(node.taskSpec))
+  }
+  updatePlanRevision(revision: PlanRevision): void {
+    this.db.prepare("UPDATE plan_revisions SET state=?, summary=?, change_summary=?, approval_json=? WHERE plan_id=? AND version=?").run(revision.state, revision.summary, revision.changeSummary ?? null, revision.approval ? JSON.stringify(revision.approval) : null, revision.planId, revision.version)
+  }
+  findPlanRevision(planId: string, version: number): PlanRevision | undefined {
+    const row = this.db.prepare("SELECT * FROM plan_revisions WHERE plan_id=? AND version=?").get(planId, version) as Row | undefined
+    return row ? toPlanRevision(row) : undefined
+  }
+  planNodes(planId: string, version: number): PlanNode[] {
+    return (this.db.prepare("SELECT * FROM plan_revision_nodes WHERE plan_id=? AND revision=? ORDER BY rowid").all(planId, version) as Row[]).map(toPlanNode)
+  }
+  insertPlanLink(link: PlanTaskLink): void { this.db.prepare("INSERT INTO plan_task_links VALUES (?, ?, ?, ?, ?)").run(link.planId, link.revision, link.nodeId, link.taskId, link.action) }
+  planLinks(planId: string, revision: number): PlanTaskLink[] {
+    return (this.db.prepare("SELECT * FROM plan_task_links WHERE plan_id=? AND revision=? ORDER BY rowid").all(planId, revision) as Row[]).map((row) => ({ planId: String(row.plan_id), revision: Number(row.revision), nodeId: String(row.node_id), taskId: String(row.task_id), action: String(row.action) as PlanTaskLink["action"] }))
+  }
+
   insertTask(task: Task): void {
     this.db.prepare(`
       INSERT INTO tasks (id, parent_id, title, goal, category, status, acceptance_criteria_json, context_policy_json,
@@ -82,6 +123,7 @@ export class TaskGraphStore {
       JSON.stringify(task.inputArtifactRefs), JSON.stringify(task.outputArtifactRefs), JSON.stringify(task.contractRefs),
       task.assignedRole ?? null, task.integrationPolicy ?? null, task.statusReason ?? null, task.createdAt, task.updatedAt,
     )
+    this.setWriteScopes(task.id, task.writeScopes ?? ["."])
   }
 
   updateTask(task: Task): void {
@@ -509,6 +551,30 @@ export class TaskGraphStore {
 
   private migrate(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS task_write_scopes (task_id TEXT PRIMARY KEY, scopes TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS work_plans (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, request_text TEXT NOT NULL,
+        root_task_id TEXT REFERENCES tasks(id), state TEXT NOT NULL, current_revision INTEGER NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_work_plans_state_updated ON work_plans(state, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS plan_revisions (
+        plan_id TEXT NOT NULL REFERENCES work_plans(id) ON DELETE CASCADE, version INTEGER NOT NULL,
+        state TEXT NOT NULL, summary TEXT NOT NULL, change_summary TEXT, approval_json TEXT, created_at TEXT NOT NULL,
+        PRIMARY KEY(plan_id, version)
+      );
+      CREATE TABLE IF NOT EXISTS plan_revision_nodes (
+        plan_id TEXT NOT NULL, revision INTEGER NOT NULL, node_id TEXT NOT NULL, parent_node_id TEXT,
+        label TEXT NOT NULL, stage TEXT NOT NULL, outcome TEXT NOT NULL, depends_on_json TEXT NOT NULL,
+        research_track TEXT, task_spec_json TEXT NOT NULL,
+        PRIMARY KEY(plan_id, revision, node_id), FOREIGN KEY(plan_id, revision) REFERENCES plan_revisions(plan_id, version) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS plan_task_links (
+        plan_id TEXT NOT NULL, revision INTEGER NOT NULL, node_id TEXT NOT NULL,
+        task_id TEXT NOT NULL REFERENCES tasks(id), action TEXT NOT NULL,
+        PRIMARY KEY(plan_id, revision, node_id), FOREIGN KEY(plan_id, revision) REFERENCES plan_revisions(plan_id, version) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_plan_links_revision ON plan_task_links(plan_id, revision);
       CREATE TABLE IF NOT EXISTS service_owner (
         id INTEGER PRIMARY KEY CHECK(id = 1),
         issuer TEXT NOT NULL,
@@ -736,6 +802,7 @@ export class TaskGraphStore {
       parentId: row.parent_id == null ? undefined : String(row.parent_id),
       title: String(row.title),
       goal: String(row.goal),
+      writeScopes: JSON.parse(String(this.db.prepare("SELECT scopes FROM task_write_scopes WHERE task_id=?").get(id)?.scopes ?? '["."]')),
       category: String(row.category) as Task["category"],
       status: String(row.status) as Task["status"],
       childIds: this.childTaskIds(id),
@@ -786,6 +853,31 @@ export class TaskGraphStore {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     }
+  }
+}
+
+function toWorkPlan(row: Row): WorkPlan {
+  return {
+    id: String(row.id), title: String(row.title), goal: String(row.goal), requestText: String(row.request_text),
+    rootTaskId: row.root_task_id == null ? undefined : String(row.root_task_id), state: String(row.state) as WorkPlan["state"],
+    currentRevision: Number(row.current_revision), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+  }
+}
+
+function toPlanRevision(row: Row): PlanRevision {
+  return {
+    planId: String(row.plan_id), version: Number(row.version), state: String(row.state) as PlanRevision["state"],
+    summary: String(row.summary), changeSummary: row.change_summary == null ? undefined : String(row.change_summary),
+    approval: parseJson(row.approval_json), createdAt: String(row.created_at),
+  }
+}
+
+function toPlanNode(row: Row): PlanNode {
+  return {
+    nodeId: String(row.node_id), parentNodeId: row.parent_node_id == null ? undefined : String(row.parent_node_id),
+    label: String(row.label), stage: String(row.stage) as PlanNode["stage"], outcome: String(row.outcome),
+    dependsOnNodeIds: parseJson(row.depends_on_json) ?? [], researchTrack: row.research_track == null ? undefined : String(row.research_track) as PlanNode["researchTrack"],
+    taskSpec: parseJson(row.task_spec_json),
   }
 }
 

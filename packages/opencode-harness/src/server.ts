@@ -12,7 +12,7 @@ export interface ServerBinding {
   workspace: string
 }
 export interface ServerState {
-  progress?: ReturnType<typeof executionProgress>
+  progress?: ReturnType<typeof executionProgress> & { workers?: ReturnType<typeof executionProgress>[] }
   state: "running" | "waiting" | "completed" | "failed" | "interrupted"
   text: string
   questions: QuestionRequest[]
@@ -46,7 +46,7 @@ export class OpenCodeServer implements HarnessServer {
       baseUrl: config.opencodeUrl,
       model: config.model,
       directory: config.directory,
-      serverConfig: agentConfig(config.maxRuns),
+      serverConfig: agentConfig(config.maxRuns, config.maxWorkers),
     })
   }
   async prepare(workspace: string, database: string): Promise<void> {
@@ -54,7 +54,7 @@ export class OpenCodeServer implements HarnessServer {
     const client = await this.connection.client()
     if (this.prepared.get(workspace) === client) return
     if (this.config.opencodeUrl) {
-      const desired = agentConfig(this.config.maxRuns)
+      const desired = agentConfig(this.config.maxRuns, this.config.maxWorkers)
       const current = (await client.config.get({ directory: workspace })).data
       const contains = (actual: any, expected: any): boolean =>
         expected && typeof expected === "object" && !Array.isArray(expected)
@@ -80,7 +80,7 @@ export class OpenCodeServer implements HarnessServer {
               fileURLToPath(new URL("../../../scripts/graph-mcp.ts", import.meta.url)),
               database,
             ],
-            environment: { TASK_AGENT_INTERNAL: "1" },
+            environment: { TASK_AGENT_INTERNAL: "1", TASK_AGENT_MAX_WORKERS: String(this.config.maxWorkers ?? 3), TASK_AGENT_WORKSPACE: workspace },
             enabled: true,
           },
     })
@@ -183,9 +183,14 @@ export class OpenCodeServer implements HarnessServer {
             : terminal
               ? "completed"
               : "interrupted"
+    const workers = await Promise.all([...ids].filter((id) => id !== binding.sessionID && status.data?.[id]?.type !== undefined && status.data[id]!.type !== "idle").map(async (id) => {
+      const workerMessages = (await client.session.messages({ directory, sessionID: id })).data
+      const parts = Array.isArray(workerMessages) ? workerMessages.flatMap((m) => m.parts) : []
+      return executionProgress(parts)
+    }))
     return {
       state,
-      progress: executionProgress(answers.flatMap((m) => m.parts)),
+      progress: { ...executionProgress(answers.flatMap((m) => m.parts)), workers },
       text: info?.error
         ? JSON.stringify(info.error)
         : answers.flatMap((m) => m.parts.filter((p) => p.type === "text").map((p) => p.text)).join("\n"),

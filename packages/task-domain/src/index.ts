@@ -70,7 +70,93 @@ export const DEFAULT_CONTEXT_POLICY: ContextPolicy = {
   inheritHistory: false,
 }
 
+/** A proposed unit of work kept separate from executable Tasks until approval. */
+export type WorkPlanState = "awaiting_approval" | "active" | "revision_pending" | "completed" | "cancelled"
+export type PlanRevisionState = "draft" | "awaiting_approval" | "approved" | "rejected" | "superseded"
+export type PlanStage = "research" | "design" | "implementation" | "validation"
+export type ResearchTrack = "repository" | "external_examples" | "official_documentation"
+
+export interface PlanTaskSpec {
+  goal: string
+  category?: TaskCategory
+  acceptanceCriteria?: Array<string | Criterion>
+  writeScopes?: string[]
+  assignedRole?: string
+  integrationPolicy?: IntegrationPolicy
+}
+
+export interface PlanNode {
+  nodeId: string
+  parentNodeId?: string
+  label: string
+  stage: PlanStage
+  outcome: string
+  dependsOnNodeIds: string[]
+  researchTrack?: ResearchTrack
+  taskSpec: PlanTaskSpec
+}
+
+export interface WorkPlan {
+  id: string
+  title: string
+  goal: string
+  requestText: string
+  rootTaskId?: string
+  state: WorkPlanState
+  currentRevision: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PlanRevision {
+  planId: string
+  version: number
+  state: PlanRevisionState
+  summary: string
+  changeSummary?: string
+  approval?: { approvedAt?: string; approvalSource?: string }
+  createdAt: string
+}
+
+export interface PlanTaskLink {
+  planId: string
+  revision: number
+  nodeId: string
+  taskId: string
+  action: "create" | "reuse" | "reopen"
+}
+
+export interface PlanImpactReport {
+  planId: string
+  fromVersion: number
+  toVersion: number
+  addedNodeIds: string[]
+  changedNodeIds: string[]
+  removedNodeIds: string[]
+  reusedNodeIds: string[]
+  reopenedNodeIds: string[]
+  recommendations: string[]
+}
+
+export interface UserPlanView {
+  title: string
+  summary: string
+  revision: number
+  state: WorkPlanState | PlanRevisionState
+  nodes: Array<{
+    label: string
+    stage: PlanStage
+    researchTrack?: ResearchTrack
+    outcome: string
+    dependsOn: string[]
+    status: string
+  }>
+  impact?: PlanImpactReport
+  approvalPrompt: string
+}
+
 export interface Task {
+  writeScopes?: string[]
   id: string
   parentId?: string
   title: string
