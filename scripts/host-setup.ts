@@ -32,7 +32,7 @@ if (command === "install") {
         maxWorkers: option("--max-workers") ? Number(option("--max-workers")) : undefined,
         opencodeUrl: option("--opencode-url"),
         graphMcpUrl: option("--graph-mcp-url"),
-        kubernetes: option("--kubernetes-namespace") ? { namespace: option("--kubernetes-namespace")!, context: option("--kubernetes-context") } : undefined,
+        kubernetes: option("--kubernetes-namespace") ? { namespace: option("--kubernetes-namespace")!, context: option("--kubernetes-context"), image: option("--worker-image"), envSecret: option("--worker-env-secret") } : undefined,
         verifyCommand: option("--verify-command"),
       }),
       null,
@@ -83,5 +83,5 @@ if (command === "install") {
   }
 } else
   throw new Error(
-    "Usage: host-setup.ts install|uninstall|start|status|doctor|stop|cancel [--host both|claude|codex] [--workspace path] [--model provider/model] [--verify-command command] [--max-workers 1..16] [--kubernetes-namespace namespace] [--kubernetes-context context]",
+    "Usage: host-setup.ts install|uninstall|start|status|doctor|stop|cancel [--host both|claude|codex] [--workspace path] [--model provider/model] [--verify-command command] [--max-workers 1..16] [--kubernetes-namespace namespace] [--kubernetes-context context] [--worker-image image] [--worker-env-secret name]",
   )

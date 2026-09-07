@@ -172,3 +172,35 @@ test("SIGTERM persists partial work and resumes the interrupted stage in a new p
   assert.equal(JSON.parse(readFileSync(join(directory, "checkpoint.json"), "utf8")).state, "Suspended")
   assert.equal(await runInstance(input, directory, "uid"), 0)
 })
+
+test("Kubernetes profiles fill worker defaults and reject native claims without mutating retry input", async () => {
+  const oldImage = process.env.TASK_INSTANCE_IMAGE, oldSecret = process.env.TASK_INSTANCE_ENV_SECRET
+  process.env.TASK_INSTANCE_IMAGE = "configured-worker:local"
+  process.env.TASK_INSTANCE_ENV_SECRET = "configured-auth"
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test"), graph = createGraphMcp(":memory:", 3, manager)
+  try {
+    const task = graph.engine.createTask({ title: "Profile task", goal: "Run in the configured Pod" })
+    await graph.server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+    await graph.server.handle({ jsonrpc: "2.0", method: "notifications/initialized" })
+    const call = (name: string, args: any) => graph.server.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })
+    const denied: any = await call("task_start", { taskId: task.id, operationId: "native-denied" })
+    assert.equal(denied.result.isError, true)
+    assert.equal(graph.engine.requireTask(task.id).status, "ready")
+    const { image, ...input } = { ...spec(), taskId: task.id }
+    const args = { taskId: task.id, spec: input, operationId: "profile-create" }
+    for (let n = 0; n < 2; n++) {
+      const result: any = await call("task_instance_create", args)
+      assert.ok(!result.result.isError, JSON.stringify(result))
+    }
+    assert.equal("image" in args.spec, false)
+    const instance = await manager.load(task.id)
+    assert.equal(instance.spec.image, "configured-worker:local")
+    assert.equal(instance.spec.envSecret, "configured-auth")
+    assert.equal(graph.store.currentAttempt(task.id)!.worker!.agent, "kubernetes")
+    assert.equal((await api.list("taskinstances")).length, 1)
+  } finally {
+    graph.close()
+    if (oldImage === undefined) delete process.env.TASK_INSTANCE_IMAGE; else process.env.TASK_INSTANCE_IMAGE = oldImage
+    if (oldSecret === undefined) delete process.env.TASK_INSTANCE_ENV_SECRET; else process.env.TASK_INSTANCE_ENV_SECRET = oldSecret
+  }
+})

@@ -50,6 +50,28 @@ node scripts/graph-mcp.ts /absolute/path/to/tasks.db
 
 호스트 연결도 전환하려면 `npm run host:install -- --kubernetes-namespace task-agent --kubernetes-context kind-task-agent-local`을 사용한다. 이 설정은 호스트가 시작하는 Graph MCP에 Kubernetes 연결을 전달하고, 매니저의 실행 위임을 인스턴스 도구로 전환한다. 기존 OpenCode 서버 설정 변경은 기존 실행을 중단하고 호스트 서비스를 재시작한 뒤 적용한다. 모델 인증 Secret과 작업용 이미지·저장소 접근을 먼저 준비한다. 원격 Graph MCP는 서버 쪽에도 위 환경 변수를 설정해야 한다.
 
+## 실제 모델 작업자 연결
+
+`Dockerfile.worker`는 인스턴스 이미지에 Node·Rust 빌드 도구와 모델 단계 실행기를 추가한다.
+
+```sh
+docker build -f deploy/kubernetes/Dockerfile.worker -t task-agent-worker:local .
+kind load docker-image task-agent-worker:local --name task-agent-local
+npm run host:install -- --kubernetes-namespace task-agent \
+  --kubernetes-context kind-task-agent-local \
+  --worker-image task-agent-worker:local --worker-env-secret task-worker-model
+node scripts/host-setup.ts start
+npm run host:doctor
+```
+
+`task-worker-model` Secret은 운영자가 승인한 모델 공급자의 인증 JSON을 `TASK_MODEL_AUTH_JSON`, 모델 이름을 `TASK_WORKER_MODEL`로 제공한다. 인증 값을 명령 인자·소스·TaskInstance에 넣지 않는다. 실행기는 첫 실행에만 PVC의 권한 0600 인증 파일로 저장하고, 이후 갱신된 인증 파일을 보존한다. 실제 모델 프로세스의 환경에서는 주입용 JSON을 제거한다.
+
+Graph MCP의 `task_instance_create`는 생략된 image·envSecret에 호스트 기본값을 적용한다. Kubernetes 모드에서는 native `task_start`를 거부한다. 매니저의 계획 판단은 호스트에서 실행되며, 구현·검증 실행은 인스턴스에 배치한다.
+
+모델 단계 명령은 `node /app/scripts/instance-model-stage.ts <작업 프롬프트>`다. 작업자는 자기 PVC 안에서 도구를 실행한다. 프롬프트와 모델별 세션 ID를 저장하여 중단된 단계를 다시 호출하면 동일 세션을 사용한다. CLI 오류 또는 정상 종료 이벤트가 없는 실행은 실패로 처리한다. 매니저는 Pod의 실제 로그·파일 증거를 확인한 뒤 그래프 완료를 기록한다. 원격 Graph MCP를 작업자에게 제공하는 배포에서는 해당 인증 연결을 별도로 구성할 수 있다.
+
+로컬 전환 검증에서는 기존 투두앱 소스의 스냅샷을 별도 로컬 이미지에 포함했다. 빈 workspace에서 실제 모델의 도구 실행을 먼저 확인했고, 이후 소스를 복사하여 Svelte 검사·빌드와 Rust 테스트 4개·빌드를 실행했다. 원래 앱 태스크의 완료 이력은 유지하고 Kubernetes 검증을 별도 태스크로 기록했다. Pod와 PVC는 확인할 수 있도록 Retain 정책으로 보존했다.
+
 ## 서버 배포와 삭제
 
 서버에서도 같은 이미지와 차트를 사용한다. 레지스트리에 올린 이미지 digest를 `image` 및 각 `spec.image`로 지정하고, `spec.storage.className`으로 서버의 StorageClass를 선택한다. 공유 파일시스템에 SQLite 파일을 직접 여러 작업자에게 열지 말고 중앙 Graph MCP를 사용한다. 저장소 접근과 모델 인증은 서버 namespace의 Secret으로 구성한다.

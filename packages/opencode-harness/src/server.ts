@@ -83,6 +83,8 @@ export class OpenCodeServer implements HarnessServer {
             ],
             environment: { TASK_AGENT_INTERNAL: "1", TASK_AGENT_MAX_WORKERS: String(this.config.maxWorkers ?? 3), TASK_AGENT_WORKSPACE: workspace,
               ...(this.config.kubernetes ? { TASK_INSTANCE_BACKEND: "kubernetes", TASK_INSTANCE_NAMESPACE: this.config.kubernetes.namespace,
+                ...(this.config.kubernetes.image ? { TASK_INSTANCE_IMAGE: this.config.kubernetes.image } : {}),
+                ...(this.config.kubernetes.envSecret ? { TASK_INSTANCE_ENV_SECRET: this.config.kubernetes.envSecret } : {}),
                 ...(this.config.kubernetes.context ? { TASK_INSTANCE_CONTEXT: this.config.kubernetes.context } : {}) } : {}),
             },
             enabled: true,

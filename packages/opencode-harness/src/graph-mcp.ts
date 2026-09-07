@@ -86,6 +86,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
       case "task_release_scope":
         return scheduler.release(a.taskId, a.workerStopped)
       case "task_start":
+        if (instances) throw new Error("Kubernetes execution requires task_instance_create; native task claims are disabled")
         return scheduler.claim(a.taskId, { agent: a.agent ?? "opencode", sessionId: a.sessionId, role: a.role })
       case "task_complete": {
         const task = e.completeTask(a)
@@ -141,7 +142,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
       if (!validate || !validate(args)) throw new Error(ajv.errorsText(validate?.errors))
       if (name === "work_plan_reconcile") return advanceTransition(e, String(args.transitionId), instances)
       if (name.startsWith("task_instance_") && instances) {
-        const input = args as Record<string, any>
+        const input = structuredClone(args) as Record<string, any>
         if (name === "task_instance_status") { e.loadTask(input.taskId); return instances.load(input.taskId) }
         const stable = (value: any): any => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
           ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value
@@ -160,6 +161,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
           const loaded = e.loadTask(input.taskId)
           switch (name) {
           case "task_instance_create":
+            input.spec = { image: process.env.TASK_INSTANCE_IMAGE, envSecret: process.env.TASK_INSTANCE_ENV_SECRET, ...input.spec }
             if (input.spec.taskId !== input.taskId) throw new Error("Instance taskId must match graph taskId")
             validateSpec(input.spec)
             store.transaction(() => {

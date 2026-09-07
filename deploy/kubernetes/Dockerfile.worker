@@ -1,0 +1,11 @@
+ARG INSTANCE_IMAGE=task-agent-instances:local
+FROM rust:1.98-bookworm AS rust
+FROM ${INSTANCE_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
+COPY --from=rust /usr/local/cargo /opt/cargo
+COPY --from=rust /usr/local/rustup /opt/rustup
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/data/home/.cargo
+ENV PATH=/opt/cargo/bin:$PATH
+COPY scripts/instance-model-stage.ts /app/scripts/instance-model-stage.ts
+USER node
