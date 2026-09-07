@@ -1,0 +1,6 @@
+apiVersion: v2
+name: task-instances
+description: Durable Kubernetes execution environments for Task Agent
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

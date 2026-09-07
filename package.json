@@ -28,7 +28,10 @@
     "host:uninstall": "node scripts/host-setup.ts uninstall",
     "migrate:legacy": "node scripts/migrate-legacy.ts",
     "evaluate:host": "node scripts/evaluate-automatic-host.ts",
-    "host:doctor": "node scripts/host-setup.ts doctor"
+    "host:doctor": "node scripts/host-setup.ts doctor",
+    "instances": "node scripts/instances.ts",
+    "instances:controller": "node scripts/instance-controller.ts",
+    "test:kubernetes": "node scripts/smoke-kubernetes.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

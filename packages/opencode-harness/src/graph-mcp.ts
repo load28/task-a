@@ -4,6 +4,10 @@ import { createHash } from "node:crypto"
 import { buildTaskContext, formatTaskContext } from "#task-context"
 import { TaskAgentMcpServer, tools, READ_ONLY_TOOLS } from "../../protocol-mcp/src/index.ts"
 import { createGraphRuntime } from "../../../apps/task-agent/src/graph-runtime.ts"
+import { configuredInstances, instanceTools, INSTANCE_INSTRUCTIONS } from "../../task-instances/src/graph-tools.ts"
+import type { InstanceManager } from "../../task-instances/src/manager.ts"
+import { instanceName } from "../../task-instances/src/manager.ts"
+import { validateSpec } from "../../task-instances/src/types.ts"
 
 export const GRAPH_INSTRUCTIONS = `You are using a deterministic task graph, not an execution harness.
 OpenCode owns all planning, task extraction, decomposition, task selection, implementation, verification, integration, retries and reflection.
@@ -18,17 +22,18 @@ Each implementation worker must publish its output artifacts BEFORE or WITH task
 Integration tools record proposals and results; they never execute tests. Execute tests with OpenCode tools.
 Never call a second orchestrator or spawn Claude/Codex to perform the work.`
 
-export function createGraphMcp(database: string, maxWorkers = 3) {
+export function createGraphMcp(database: string, maxWorkers = 3, instances: InstanceManager | undefined = configuredInstances()) {
   const runtime = createGraphRuntime(database)
   const { engine: e, integration: i, store } = runtime
   const scheduler = new TaskScheduler(e, maxWorkers, process.env.TASK_AGENT_WORKSPACE)
   const readOnly = new Set([...READ_ONLY_TOOLS, "task_schedule"])
+  readOnly.add("task_instance_status")
   const schedulingTools = [
     { name: "task_schedule", description: "Inspect active workers, write scopes and runnable tasks with conflict/capacity blockers. Claim tasks atomically with task_start; do not assume this snapshot is a reservation.", inputSchema: { type: "object", properties: { rootId: { type: "string" } } } },
     { name: "task_expand_scope", description: "Atomically reserve additional files/directories BEFORE writing outside the original scope. On conflict wait without modifying the files.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, writeScopes: { type: "array", items: { type: "string" } } }, required: ["taskId", "writeScopes"] } },
     { name: "task_release_scope", description: "Release a failed/interrupted task reservation only AFTER the native worker is confirmed stopped. Never use timeout alone as proof. Complete or fail the task first.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, workerStopped: { type: "boolean", const: true } }, required: ["taskId", "workerStopped"] } },
   ]
-  const schemas = [...tools, ...schedulingTools]
+  const schemas = [...tools, ...schedulingTools, ...(instances ? instanceTools : [])]
     .filter((t) => t.name !== "orchestrate_run")
     .map((t) => ({
       ...t,
@@ -45,6 +50,7 @@ export function createGraphMcp(database: string, maxWorkers = 3) {
   store.db.exec(
     "CREATE TABLE IF NOT EXISTS graph_receipts(id TEXT PRIMARY KEY, signature TEXT NOT NULL, result TEXT NOT NULL)",
   )
+  if (instances) store.db.exec("CREATE TABLE IF NOT EXISTS graph_task_instances(task_id TEXT PRIMARY KEY REFERENCES tasks(id), specification TEXT NOT NULL)")
   function apply(name: string, a: any): unknown {
     switch (name) {
       case "task_create":
@@ -120,12 +126,59 @@ export function createGraphMcp(database: string, maxWorkers = 3) {
         throw new Error("Unknown graph tool")
     }
   }
+  const instanceCalls = new Map<string, { signature: string; result: Promise<unknown> }>()
   const server = new TaskAgentMcpServer(runtime.agent, {
     tools: schemas,
-    instructions: GRAPH_INSTRUCTIONS,
+    instructions: GRAPH_INSTRUCTIONS + (instances ? `\n${INSTANCE_INSTRUCTIONS}` : ""),
     dispatch(name, args) {
       const validate = validators.get(name)
       if (!validate || !validate(args)) throw new Error(ajv.errorsText(validate?.errors))
+      if (name.startsWith("task_instance_") && instances) {
+        const input = args as Record<string, any>
+        if (name === "task_instance_status") { e.loadTask(input.taskId); return instances.load(input.taskId) }
+        const stable = (value: any): any => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
+          ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value
+        const signature = createHash("sha256").update(JSON.stringify([name, stable(input)])).digest("hex")
+        const previous = store.db.prepare("SELECT * FROM graph_receipts WHERE id=?").get(input.operationId)
+        if (previous) {
+          if (previous.signature !== signature) throw new Error("operationId reused with different arguments")
+          return JSON.parse(String(previous.result))
+        }
+        const pending = instanceCalls.get(input.operationId)
+        if (pending) {
+          if (pending.signature !== signature) throw new Error("operationId reused with different arguments")
+          return pending.result
+        }
+        const execute = async () => {
+          const loaded = e.loadTask(input.taskId)
+          switch (name) {
+          case "task_instance_create":
+            if (input.spec.taskId !== input.taskId) throw new Error("Instance taskId must match graph taskId")
+            validateSpec(input.spec)
+            store.transaction(() => {
+              const bound = store.db.prepare("SELECT specification FROM graph_task_instances WHERE task_id=?").get(input.taskId)
+              const specification = JSON.stringify(stable(input.spec))
+              if (bound) {
+                if (bound.specification !== specification) throw new Error("Task already bound to a different instance specification")
+                return
+              }
+              if (loaded.children.length || loaded.task.status !== "ready") throw new Error("Only unclaimed runnable leaves can own a new instance")
+              e.startTask(input.taskId, { agent: "kubernetes", sessionId: instanceName(input.taskId) })
+              store.db.prepare("INSERT INTO graph_task_instances VALUES (?,?)").run(input.taskId, specification)
+            })
+            return instances.create(input.spec)
+          case "task_instance_suspend": return instances.suspend(input.taskId)
+          case "task_instance_resume": return instances.resume(input.taskId, input.run)
+          case "task_instance_delete": return instances.remove(input.taskId)
+          }
+        }
+        const result = execute().then(result => {
+          store.db.prepare("INSERT INTO graph_receipts VALUES(?,?,?)").run(input.operationId, signature, JSON.stringify(result))
+          return result
+        }).finally(() => instanceCalls.delete(input.operationId))
+        instanceCalls.set(input.operationId, { signature, result })
+        return result
+      }
       if (readOnly.has(name)) return apply(name, args)
       const { operationId, ...input } = args
       if (typeof operationId !== "string") throw new Error("operationId is required")

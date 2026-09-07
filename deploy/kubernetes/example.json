@@ -1,0 +1,13 @@
+{
+  "taskId": "example-durable-task",
+  "image": "task-agent-instances:local",
+  "desiredState": "Running",
+  "run": 1,
+  "storage": { "size": "1Gi" },
+  "deletionPolicy": "Retain",
+  "stages": [
+    { "id": "research", "command": ["node", "-e", "require('fs').writeFileSync('notes.txt', '조사 결과를 보존합니다.\\n')"] },
+    { "id": "implementation", "command": ["node", "-e", "const fs=require('fs'); const path='progress.json'; let n=fs.existsSync(path)?JSON.parse(fs.readFileSync(path)).step:0; const timer=setInterval(()=>{fs.writeFileSync(path,JSON.stringify({step:++n}));if(n>=120){clearInterval(timer)}},1000)"] },
+    { "id": "validation", "command": ["node", "-e", "if(JSON.parse(require('fs').readFileSync('progress.json')).step<120)process.exit(1)"] }
+  ]
+}

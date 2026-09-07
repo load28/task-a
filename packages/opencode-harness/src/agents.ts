@@ -1,5 +1,6 @@
 import type { Config } from "@opencode-ai/sdk/v2"
 import { GRAPH_INSTRUCTIONS } from "./graph-mcp.ts"
+import { INSTANCE_INSTRUCTIONS } from "../../task-instances/src/graph-tools.ts"
 
 export const MANAGER_PROMPT = `${GRAPH_INSTRUCTIONS}
 You are the sole orchestration harness for requests received from Claude Code and Codex.
@@ -17,13 +18,13 @@ When work fails, inspect evidence and decide whether to retry, reopen, decompose
 Use the native question tool for missing user input. Tool execution is authorized by the configured permission policy; do not ask for redundant tool approval.
 Respond in the user's language with the result, evidence and any remaining blocker. A host Stop event is not a new request.`
 
-export function agentConfig(steps: number, maxWorkers = 3): Config {
+export function agentConfig(steps: number, maxWorkers = 3, kubernetes = false): Config {
   return {
     agent: {
       "task-manager": {
         mode: "primary",
         description: "Own the complete task graph and development lifecycle",
-        prompt: `${MANAGER_PROMPT}
+        prompt: kubernetes ? `${MANAGER_PROMPT}\n${INSTANCE_INSTRUCTIONS}\nThe Kubernetes execution instructions override native subagent dispatch and host-path scope reservations. Use isolated task instances for execution and native planners only for read-only planning.` : `${MANAGER_PROMPT}
 Run up to ${maxWorkers} independent task-worker calls CONCURRENTLY using native parallel tool calls in the SAME response. Do not await one worker before launching another independent worker. The manager does not claim tasks on behalf of workers: each worker claims exactly its assigned leaf.
 After an approved plan has materialized work, decompose it with dependencies and narrow writeScopes. Use task_schedule before dispatch. Dispatch up to available capacity with mutually non-overlapping scopes. When a worker finishes, dispatch newly unblocked work; let independent workers continue after another worker fails. Never run overlapping writes or exclusive builds concurrently. After implementation workers finish, run a separate exclusive verification task and record integration results before final completion.
 If scope expansion conflicts, finish/stop the conflicting work and release its reservation before resuming; do not deadlock workers waiting on each other's reservations.`,
@@ -35,7 +36,7 @@ If scope expansion conflicts, finish/stop the conflicting work and release its r
           grep: "allow",
           edit: "allow",
           bash: "allow",
-          task: { "*": "deny", "task-worker": "allow", "task-planner": "allow" },
+          task: { "*": "deny", "task-worker": kubernetes ? "deny" : "allow", "task-planner": "allow" },
           question: "allow",
           "task_graph_*": "allow",
         },

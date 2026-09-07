@@ -20,6 +20,7 @@ export interface InstallOptions {
   model?: string
   opencodeUrl?: string
   graphMcpUrl?: string
+  kubernetes?: HostConfig["kubernetes"]
   verifyCommand?: string
   maxWorkers?: number
   autoContinue?: boolean
@@ -97,6 +98,8 @@ function replaceToml(text: string, block: string): { text: string; previous: str
   return { text: kept.join("\n").trimEnd() + "\n" + block, previous: removed.join("\n") }
 }
 export function install(options: InstallOptions): { config: string; files: string[] } {
+  if (options.kubernetes && (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(options.kubernetes.namespace) ||
+    (options.kubernetes.context !== undefined && !options.kubernetes.context.trim()))) throw new Error("Invalid Kubernetes execution configuration")
   if (options.maxWorkers !== undefined && (!Number.isInteger(options.maxWorkers) || options.maxWorkers < 1 || options.maxWorkers > 16)) throw new Error("maxWorkers must be 1–16")
   const workspace = options.workspace ? realpathSync(options.workspace) : undefined
   const directory = resolve(options.home, ".task-agent")
@@ -115,6 +118,7 @@ export function install(options: InstallOptions): { config: string; files: strin
     workspaces: existing.workspaces ?? [],
     opencodeUrl: options.opencodeUrl ?? existing.opencodeUrl,
     graphMcpUrl: options.graphMcpUrl ?? existing.graphMcpUrl,
+    kubernetes: options.kubernetes ?? existing.kubernetes,
     model: options.model ?? existing.model,
     autoContinue: options.autoContinue ?? existing.autoContinue ?? true,
     maxRuns: existing.maxRuns ?? 50,

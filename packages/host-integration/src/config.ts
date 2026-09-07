@@ -11,6 +11,7 @@ export interface HostConfig {
   workspaces: Array<{ path: string; verifyCommand?: string }>
   opencodeUrl?: string
   graphMcpUrl?: string
+  kubernetes?: { namespace: string; context?: string }
   model?: string
   autoContinue: boolean
   maxWorkers?: number
@@ -35,6 +36,8 @@ export function loadConfig(path: string): HostConfig {
     throw new Error("Invalid automatic host configuration")
   if (c.graphMcpUrl && c.workspaces.length !== 1)
     throw new Error("A remote Graph MCP URL requires a single workspace per host configuration")
+  if (c.kubernetes && (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(c.kubernetes.namespace) ||
+    (c.kubernetes.context !== undefined && !c.kubernetes.context.trim()))) throw new Error("Invalid Kubernetes execution configuration")
   for (const w of c.workspaces) {
     if (!isAbsolute(w.path)) throw new Error("Workspace must be absolute")
     w.path = realpathSync(w.path)

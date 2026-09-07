@@ -46,7 +46,7 @@ export class OpenCodeServer implements HarnessServer {
       baseUrl: config.opencodeUrl,
       model: config.model,
       directory: config.directory,
-      serverConfig: agentConfig(config.maxRuns, config.maxWorkers),
+      serverConfig: agentConfig(config.maxRuns, config.maxWorkers, !!config.kubernetes),
     })
   }
   async prepare(workspace: string, database: string): Promise<void> {
@@ -54,7 +54,7 @@ export class OpenCodeServer implements HarnessServer {
     const client = await this.connection.client()
     if (this.prepared.get(workspace) === client) return
     if (this.config.opencodeUrl) {
-      const desired = agentConfig(this.config.maxRuns, this.config.maxWorkers)
+      const desired = agentConfig(this.config.maxRuns, this.config.maxWorkers, !!this.config.kubernetes)
       const current = (await client.config.get({ directory: workspace })).data
       const contains = (actual: any, expected: any): boolean =>
         expected && typeof expected === "object" && !Array.isArray(expected)
@@ -80,7 +80,10 @@ export class OpenCodeServer implements HarnessServer {
               fileURLToPath(new URL("../../../scripts/graph-mcp.ts", import.meta.url)),
               database,
             ],
-            environment: { TASK_AGENT_INTERNAL: "1", TASK_AGENT_MAX_WORKERS: String(this.config.maxWorkers ?? 3), TASK_AGENT_WORKSPACE: workspace },
+            environment: { TASK_AGENT_INTERNAL: "1", TASK_AGENT_MAX_WORKERS: String(this.config.maxWorkers ?? 3), TASK_AGENT_WORKSPACE: workspace,
+              ...(this.config.kubernetes ? { TASK_INSTANCE_BACKEND: "kubernetes", TASK_INSTANCE_NAMESPACE: this.config.kubernetes.namespace,
+                ...(this.config.kubernetes.context ? { TASK_INSTANCE_CONTEXT: this.config.kubernetes.context } : {}) } : {}),
+            },
             enabled: true,
           },
     })
