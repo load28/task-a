@@ -43,6 +43,8 @@ spec:
                   message: Task, image, stages and storage are immutable; create a new instance for changed work
                 - rule: has(self.repository) == has(oldSelf.repository) && (!has(self.repository) || self.repository == oldSelf.repository)
                   message: Repository snapshot is immutable
+                - rule: has(self.reuseSources) == has(oldSelf.reuseSources) && (!has(self.reuseSources) || self.reuseSources == oldSelf.reuseSources)
+                  message: Reuse sources are immutable
               properties:
                 taskId: {type: string, minLength: 1, maxLength: 256}
                 image: {type: string, minLength: 1, maxLength: 512}
@@ -62,6 +64,18 @@ spec:
                     url: {type: string, pattern: '^https://', maxLength: 2048}
                     commit: {type: string, pattern: '^[a-f0-9]{40,64}$', maxLength: 64}
                 envSecret: {type: string, maxLength: 253}
+                reuseSources:
+                  type: array
+                  maxItems: 8
+                  items:
+                    type: object
+                    required: [taskId, stages]
+                    properties:
+                      taskId: {type: string, minLength: 1, maxLength: 256}
+                      stages:
+                        type: array
+                        maxItems: 32
+                        items: {type: string, maxLength: 63}
                 resources:
                   type: object
                   properties:
@@ -87,6 +101,15 @@ spec:
                         minItems: 1
                         maxItems: 64
                         items: {type: string, minLength: 1, maxLength: 32768}
+                      inputDigest: {type: string, pattern: '^[a-f0-9]{64}$', maxLength: 64}
+                      outputs:
+                        type: array
+                        maxItems: 128
+                        items: {type: string, minLength: 1, maxLength: 1024}
+                      dependsOn:
+                        type: array
+                        maxItems: 32
+                        items: {type: string, maxLength: 63}
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

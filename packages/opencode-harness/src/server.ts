@@ -30,6 +30,7 @@ export interface HarnessServer {
     input: { requestID: string; kind: "question" | "permission"; answers?: string[][]; reply?: "once" | "reject" },
   ): Promise<void>
   cancel(binding: ServerBinding): Promise<void>
+  stopWorker?(workspace: string, sessionId: string): Promise<{ stopped: boolean; evidence: string }>
   readiness(): Promise<unknown>
   close(): void | Promise<void>
 }
@@ -241,6 +242,21 @@ export class OpenCodeServer implements HarnessServer {
     await Promise.all(
       [...ids].reverse().map((sessionID) => client.session.abort({ directory: binding.workspace, sessionID })),
     )
+  }
+  async stopWorker(workspace: string, sessionId: string) {
+    const client = await this.connection.client()
+    const session = await client.session.get({ directory: workspace, sessionID: sessionId })
+    if (!session.data) return { stopped: false, evidence: "Native session cannot be located" }
+    const ids = await this.sessions({ workspace, sessionID: sessionId, messageID: "" })
+    for (const id of [...ids].reverse()) await client.session.abort({ directory: workspace, sessionID: id })
+    const states = (await client.session.status({ directory: workspace })).data ?? {}
+    for (const id of ids) {
+      if (states[id] && states[id]!.type !== "idle") return { stopped: false, evidence: "Native worker is still stopping" }
+      const messages = (await client.session.messages({ directory: workspace, sessionID: id })).data ?? []
+      if (messages.at(-1)?.parts.some(p => p.type === "tool" && ["running", "pending"].includes(p.state.status)))
+        return { stopped: false, evidence: "Native tools have not confirmed termination" }
+    }
+    return { stopped: true, evidence: `OpenCode confirmed idle sessions and no running tools: ${[...ids].join(", ")}` }
   }
   async readiness(): Promise<unknown> {
     const base = await this.connection.readiness()

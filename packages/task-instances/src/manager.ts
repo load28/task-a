@@ -16,7 +16,7 @@ export class InstanceManager {
     validateSpec(spec)
     const existing = await this.api.get("taskinstances", instanceName(spec.taskId)) as TaskInstance | undefined
     if (existing) {
-      for (const key of ["taskId", "image", "storage", "repository", "stages"] as const)
+      for (const key of ["taskId", "image", "storage", "repository", "stages", "reuseSources"] as const)
         if (!isDeepStrictEqual(existing.spec[key], spec[key])) throw new Error("Task already has a different execution environment")
       return existing
     }

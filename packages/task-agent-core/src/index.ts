@@ -52,7 +52,7 @@ export interface TaskAgent {
   proposeDecomposition(input: DecompositionProposal): Promise<{ parent: Task; children: Task[] }>
   startTask(input: { taskId: string; agent?: string; sessionId?: string; role?: string }): Promise<Task>
   completeTask(input: CompleteTaskInput): Promise<Task>
-  failTask(input: { taskId: string; reason: string }): Promise<Task>
+  failTask(input: { taskId: string; reason: string; attemptToken?: string }): Promise<Task>
   reopenTask(input: { taskId: string; reason: string }): Promise<Task>
   getContext(input: { taskId: string }): Promise<ContextResult>
   publishArtifact(input: PublishArtifactInput): Promise<ArtifactVersion>
@@ -121,9 +121,9 @@ export class TaskAgentService implements TaskAgent {
     return this.engine.completeTask(input)
   }
 
-  async failTask(input: { taskId: string; reason: string }): Promise<Task> {
+  async failTask(input: { taskId: string; reason: string; attemptToken?: string }): Promise<Task> {
     requireId(input, "taskId")
-    return this.engine.failTask(input.taskId, input.reason)
+    return this.engine.failTask(input.taskId, input.reason, input.attemptToken)
   }
 
   async reopenTask(input: { taskId: string; reason: string }): Promise<Task> {

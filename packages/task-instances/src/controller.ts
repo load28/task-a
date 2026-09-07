@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto"
 import { FINALIZER, GROUP, validateSpec, type ClusterApi, type Resource, type TaskInstance } from "./types.ts"
+import { instanceName } from "./manager.ts"
 
 export function names(instance: TaskInstance) {
   const suffix = createHash("sha256").update(instance.metadata.uid!).digest("hex").slice(0, 24)
   return { pod: `task-${suffix}`, volume: `task-${suffix}-data` }
 }
-export function podFor(instance: TaskInstance): Resource {
+export function podFor(instance: TaskInstance, sourceVolumes: string[] = []): Resource {
   const { pod, volume } = names(instance)
   return { apiVersion: "v1", kind: "Pod", metadata: {
     name: pod, namespace: instance.metadata.namespace,
@@ -24,9 +25,9 @@ export function podFor(instance: TaskInstance): Resource {
       ...(instance.spec.envSecret ? { envFrom: [{ secretRef: { name: instance.spec.envSecret } }] } : {}),
       resources: instance.spec.resources ?? { requests: { cpu: "250m", memory: "512Mi" }, limits: { cpu: "2", memory: "3Gi" } },
       securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } },
-      volumeMounts: [{ name: "data", mountPath: "/data" }],
+      volumeMounts: [{ name: "data", mountPath: "/data" }, ...sourceVolumes.map((_, i) => ({ name: `reuse-${i}`, mountPath: `/reuse/${i}`, readOnly: true }))],
       terminationMessagePath: "/dev/termination-log", terminationMessagePolicy: "File",
-    }], volumes: [{ name: "data", persistentVolumeClaim: { claimName: volume } }],
+    }], volumes: [{ name: "data", persistentVolumeClaim: { claimName: volume } }, ...sourceVolumes.map((name, i) => ({ name: `reuse-${i}`, persistentVolumeClaim: { claimName: name, readOnly: true } }))],
   } }
 }
 /** One deterministic Pod name and UID-preconditioned deletion serialize each instance. */
@@ -45,6 +46,9 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
   if (instance.metadata.deletionTimestamp) {
     if (pod) { await api.remove("pods", pod); return }
     if (instance.spec.deletionPolicy === "Delete") {
+      const consumers = (await api.list("taskinstances")).filter(r => r.metadata.uid !== instance.metadata.uid &&
+        r.status?.phase !== "Completed" && r.spec.reuseSources?.some((s: any) => s.taskId === instance.spec.taskId))
+      if (consumers.length) { await report("RetainedForConsumers", { reason: "Other revisions still reference stage snapshots" }); return }
       if (pvc) {
         if (!owned(pvc)) throw new Error("PVC ownership mismatch")
         await api.remove("persistentvolumeclaims", pvc); return
@@ -89,5 +93,17 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
   const active = (await api.list("pods")).filter(p => p.metadata.labels?.[`${GROUP}/instance`] &&
     (p.metadata.deletionTimestamp || !["Succeeded", "Failed"].includes(p.status?.phase)))
   if (active.length >= maxWorkers) { await report("Queued", { reason: "Worker capacity reached" }); return }
-  await api.create("pods", podFor(instance))
+  const sourceVolumes: string[] = []
+  for (const source of instance.spec.reuseSources ?? []) {
+    const prior = await api.get("taskinstances", instanceName(source.taskId)) as TaskInstance | undefined
+    if (!prior || !["Suspended", "Completed", "Failed"].includes(prior.status?.phase) || prior.metadata.deletionTimestamp) {
+      await report("WaitingForReuse", { reason: "Source execution must be stopped before importing stage snapshots" }); return
+    }
+    const sourceVolume = await api.get("persistentvolumeclaims", names(prior).volume)
+    if (!sourceVolume || sourceVolume.metadata.labels?.[`${GROUP}/uid`] !== prior.metadata.uid) {
+      await report("RecoveryRequired", { reason: "Reuse source volume is missing or has changed identity" }); return
+    }
+    sourceVolumes.push(sourceVolume.metadata.name)
+  }
+  await api.create("pods", podFor(instance, sourceVolumes))
 }

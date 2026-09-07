@@ -71,7 +71,7 @@ export const DEFAULT_CONTEXT_POLICY: ContextPolicy = {
 }
 
 /** A proposed unit of work kept separate from executable Tasks until approval. */
-export type WorkPlanState = "awaiting_approval" | "active" | "revision_pending" | "completed" | "cancelled"
+export type WorkPlanState = "awaiting_approval" | "active" | "revision_pending" | "transitioning" | "completed" | "cancelled"
 export type PlanRevisionState = "draft" | "awaiting_approval" | "approved" | "rejected" | "superseded"
 export type PlanStage = "research" | "design" | "implementation" | "validation"
 export type ResearchTrack = "repository" | "external_examples" | "official_documentation"
@@ -83,6 +83,10 @@ export interface PlanTaskSpec {
   writeScopes?: string[]
   assignedRole?: string
   integrationPolicy?: IntegrationPolicy
+  requirements?: Array<{ description: string; kind?: RequirementKind }>
+  inputContracts?: string[]
+  outputContracts?: string[]
+  environmentDigest?: string
 }
 
 export interface PlanNode {
@@ -94,6 +98,7 @@ export interface PlanNode {
   dependsOnNodeIds: string[]
   researchTrack?: ResearchTrack
   taskSpec: PlanTaskSpec
+  reuseFromNodeIds?: string[]
 }
 
 export interface WorkPlan {
@@ -104,6 +109,7 @@ export interface WorkPlan {
   rootTaskId?: string
   state: WorkPlanState
   currentRevision: number
+  activeRevision?: number
   createdAt: string
   updatedAt: string
 }
@@ -123,7 +129,7 @@ export interface PlanTaskLink {
   revision: number
   nodeId: string
   taskId: string
-  action: "create" | "reuse" | "reopen"
+  action: "create" | "reuse" | "reopen" | "replace" | "revalidate"
 }
 
 export interface PlanImpactReport {
@@ -136,6 +142,20 @@ export interface PlanImpactReport {
   reusedNodeIds: string[]
   reopenedNodeIds: string[]
   recommendations: string[]
+  decisions?: Array<{ nodeId: string; action: "reuse" | "create" | "replace" | "revalidate" | "exclude"; priorTaskId?: string; reason: string }>
+}
+
+export interface RevisionContext { goal: string; requirements: string[]; constraints: string[] }
+export interface PlanTransition {
+  id: string; planId: string; fromVersion: number; toVersion: number
+  state: "waiting" | "applied" | "superseded"
+  stops: Array<{ taskId: string; token: string; state: "requested" | "stopped"; evidence?: string }>
+  createdAt: string; updatedAt: string
+}
+export interface TaskAttempt {
+  id: string; taskId: string; token: string; state: "running" | "completed" | "failed" | "fenced"
+  inputRefs: ArtifactVersionRef[]; snapshot: unknown; worker?: { agent?: string; sessionId?: string; role?: string }
+  createdAt: string
 }
 
 export interface UserPlanView {
@@ -156,6 +176,7 @@ export interface UserPlanView {
 }
 
 export interface Task {
+  attemptToken?: string
   writeScopes?: string[]
   id: string
   parentId?: string

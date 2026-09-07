@@ -1,5 +1,7 @@
 import { normalizeScopes } from "./scheduling.ts"
 import { randomUUID } from "node:crypto"
+import { RevisionCoordinator } from "./revisions.ts"
+import { buildTaskContext } from "#task-context"
 import type {
   ArtifactType,
   ArtifactVersion,
@@ -27,6 +29,8 @@ import type {
   PlanTaskLink,
   UserPlanView,
   WorkPlan,
+  PlanTransition,
+  RevisionContext,
 } from "#task-domain"
 import { DEFAULT_CONTEXT_POLICY, isAtomic } from "#task-domain"
 import type { TaskGraphStore } from "#task-store"
@@ -75,6 +79,7 @@ export interface DecompositionProposal {
 }
 
 export interface PublishArtifactInput {
+  attemptToken?: string
   taskId: string
   name: string
   type: ArtifactType
@@ -86,6 +91,7 @@ export interface PublishArtifactInput {
 }
 
 export interface CompleteTaskInput {
+  attemptToken?: string
   taskId: string
   summary: string
   artifacts?: Array<Omit<PublishArtifactInput, "taskId">>
@@ -123,6 +129,8 @@ export interface CreateDraftPlanInput {
   requestText: string
   summary: string
   nodes: PlanNode[]
+  requirements?: string[]
+  constraints?: string[]
 }
 
 export interface ReviseWorkPlanInput {
@@ -131,6 +139,9 @@ export interface ReviseWorkPlanInput {
   nodes: PlanNode[]
   summary: string
   changeSummary?: string
+  goal?: string
+  requirements?: string[]
+  constraints?: string[]
 }
 
 export interface DefineContractInput {
@@ -193,10 +204,12 @@ const MANUAL_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 
 export class TaskGraphEngine {
   readonly store: TaskGraphStore
+  readonly revisions: RevisionCoordinator
   private reflectionThreshold: number
 
   constructor(store: TaskGraphStore, options: TaskGraphEngineOptions = {}) {
     this.store = store
+    this.revisions = new RevisionCoordinator(this)
     this.reflectionThreshold = Math.max(2, options.reflectionThreshold ?? 5)
   }
 
@@ -316,6 +329,7 @@ export class TaskGraphEngine {
       const revision: PlanRevision = { planId: plan.id, version: 1, state: "awaiting_approval", summary: input.summary.trim(), createdAt: now }
       this.store.insertWorkPlan(plan)
       this.store.insertPlanRevision(revision, input.nodes)
+      this.revisions.saveContext(plan.id, 1, { goal: input.goal, requirements: input.requirements ?? [], constraints: input.constraints ?? [] })
       return this.userPlanView(plan, revision, input.nodes, [])
     })
   }
@@ -343,10 +357,12 @@ export class TaskGraphEngine {
       this.validatePlanNodes(input.nodes)
       requireText(input.summary, "plan summary")
       const prior = this.requirePlanRevision(plan.id, plan.currentRevision)
-      if (prior.state === "awaiting_approval") throw new Error("Approve, reject, or replace the pending plan revision first")
+      if (prior.state === "awaiting_approval") this.store.updatePlanRevision({ ...prior, state: "superseded" })
       const now = new Date().toISOString()
       const revision: PlanRevision = { planId: plan.id, version: plan.currentRevision + 1, state: "awaiting_approval", summary: input.summary.trim(), changeSummary: input.changeSummary?.trim(), createdAt: now }
       this.store.insertPlanRevision(revision, input.nodes)
+      const context = this.revisions.context(plan.id, prior.version)
+      this.revisions.saveContext(plan.id, revision.version, { goal: input.goal ?? context.goal, requirements: input.requirements ?? context.requirements, constraints: input.constraints ?? context.constraints })
       const updated = { ...plan, state: "revision_pending" as const, currentRevision: revision.version, updatedAt: now }
       this.store.updateWorkPlan(updated)
       const impact = this.analyzePlanImpact({ planId: plan.id, fromVersion: prior.version, toVersion: revision.version })
@@ -356,76 +372,35 @@ export class TaskGraphEngine {
 
   analyzePlanImpact(input: { planId: string; fromVersion?: number; toVersion?: number }): PlanImpactReport {
     const plan = this.requireWorkPlan(input.planId)
-    const toVersion = input.toVersion ?? plan.currentRevision
-    const fromVersion = input.fromVersion ?? Math.max(1, toVersion - 1)
-    const oldNodes = new Map(this.store.planNodes(plan.id, fromVersion).map((node) => [node.nodeId, node]))
-    const nextNodes = new Map(this.store.planNodes(plan.id, toVersion).map((node) => [node.nodeId, node]))
-    const addedNodeIds = [...nextNodes.keys()].filter((id) => !oldNodes.has(id))
-    const removedNodeIds = [...oldNodes.keys()].filter((id) => !nextNodes.has(id))
-    const changedNodeIds = [...nextNodes.keys()].filter((id) => oldNodes.has(id) && JSON.stringify(oldNodes.get(id)) !== JSON.stringify(nextNodes.get(id)))
-    const priorLinks = new Map(this.store.planLinks(plan.id, fromVersion).map((link) => [link.nodeId, link]))
-    const reusedNodeIds = [...nextNodes.keys()].filter((id) => priorLinks.has(id) && !changedNodeIds.includes(id))
-    const reopenedNodeIds = changedNodeIds.filter((id) => {
-      const task = priorLinks.get(id) && this.store.findTask(priorLinks.get(id)!.taskId)
-      return !!task && ["implemented", "verified", "integrating", "integrated", "blocked", "failed", "stale"].includes(task.status)
-    })
-    return { planId: plan.id, fromVersion, toVersion, addedNodeIds, changedNodeIds, removedNodeIds, reusedNodeIds, reopenedNodeIds, recommendations: removedNodeIds.length || changedNodeIds.length ? ["Review changed work and rerun affected verification after approval."] : [] }
+    return this.revisions.analyze(plan.id, input.toVersion ?? plan.currentRevision, input.fromVersion)
   }
 
-  approveWorkPlan(input: { planId: string; version: number; approvalSource: string }): { plan: WorkPlan; rootTaskId: string; createdTaskIds: string[]; userView: UserPlanView } {
+  approveWorkPlan(input: { planId: string; version: number; approvalSource: string }): { plan: WorkPlan; rootTaskId: string; createdTaskIds: string[]; userView: UserPlanView; transition?: PlanTransition } {
     return this.atomic(() => {
       const plan = this.requireWorkPlan(input.planId)
       const revision = this.requirePlanRevision(plan.id, input.version)
       requireText(input.approvalSource, "approval source")
-      if (revision.state === "approved") {
-        if (!plan.rootTaskId) throw new Error("Approved work plan is missing its root task")
-        return { plan, rootTaskId: plan.rootTaskId, createdTaskIds: [], userView: this.userPlanView(plan, revision, this.store.planNodes(plan.id, revision.version), this.store.planLinks(plan.id, revision.version)) }
-      }
-      if (revision.state !== "awaiting_approval" || plan.currentRevision !== revision.version) throw new Error("Work plan revision is not awaiting approval")
-      const nodes = this.store.planNodes(plan.id, revision.version)
-      const priorLinks = revision.version > 1 ? new Map(this.store.planLinks(plan.id, revision.version - 1).map((link) => [link.nodeId, link])) : new Map<string, PlanTaskLink>()
-      const root = plan.rootTaskId ? this.requireTask(plan.rootTaskId) : this.createTask({ title: plan.title, goal: plan.goal, category: "general" })
-      const taskIds = new Map<string, string>()
-      const createdTaskIds: string[] = plan.rootTaskId ? [] : [root.id]
-      const pending = [...nodes]
-      while (pending.length) {
-        const index = pending.findIndex((node) => !node.parentNodeId || taskIds.has(node.parentNodeId))
-        if (index < 0) throw new Error("Plan node parent graph must be acyclic")
-        const node = pending.splice(index, 1)[0]!
-        const prior = priorLinks.get(node.nodeId)
-        const unchanged = prior && JSON.stringify(this.store.planNodes(plan.id, revision.version - 1).find((old) => old.nodeId === node.nodeId)) === JSON.stringify(node)
-        if (unchanged) {
-          taskIds.set(node.nodeId, prior.taskId)
-          this.store.insertPlanLink({ ...prior, revision: revision.version, action: "reuse" })
-          continue
-        }
-        if (prior) {
-          const oldTask = this.requireTask(prior.taskId)
-          if (oldTask.status === "running") throw new Error("Cannot revise a running plan task until it is stopped and recovered")
-          if (["implemented", "verified", "integrating", "integrated", "blocked", "failed", "stale"].includes(oldTask.status)) {
-            const reopened = this.reopenTask(oldTask.id, `Plan revision ${revision.version}: ${revision.changeSummary ?? "changed work"}`)
-            taskIds.set(node.nodeId, reopened.id)
-            this.store.insertPlanLink({ planId: plan.id, revision: revision.version, nodeId: node.nodeId, taskId: reopened.id, action: "reopen" })
-            continue
-          }
-        }
-        const parentId = node.parentNodeId ? taskIds.get(node.parentNodeId) : root.id
-        const task = this.createTask({ ...node.taskSpec, title: node.label, goal: node.taskSpec.goal || node.outcome, parentId })
-        taskIds.set(node.nodeId, task.id)
-        createdTaskIds.push(task.id)
-        this.store.insertPlanLink({ planId: plan.id, revision: revision.version, nodeId: node.nodeId, taskId: task.id, action: "create" })
-      }
-      for (const node of nodes) for (const dependency of node.dependsOnNodeIds) {
-        const taskId = taskIds.get(node.nodeId)!; const dependencyId = taskIds.get(dependency)!
-        if (!this.requireTask(taskId).dependencies.includes(dependencyId)) this.store.addDependency(taskId, dependencyId, new Date().toISOString())
-      }
-      this.assertNoDependencyCycle()
-      const now = new Date().toISOString()
-      const approved = { ...revision, state: "approved" as const, approval: { approvedAt: now, approvalSource: input.approvalSource } }
-      const active = { ...plan, rootTaskId: root.id, state: "active" as const, updatedAt: now }
-      this.store.updatePlanRevision(approved); this.store.updateWorkPlan(active)
-      for (const taskId of taskIds.values()) this.refreshReadiness(taskId)
-      return { plan: active, rootTaskId: root.id, createdTaskIds, userView: this.userPlanView(active, approved, nodes, this.store.planLinks(plan.id, revision.version)) }
+      if (revision.state === "approved" && this.store.activePlanVersion(plan.id) >= input.version)
+        return { plan, rootTaskId: plan.rootTaskId!, createdTaskIds: [], userView: this.userPlanView(plan, revision, this.store.planNodes(plan.id, input.version), this.store.planLinks(plan.id, input.version)) }
+      if (!["awaiting_approval", "approved"].includes(revision.state) || plan.currentRevision !== input.version) throw new Error("Work plan revision is not awaiting approval")
+      const approved = { ...revision, state: "approved" as const, approval: revision.approval ?? { approvedAt: new Date().toISOString(), approvalSource: input.approvalSource } }
+      this.store.updatePlanRevision(approved)
+      this.store.updateWorkPlan({ ...plan, state: "transitioning" })
+      const transition = this.revisions.begin(plan.id, input.version)
+      const activated = this.revisions.activate(transition)
+      const current = this.requireWorkPlan(plan.id)
+      return { plan: current, rootTaskId: activated?.rootTaskId ?? current.rootTaskId!, createdTaskIds: activated?.createdTaskIds ?? [],
+        transition: this.revisions.transitions(plan.id).find(t => t.id === transition.id),
+        userView: this.userPlanView(current, approved, this.store.planNodes(plan.id, input.version), this.store.planLinks(plan.id, input.version)) }
+    })
+  }
+
+  reconcilePlanTransition(transitionId: string) {
+    return this.atomic(() => {
+      const transition = this.revisions.transitions().find(t => t.id === transitionId)
+      if (!transition) throw new Error("Transition not found")
+      const activated = this.revisions.activate(transition)
+      return { transition: this.revisions.transitions().find(t => t.id === transitionId)!, activated }
     })
   }
 
@@ -451,7 +426,7 @@ export class TaskGraphEngine {
       const candidates: Task[] = []
       for (const task of this.allTasks()) {
         if (scope && !scope.has(task.id)) continue
-        if (!isAtomic(task)) continue
+        if (!isAtomic(task) || !this.store.executionAllowed(task.id)) continue
         this.refreshReadiness(task.id)
         const refreshed = this.requireTask(task.id)
         if (refreshed.status === "ready") candidates.push(refreshed)
@@ -461,9 +436,14 @@ export class TaskGraphEngine {
     })
   }
 
+  reuseTask(taskId: string): { reused: boolean; task: Task } {
+    return this.atomic(() => ({ reused: this.revisions.reuseReadyTask(taskId), task: this.requireTask(taskId) }))
+  }
+
   startTask(taskId: string, worker?: { agent?: string; sessionId?: string; role?: string }): Task {
     return this.atomic(() => {
       let task = this.requireTask(taskId)
+      if (!this.store.executionAllowed(taskId)) throw new Error("Task execution is fenced by a plan transition")
       if (!isAtomic(task)) throw new Error("Only atomic tasks can be started; decompose or pick a runnable leaf")
       this.refreshReadiness(taskId)
       task = this.requireTask(taskId)
@@ -475,6 +455,10 @@ export class TaskGraphEngine {
       }
       if (worker?.role && !this.store.findRole(worker.role)) throw new Error(`Unknown role: ${worker.role}`)
       this.setStatus(task, "running", undefined, worker ? { worker } : undefined)
+      const context = buildTaskContext(this, taskId, false)
+      this.store.saveAttempt({ id: randomUUID(), taskId, token: randomUUID(), state: "running", worker,
+        inputRefs: [...context.inputArtifacts, ...context.verifiedBundles].map(a => ({ artifactId: a.artifactId, version: a.version })),
+        snapshot: context, createdAt: new Date().toISOString() })
       return this.requireTask(taskId)
     })
   }
@@ -483,10 +467,16 @@ export class TaskGraphEngine {
     return this.atomic(() => {
       requireText(input.summary, "summary")
       let task = this.requireTask(input.taskId)
+      const attempt = this.store.currentAttempt(task.id)
+      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(task.id)
+      if (!this.store.executionAllowed(task.id) || (versioned || input.attemptToken) && input.attemptToken !== attempt?.token) {
+        this.store.db.prepare("INSERT INTO late_task_reports VALUES(?,?,?)").run(randomUUID(), task.id, JSON.stringify(input))
+        return task
+      }
       if (!isAtomic(task)) throw new Error("Composite tasks complete through their children and integrations")
       if (!["running", "implemented"].includes(task.status)) throw new Error(`Task cannot accept results in status ${task.status}`)
       for (const artifact of input.artifacts ?? []) {
-        this.publishArtifact({ ...artifact, taskId: task.id })
+        this.publishArtifact({ ...artifact, taskId: task.id, attemptToken: input.attemptToken })
       }
       for (const learning of input.learnings ?? []) {
         this.recordLearning({ ...learning, sourceTaskId: task.id })
@@ -505,14 +495,22 @@ export class TaskGraphEngine {
       } else if (verification) {
         this.annotate(task, verification.evidence ? `Local verification failed: ${verification.evidence}` : "Local verification failed")
       }
+      if (attempt) this.store.saveAttempt({ ...attempt, state: "completed" })
       return this.requireTask(input.taskId)
     })
   }
 
-  failTask(taskId: string, reason: string): Task {
+  failTask(taskId: string, reason: string, attemptToken?: string): Task {
     return this.atomic(() => {
       requireText(reason, "reason")
       const task = this.requireTask(taskId)
+      const attempt = this.store.currentAttempt(taskId)
+      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(taskId)
+      if (!this.store.executionAllowed(taskId) || (versioned || attemptToken) && attemptToken !== attempt?.token) {
+        this.store.db.prepare("INSERT INTO late_task_reports VALUES(?,?,?)").run(randomUUID(), taskId, JSON.stringify({ failure: reason }))
+        return task
+      }
+      if (attempt) this.store.saveAttempt({ ...attempt, state: "failed" })
       if (!MANUAL_TRANSITIONS[task.status].includes("failed")) throw new Error(`Task cannot fail from status ${task.status}`)
       this.setStatus(task, "failed", reason)
       this.blockDependents(taskId, `Dependency failed: ${task.title}`)
@@ -523,6 +521,7 @@ export class TaskGraphEngine {
 
   reopenTask(taskId: string, reason: string): Task {
     return this.atomic(() => {
+      if (!this.store.executionAllowed(taskId)) throw new Error("Historical or fenced specifications cannot be reopened; use the current plan revision")
       requireText(reason, "reason")
       const task = this.requireTask(taskId)
       if (!["implemented", "verified", "integrating", "integrated", "blocked", "failed", "stale"].includes(task.status)) {
@@ -539,10 +538,14 @@ export class TaskGraphEngine {
   publishArtifact(input: PublishArtifactInput): ArtifactVersion {
     return this.atomic(() => {
       const task = this.requireTask(input.taskId)
+      const attempt = this.store.currentAttempt(task.id)
+      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(task.id)
+      const historical = !this.store.executionAllowed(task.id) || Boolean((versioned || input.attemptToken) && input.attemptToken !== attempt?.token)
+      if (historical) input = { ...input, name: `${input.name} [historical:${task.id}:${input.attemptToken ?? "unknown"}]` }
       requireText(input.name, "artifact name")
       if (!isArtifactType(input.type)) throw new Error(`Invalid artifact type: ${input.type}`)
       if (input.type === "bundle") throw new Error("Bundle artifacts are promoted by the integration engine, not published directly")
-      if (!["running", "implemented"].includes(task.status)) throw new Error(`Task in status ${task.status} cannot publish artifacts; start or reopen it first`)
+      if (!historical && !["running", "implemented"].includes(task.status)) throw new Error(`Task in status ${task.status} cannot publish artifacts; start or reopen it first`)
       const contentRef = input.contentRef?.trim() || (input.content !== undefined ? `inline:${randomUUID()}` : undefined)
       if (!contentRef) throw new Error("Artifact requires contentRef or inline content")
       const inputs = input.inputs ?? []
@@ -581,8 +584,8 @@ export class TaskGraphEngine {
       this.emit(head ? "ARTIFACT_VERSIONED" : "ARTIFACT_CREATED", task.id, refs)
       const outputs = task.outputArtifactRefs.filter((ref) => ref.artifactId !== artifactId)
       outputs.push({ artifactId, version })
-      this.store.updateTask({ ...this.requireTask(task.id), outputArtifactRefs: outputs, updatedAt: now })
-      if (head) this.propagateStale(artifactId, version, input.compatibility ?? "compatible")
+      if (!historical) this.store.updateTask({ ...this.requireTask(task.id), outputArtifactRefs: outputs, updatedAt: now })
+      if (head && !historical) this.propagateStale(artifactId, version, input.compatibility ?? "compatible")
       if (input.type === "architecture" && head) this.emit("ARCHITECTURE_REVISED", task.id, refs)
       return artifactVersion
     })
@@ -1238,7 +1241,7 @@ export class TaskGraphEngine {
   }
 
   private allTasks(): Task[] {
-    return this.store.searchTasks("", 10_000)
+    return this.store.searchTasks("", 10_000).filter(task => this.store.taskVisible(task.id))
   }
 }
 

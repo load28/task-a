@@ -150,7 +150,7 @@ export class Orchestrator {
   }
 
   private async advanceTask(taskId: string): Promise<void> {
-    const task = this.engine.requireTask(taskId)
+    let task = this.engine.requireTask(taskId)
     const attempt = (this.attempts.get(taskId) ?? 0) + 1
     this.attempts.set(taskId, attempt)
     const role = resolveRole(this.engine.store, task)
@@ -210,7 +210,8 @@ export class Orchestrator {
 
     const sessionId = randomUUID()
     try {
-      await this.agent.startTask({ taskId, agent: this.executor.name, sessionId, role: role?.id })
+      const started = await this.agent.startTask({ taskId, agent: this.executor.name, sessionId, role: role?.id })
+      task = started
     } catch (error) {
       return this.handleFailure(task, attempt, describe(error))
     }
@@ -244,6 +245,7 @@ export class Orchestrator {
     try {
       await this.agent.completeTask({
         taskId,
+        attemptToken: task.attemptToken,
         summary: output.summary,
         artifacts: normalizeArtifacts(output.artifacts ?? []),
         verification: output.verification,
@@ -468,7 +470,7 @@ export class Orchestrator {
     this.emit({ type: "task_retry", taskId: task.id, title: task.title, detail: reason })
     const current = this.engine.requireTask(task.id)
     try {
-      if (current.status === "running") await this.agent.failTask({ taskId: task.id, reason })
+      if (current.status === "running") await this.agent.failTask({ taskId: task.id, reason, attemptToken: task.attemptToken })
     } catch {
       // 상태 전이가 허용되지 않으면 아래 reopen 시도로 넘어간다
     }
@@ -487,7 +489,7 @@ export class Orchestrator {
       const current = this.engine.requireTask(task.id)
       if (!["failed", "verified", "integrated"].includes(current.status)) {
         try {
-          void this.agent.failTask({ taskId: task.id, reason })
+          void this.agent.failTask({ taskId: task.id, reason, attemptToken: task.attemptToken })
         } catch {
           // 실패로 표시할 수 없는 상태면 statusReason 없이 handoff만 남긴다
         }

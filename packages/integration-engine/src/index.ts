@@ -176,6 +176,7 @@ export class IntegrationEngine {
     return this.engine.atomic(() => {
       const set = store.findIntegrationSet(setRef) ?? store.findIntegrationSetByName(setRef)
       if (!set) throw new Error(`Integration set not found: ${setRef}`)
+      if (store.db.prepare("SELECT 1 FROM plan_retired_integrations WHERE set_id=?").get(set.id) || (set.parentTaskId && !store.executionAllowed(set.parentTaskId))) throw new Error("Integration belongs to a retired or fenced plan")
       if (set.status === "running") throw new Error(`Integration set ${set.name} already has a running integration`)
       const resolved: ArtifactVersionRef[] = []
       for (const member of set.memberRefs) {
@@ -244,6 +245,13 @@ export class IntegrationEngine {
         observed: reported.get(scenario.id)!.observed,
       }))
       const failed = run.scenarioResults.filter((result) => result.status === "failed")
+      if (store.db.prepare("SELECT 1 FROM plan_retired_integrations WHERE set_id=?").get(set.id) ||
+        run.memberRefs.some(ref => !store.executionAllowed(this.engine.requireArtifactVersion(ref).producerTaskId))) {
+        run.status = failed.length ? "failed" : "passed"
+        run.finishedAt = now
+        store.updateIntegrationRun(run)
+        return { run, set }
+      }
       if (failed.length === 0) {
         return this.finishPassed(run, set, scenarios, now)
       }

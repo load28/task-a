@@ -61,3 +61,15 @@ kind 클러스터 자체를 삭제하면 로컬 노드의 볼륨도 잃는다. �
 검증: `npm run check`는 컨트롤러 상태 전이와 실제 프로세스 중단·재개를 검사한다. `npm run test:kubernetes`는 독립 CLI 프로세스에서 suspend/resume, 컨트롤러 Pod 재시작, PVC 재사용, 완료 단계 중복 방지와 Delete 정책을 실제 클러스터에서 검사한다.
 
 참고: [Custom resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), [Pod lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/), [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/).
+
+## 계획 개정과 단계 이식
+
+Graph MCP에서 `work_plan_revise` → `work_plan_approve` → `work_plan_reconcile` 순서로 변경을 반영한다. 진행 중인 영향 대상만 중단하며, 전환 상태는 DB에 남는다. `work_plan_transition_status`로 대기 원인을 조회한다. 새 명세에는 새 태스크·인스턴스를 생성한다.
+
+단계의 `outputs`에는 workspace 기준 상대 경로를 지정한다. `inputDigest`에는 해당 단계가 사용하는 요구사항·입력·환경의 SHA-256을 지정한다. `dependsOn`에는 앞선 단계 ID를 지정한다. 새 인스턴스의 `reuseSources: [{ taskId: "previous-task", stages: ["research"] }]`로 가져올 결과를 명시한다. 종료된 원본 PVC의 manifest와 내용 해시를 검사하고 선언된 파일만 가져온다. 원본에 대한 미완료 소비자가 있으면 Delete 정책에서도 PVC를 보존한다.
+
+```sh
+npm run test:revisions:kubernetes
+```
+
+세부 지원 범위와 미구현 경계는 [계획 개정 실행 설계](../../docs/revision-aware-execution.md#구현-현황)를 따른다.

@@ -6,6 +6,11 @@ import { OpenCodeServer, type HarnessServer } from "../../opencode-harness/src/s
 import { RelayStore, type RelayRequest } from "./relay-store.ts"
 import type { HostEvent } from "./store.ts"
 import { workspaceFor, type HostConfig } from "./config.ts"
+import { createGraphRuntime } from "../../../apps/task-agent/src/graph-runtime.ts"
+import { advanceTransition } from "../../task-instances/src/transitions.ts"
+import { InstanceManager } from "../../task-instances/src/manager.ts"
+import { KubectlApi } from "../../task-instances/src/kubectl.ts"
+import { KubernetesApi } from "../../task-instances/src/api.ts"
 
 export function workspaceDatabase(config: HostConfig, workspace: string): string {
   if (config.workspaces[0]?.path === workspace) return config.database
@@ -20,6 +25,7 @@ export class HostService {
   private controls = new Map<string, Promise<Record<string, unknown>>>()
   private closed = false
   private draining?: Promise<void>
+  private graphs = new Map<string, ReturnType<typeof createGraphRuntime>>()
   private timer?: NodeJS.Timeout
   config: HostConfig
   constructor(config: HostConfig, harness?: HarnessServer) {
@@ -304,6 +310,19 @@ export class HostService {
     return this.draining
   }
   private async drain(): Promise<void> {
+    for (const workspace of this.store.projects()) {
+      const database = workspaceDatabase(this.config, workspace)
+      if (!existsSync(database) || this.config.graphMcpUrl) continue
+      let graph = this.graphs.get(workspace)
+      if (!graph) { graph = createGraphRuntime(database); this.graphs.set(workspace, graph) }
+      const k = this.config.kubernetes
+      const instances = k ? new InstanceManager(k.context ? new KubectlApi(k.context, k.namespace) : new KubernetesApi(k.namespace), k.namespace) : undefined
+      for (const t of graph.engine.revisions.transitions().filter(t => t.state === "waiting")) {
+        await advanceTransition(graph.engine, t.id, instances, this.harness.stopWorker ? {
+          stopAndInspect: sessionId => this.harness.stopWorker!(workspace, sessionId),
+        } : undefined)
+      }
+    }
     const workspaces = new Set<string>()
     for (const record of this.store.active()) {
       if (this.closed) return
@@ -396,6 +415,8 @@ export class HostService {
     await this.harness.close()
     await new Promise<void>((ok) => (this.server ? this.server.close(() => ok()) : ok()))
     if (this.ownsSocket && existsSync(this.config.socket)) unlinkSync(this.config.socket)
+    for (const graph of this.graphs.values()) graph.close()
+    this.graphs.clear()
     this.store.close()
   }
 }

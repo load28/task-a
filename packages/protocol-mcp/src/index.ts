@@ -164,6 +164,7 @@ export const READ_ONLY_TOOLS = [
   "work_plan_load",
   "work_plan_impact",
   "work_plan_present",
+  "work_plan_transition_status",
 ]
 
 const artifactVersionRef = {
@@ -217,6 +218,9 @@ const taskFields = {
   },
   integrationPolicy: { type: "string", enum: ["none", "contract", "targeted", "full"] },
   assignedRole: { type: "string" },
+  inputContracts: { type: "array", items: { type: "string" } },
+  outputContracts: { type: "array", items: { type: "string" } },
+  environmentDigest: { type: "string" },
 }
 
 const planNode = {
@@ -227,15 +231,20 @@ const planNode = {
     dependsOnNodeIds: { type: "array", items: { type: "string" } },
     researchTrack: { type: "string", enum: ["repository", "external_examples", "official_documentation"] },
     taskSpec: { type: "object", properties: taskFields, required: ["goal"] },
+    reuseFromNodeIds: { type: "array", items: { type: "string" } },
   },
   required: ["nodeId", "label", "stage", "outcome", "taskSpec"],
 }
 
 export const tools = [
+  { name: "work_plan_transition_status", title: "Inspect plan transition", description: "Inspect durable selective stops and revision activation. Old attempts remain fenced until actual worker termination is observed.",
+    inputSchema: { type: "object", properties: { planId: { type: "string" } } } },
+  { name: "work_plan_reconcile", title: "Advance plan transition", description: "Observe/stop affected Kubernetes workers and advance a durable plan transition. Does not assume native workers stopped; the host runtime confirms them.",
+    inputSchema: { type: "object", properties: { transitionId: { type: "string" } }, required: ["transitionId"] } },
   {
     name: "work_plan_create_draft", title: "Create an approval-gated work plan",
     description: "Persist a proposed user-facing plan without creating or starting Tasks. Approval is required before materialization.",
-    inputSchema: { type: "object", properties: { title: { type: "string" }, goal: { type: "string" }, requestText: { type: "string" }, summary: { type: "string" }, nodes: { type: "array", items: planNode } }, required: ["title", "goal", "requestText", "summary", "nodes"] },
+    inputSchema: { type: "object", properties: { title: { type: "string" }, goal: { type: "string" }, requestText: { type: "string" }, summary: { type: "string" }, requirements: { type: "array", items: { type: "string" } }, constraints: { type: "array", items: { type: "string" } }, nodes: { type: "array", items: planNode } }, required: ["title", "goal", "requestText", "summary", "nodes"] },
   },
   {
     name: "work_plan_load", title: "Load a work plan", description: "Load a persisted plan, revision, links, and sanitized user view.",
@@ -247,7 +256,7 @@ export const tools = [
   },
   {
     name: "work_plan_revise", title: "Revise a work plan", description: "Create an immutable next revision; it does not change Tasks until approved.",
-    inputSchema: { type: "object", properties: { planId: { type: "string" }, baseVersion: { type: "number" }, nodes: { type: "array", items: planNode }, summary: { type: "string" }, changeSummary: { type: "string" } }, required: ["planId", "baseVersion", "nodes", "summary"] },
+    inputSchema: { type: "object", properties: { planId: { type: "string" }, baseVersion: { type: "number" }, nodes: { type: "array", items: planNode }, summary: { type: "string" }, changeSummary: { type: "string" }, goal: { type: "string" }, requirements: { type: "array", items: { type: "string" } }, constraints: { type: "array", items: { type: "string" } } }, required: ["planId", "baseVersion", "nodes", "summary"] },
   },
   {
     name: "work_plan_impact", title: "Analyze work plan impact", description: "Explain added, changed, removed, reused, and reopened planned work.",
@@ -336,7 +345,7 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string" },
+        taskId: { type: "string" }, attemptToken: { type: "string" },
         summary: { type: "string" },
         artifacts: { type: "array", items: publishableArtifact },
         verification: {
@@ -367,12 +376,18 @@ export const tools = [
     },
   },
   {
+    name: "task_reuse",
+    title: "Adopt verified prior work",
+    description: "Reuse a ready task only when its effective specification, exact input contents and prior verification remain valid. Returns reused=false when work or validation is required.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
+  },
+  {
     name: "task_fail",
     title: "Fail a task",
     description: "Record that a task cannot be completed. Dependent tasks become blocked.",
     inputSchema: {
       type: "object",
-      properties: { taskId: { type: "string" }, reason: { type: "string" } },
+      properties: { taskId: { type: "string" }, attemptToken: { type: "string" }, reason: { type: "string" } },
       required: ["taskId", "reason"],
     },
   },
@@ -400,7 +415,7 @@ export const tools = [
       "Publish a versioned artifact produced by a running task, with lineage inputs and contract references. Republishing a name creates a new version and propagates staleness downstream; declare compatibility=breaking when consumers must rework.",
     inputSchema: {
       type: "object",
-      properties: { ...publishableArtifact.properties, taskId: { type: "string" } },
+      properties: { ...publishableArtifact.properties, taskId: { type: "string" }, attemptToken: { type: "string" } },
       required: ["taskId", "name", "type"],
     },
   },

@@ -37,12 +37,15 @@ export interface TaskContext {
   acceptanceCriteria: Criterion[]
   dependencies: Array<{ id: string; title: string; status: string }>
   childSummary?: TaskSummary
+  reuse?: { instruction: string; sources: Array<{ taskId: string; goal: string; outputs: ArtifactVersionRef[]; attemptId?: string }> }
   recentHistory?: string[]
 }
 
-export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskContext {
+export function buildTaskContext(engine: TaskGraphEngine, taskId: string, pinned = true): TaskContext {
   return engine.atomic(() => {
     const store = engine.store
+    const attempt = store.currentAttempt(taskId)
+    if (pinned && attempt?.state === "running" && attempt.snapshot) return structuredClone(attempt.snapshot) as TaskContext
     const task = engine.requireTask(taskId)
     const policy = task.contextPolicy
     const ancestors = engine.ancestorsOf(taskId)
@@ -84,8 +87,8 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskC
       const candidateRefs: ArtifactVersionRef[] = [...task.inputArtifactRefs]
       for (const dependency of dependencies) {
         for (const output of dependency.outputArtifactRefs) {
-          const latest = engine.latestValidVersion(output.artifactId)
-          if (latest) candidateRefs.push({ artifactId: latest.artifactId, version: latest.version })
+          const latest = store.findArtifactVersion(output.artifactId, output.version)
+          if (latest?.status === "valid") candidateRefs.push({ artifactId: latest.artifactId, version: latest.version })
         }
       }
       for (const ref of candidateRefs) {
@@ -96,8 +99,8 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskC
       if (policy.inheritArtifacts === "relevant") {
         for (const ref of [...verifiedBundles, ...inputArtifacts].map((artifact) => ({ artifactId: artifact.artifactId, version: artifact.version }))) {
           for (const input of engine.requireArtifactVersion(ref).inputs) {
-            const latest = engine.latestValidVersion(input.artifactId)
-            if (latest) pushArtifact(inputArtifacts, { artifactId: latest.artifactId, version: latest.version })
+            const latest = store.findArtifactVersion(input.artifactId, input.version)
+            if (latest?.status === "valid") pushArtifact(inputArtifacts, { artifactId: latest.artifactId, version: latest.version })
           }
         }
       }
@@ -111,7 +114,7 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskC
         const scopeTask = store.findTask(scopeId)
         if (!scopeTask) continue
         for (const ref of scopeTask.outputArtifactRefs) {
-          const latest = engine.latestValidVersion(ref.artifactId)
+          const latest = store.findArtifactVersion(ref.artifactId, ref.version)
           if (!latest || !["decision", "architecture"].includes(latest.type)) continue
           const key = `${latest.artifactId}@${latest.version}`
           if (seen.has(key)) continue
@@ -183,6 +186,18 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string): TaskC
         ? store.eventsFor(taskId, 10).map((event) => `${event.createdAt} ${event.type}${event.payload?.reason ? ` (${event.payload.reason})` : ""}`)
         : undefined,
     }
+    const plan = store.findWorkPlanByRootTask(root.id)
+    if (plan?.activeRevision) {
+      const revision = engine.revisions.context(plan.id, plan.activeRevision)
+      context.inheritedRequirements = [...new Set([...context.inheritedRequirements, ...revision.requirements])]
+      context.inheritedConstraints = [...new Set([...context.inheritedConstraints, ...revision.constraints])]
+    }
+    const candidate = store.db.prepare("SELECT payload FROM task_reuse_candidates WHERE task_id=?").get(taskId)
+    if (candidate) {
+      const data = JSON.parse(String(candidate.payload))
+      context.reuse = { instruction: data.instruction, sources: data.sources.map((s: any) => ({ taskId: s.taskId, goal: s.task.goal,
+        outputs: s.task.outputArtifactRefs, attemptId: s.attempt?.id })) }
+    }
     return context
   })
 }
@@ -205,6 +220,7 @@ export function formatTaskContext(context: TaskContext): string {
   const artifactLine = (artifact: ContextArtifact): string =>
     `${artifact.name}@${artifact.version} (${artifact.type}) — ${artifact.contentRef}`
   const sections: Array<[string, string | string[] | undefined]> = [
+    ["Reusable prior work", context.reuse ? JSON.stringify(context.reuse) : undefined],
     ["Task", `${context.task.title} (${context.task.category}, ${context.task.status}, ${context.task.id})`],
     ["Path", context.path.join(" > ")],
     ["Root Goal", context.rootGoal],

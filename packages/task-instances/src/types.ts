@@ -8,7 +8,8 @@ export interface InstanceSpec {
   run: number
   storage: { size: string; className?: string }
   repository?: { url: string; commit: string }
-  stages: Array<{ id: string; command: string[] }>
+  stages: Array<{ id: string; command: string[]; outputs?: string[]; inputDigest?: string; dependsOn?: string[] }>
+  reuseSources?: Array<{ taskId: string; stages: string[] }>
   envSecret?: string
   resources?: { requests?: Record<string, string>; limits?: Record<string, string> }
   deletionPolicy: "Retain" | "Delete"
@@ -46,7 +47,13 @@ export function validateSpec(spec: InstanceSpec) {
     ids.add(stage.id)
     if (!Array.isArray(stage.command) || !stage.command.length || stage.command.some(x => typeof x !== "string" || !x || x.includes("\0")))
       throw new Error("Stage command must be a nonempty argv array")
+    if (stage.inputDigest && !/^[a-f0-9]{64}$/.test(stage.inputDigest)) throw new Error("inputDigest must be a SHA-256 input closure digest")
+    if (stage.dependsOn?.some(id => id === stage.id || !ids.has(id))) throw new Error("Stage dependencies must refer to preceding stages")
+    if (stage.outputs?.some(path => !path || path.startsWith("/") || path.includes("\\") || path.split("/").some(p => ["", ".", "..", ".git"].includes(p))))
+      throw new Error("Reusable output paths must be relative and cannot include .git or parent traversals")
   }
+  if (spec.reuseSources?.some(source => source.taskId === spec.taskId || !source.taskId || source.stages.some(id => !ids.has(id))))
+    throw new Error("Invalid reuse source or stage")
   if (spec.repository && (!/^https:\/\//.test(spec.repository.url) || !/^[a-f0-9]{40,64}$/.test(spec.repository.commit)))
     throw new Error("Repository requires an HTTPS URL and exact commit hash")
 }

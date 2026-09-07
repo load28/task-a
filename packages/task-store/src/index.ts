@@ -87,11 +87,11 @@ export class TaskGraphStore {
   }
   findWorkPlan(id: string): WorkPlan | undefined {
     const row = this.db.prepare("SELECT * FROM work_plans WHERE id=?").get(id) as Row | undefined
-    return row ? toWorkPlan(row) : undefined
+    return row ? { ...toWorkPlan(row), activeRevision: this.activePlanVersion(id) } : undefined
   }
   findWorkPlanByRootTask(rootTaskId: string): WorkPlan | undefined {
     const row = this.db.prepare("SELECT * FROM work_plans WHERE root_task_id=?").get(rootTaskId) as Row | undefined
-    return row ? toWorkPlan(row) : undefined
+    return row ? { ...toWorkPlan(row), activeRevision: this.activePlanVersion(String(row.id)) } : undefined
   }
   insertPlanRevision(revision: PlanRevision, nodes: PlanNode[]): void {
     this.db.prepare("INSERT INTO plan_revisions (plan_id, version, state, summary, change_summary, approval_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(revision.planId, revision.version, revision.state, revision.summary, revision.changeSummary ?? null, revision.approval ? JSON.stringify(revision.approval) : null, revision.createdAt)
@@ -110,6 +110,30 @@ export class TaskGraphStore {
   insertPlanLink(link: PlanTaskLink): void { this.db.prepare("INSERT INTO plan_task_links VALUES (?, ?, ?, ?, ?)").run(link.planId, link.revision, link.nodeId, link.taskId, link.action) }
   planLinks(planId: string, revision: number): PlanTaskLink[] {
     return (this.db.prepare("SELECT * FROM plan_task_links WHERE plan_id=? AND revision=? ORDER BY rowid").all(planId, revision) as Row[]).map((row) => ({ planId: String(row.plan_id), revision: Number(row.revision), nodeId: String(row.node_id), taskId: String(row.task_id), action: String(row.action) as PlanTaskLink["action"] }))
+  }
+
+  activePlanVersion(planId: string): number {
+    return Number(this.db.prepare("SELECT version FROM plan_active_revisions WHERE plan_id=?").get(planId)?.version ??
+      this.db.prepare("SELECT max(version) AS version FROM plan_revisions WHERE plan_id=? AND state='approved'").get(planId)?.version ?? 0)
+  }
+  executionAllowed(taskId: string): boolean {
+    const row = this.db.prepare("SELECT active, fenced FROM plan_task_visibility WHERE task_id=?").get(taskId)
+    return !row || (row.active === 1 && row.fenced === 0)
+  }
+  taskVisible(taskId: string): boolean {
+    return this.db.prepare("SELECT active FROM plan_task_visibility WHERE task_id=?").get(taskId)?.active !== 0
+  }
+  setTaskVisibility(taskId: string, planId: string, active: boolean, fenced = false) {
+    this.db.prepare("INSERT INTO plan_task_visibility VALUES(?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET active=excluded.active,fenced=excluded.fenced")
+      .run(taskId, planId, Number(active), Number(fenced))
+  }
+  currentAttempt(taskId: string): import("#task-domain").TaskAttempt | undefined {
+    const row = this.db.prepare("SELECT payload FROM task_attempts WHERE task_id=? ORDER BY rowid DESC LIMIT 1").get(taskId)
+    return row ? JSON.parse(String(row.payload)) : undefined
+  }
+  saveAttempt(attempt: import("#task-domain").TaskAttempt) {
+    this.db.prepare("INSERT INTO task_attempts VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload")
+      .run(attempt.id, attempt.taskId, JSON.stringify(attempt))
   }
 
   insertTask(task: Task): void {
@@ -162,10 +186,11 @@ export class TaskGraphStore {
 
   childTaskIds(taskId: string): string[] {
     return (this.db.prepare("SELECT id FROM tasks WHERE parent_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map((row) => String(row.id))
+      .filter(id => !this.taskVisible(taskId) || this.taskVisible(id))
   }
 
   childTasks(taskId: string): Task[] {
-    return (this.db.prepare("SELECT * FROM tasks WHERE parent_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map((row) => this.toTask(row))
+    return this.childTaskIds(taskId).map(id => this.findTask(id)!)
   }
 
   addDependency(taskId: string, dependsOnTaskId: string, createdAt: string): void {
@@ -205,6 +230,7 @@ export class TaskGraphStore {
     if (taskIds.length === 0) return []
     const placeholders = taskIds.map(() => "?").join(", ")
     return (this.db.prepare(`SELECT * FROM task_requirements WHERE task_id IN (${placeholders}) ORDER BY created_at, rowid`).all(...taskIds) as Row[]).map(toRequirement)
+      .filter(r => !this.db.prepare("SELECT 1 FROM plan_retired_requirements WHERE requirement_id=?").get(r.id))
   }
 
   insertArtifact(artifact: Artifact): void {
@@ -357,7 +383,7 @@ export class TaskGraphStore {
   }
 
   integrationSetsByParent(taskId: string): IntegrationSet[] {
-    return (this.db.prepare("SELECT * FROM integration_sets WHERE parent_task_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map((row) => this.toIntegrationSet(row))
+    return (this.db.prepare("SELECT * FROM integration_sets WHERE parent_task_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map((row) => this.toIntegrationSet(row)).filter(set => !this.db.prepare("SELECT 1 FROM plan_retired_integrations WHERE set_id=?").get(set.id))
   }
 
   insertScenario(scenario: IntegrationScenario): void {
@@ -552,6 +578,18 @@ export class TaskGraphStore {
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS task_write_scopes (task_id TEXT PRIMARY KEY, scopes TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS plan_active_revisions(plan_id TEXT PRIMARY KEY, version INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS plan_revision_context(plan_id TEXT NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(plan_id,version));
+      CREATE TABLE IF NOT EXISTS plan_task_visibility(task_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, active INTEGER NOT NULL, fenced INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS plan_transitions(id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS plan_revision_results(plan_id TEXT NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(plan_id,version));
+      CREATE TABLE IF NOT EXISTS task_attempts(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, payload TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_task_attempts ON task_attempts(task_id);
+      CREATE TABLE IF NOT EXISTS task_reuse_candidates(task_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS plan_retired_integrations(set_id TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS plan_context_requirements(plan_id TEXT NOT NULL, requirement_id TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS plan_retired_requirements(requirement_id TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS late_task_reports(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS work_plans (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, request_text TEXT NOT NULL,
         root_task_id TEXT REFERENCES tasks(id), state TEXT NOT NULL, current_revision INTEGER NOT NULL,
@@ -799,6 +837,7 @@ export class TaskGraphStore {
     const id = String(row.id)
     return {
       id,
+      ...(this.currentAttempt(id) ? { attemptToken: this.currentAttempt(id)!.token } : {}),
       parentId: row.parent_id == null ? undefined : String(row.parent_id),
       title: String(row.title),
       goal: String(row.goal),

@@ -8,6 +8,7 @@ import { configuredInstances, instanceTools, INSTANCE_INSTRUCTIONS } from "../..
 import type { InstanceManager } from "../../task-instances/src/manager.ts"
 import { instanceName } from "../../task-instances/src/manager.ts"
 import { validateSpec } from "../../task-instances/src/types.ts"
+import { advanceTransition } from "../../task-instances/src/transitions.ts"
 
 export const GRAPH_INSTRUCTIONS = `You are using a deterministic task graph, not an execution harness.
 OpenCode owns all planning, task extraction, decomposition, task selection, implementation, verification, integration, retries and reflection.
@@ -17,6 +18,7 @@ Use task_schedule to see active reservations and ready tasks. The task_start cla
 Expand reservations with task_expand_scope BEFORE writing more files. On conflict pause that work; do not bypass the reservation. Complete only after ALL writes and tests stop. Failed/interrupted tasks keep reservations: confirm their native workers have stopped before task_release_scope, then reopen as needed. Never release merely due to elapsed time.
 Use graph tools for durable state; OpenCode todos are only a display aid, never the source of truth.
 Use a unique operationId for each mutation, reusing that ID and identical arguments when retrying delivery.
+Plan changes may be proposed regardless of task state. Approve the new revision, then observe work_plan_transition_status and work_plan_reconcile. Continue unaffected workers. Before claiming a replacement leaf, call task_reuse to adopt an exactly matching verified result without model execution. Do not reopen changed historical tasks: revision activation creates new specifications and exposes reusable prior work in task_get_context. Include the attemptToken from task_start/task_load in task_complete, task_fail and artifact_publish; stale reports cannot complete the current revision. Pass the actual native worker sessionId when claiming work so selective termination can be observed.
 Completion requires actual test evidence and satisfied acceptance criterion IDs from task_load.
 Each implementation worker must publish its output artifacts BEFORE or WITH task_complete. Integration members are artifact names or exact artifact references, never filenames or task IDs. Complete producer tasks with local verification first. A producer's acceptance criteria must NOT require the integration run that consumes its own artifacts; put cross-task integration requirements on the parent. A separate QA task may record observed tests, complete its own evidence artifact, then the manager records integration over verified producers. Query role_list instead of guessing role names.
 Integration tools record proposals and results; they never execute tests. Execute tests with OpenCode tools.
@@ -67,6 +69,8 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
         return e.analyzePlanImpact(a)
       case "work_plan_present":
         return e.presentWorkPlan(a)
+      case "work_plan_transition_status":
+        return e.revisions.transitions(a.planId)
       case "task_search":
         return e.searchTasks(a.query, a.limit)
       case "task_load":
@@ -88,8 +92,10 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
         if (["verified", "integrated"].includes(task.status)) scheduler.release(a.taskId, true)
         return task
       }
+      case "task_reuse":
+        return e.reuseTask(a.taskId)
       case "task_fail":
-        return e.failTask(a.taskId, a.reason)
+        return e.failTask(a.taskId, a.reason, a.attemptToken)
       case "task_reopen":
         return e.reopenTask(a.taskId, a.reason)
       case "task_get_context": {
@@ -133,6 +139,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
     dispatch(name, args) {
       const validate = validators.get(name)
       if (!validate || !validate(args)) throw new Error(ajv.errorsText(validate?.errors))
+      if (name === "work_plan_reconcile") return advanceTransition(e, String(args.transitionId), instances)
       if (name.startsWith("task_instance_") && instances) {
         const input = args as Record<string, any>
         if (name === "task_instance_status") { e.loadTask(input.taskId); return instances.load(input.taskId) }

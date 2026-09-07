@@ -3,10 +3,12 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, openSyn
 import { resolve, dirname } from "node:path"
 import { createHash } from "node:crypto"
 import { validateSpec, type InstanceSpec } from "./types.ts"
+import { stageKey, stageResultKey, publishStage, importStage } from "./stage-cache.ts"
 
 interface Checkpoint {
   version: 1; identity: string; completed: string[]; active?: string; state: string
   attempts: Record<string, number>; exitCode?: number; updated: string
+  resultKeys?: Record<string, string>; reused?: Record<string, string>
 }
 export function atomicJson(path: string, value: unknown) {
   const temp = `${path}.tmp`
@@ -18,7 +20,7 @@ export function atomicJson(path: string, value: unknown) {
   try { fsyncSync(parent) } finally { closeSync(parent) }
 }
 /** Checkpoints are stage boundaries, never a claim to restore process memory. */
-export async function runInstance(spec: InstanceSpec, directory: string, instanceId: string): Promise<number> {
+export async function runInstance(spec: InstanceSpec, directory: string, instanceId: string, sourceDirectories: string[] = []): Promise<number> {
   validateSpec(spec)
   mkdirSync(directory, { recursive: true })
   mkdirSync(resolve(directory, "home"), { recursive: true })
@@ -28,6 +30,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
   const checkpoint: Checkpoint = existsSync(checkpointPath) ? JSON.parse(readFileSync(checkpointPath, "utf8")) :
     { version: 1, identity, completed: [], state: "Starting", attempts: {}, updated: "" }
   if (checkpoint.identity !== identity) throw new Error("Saved workspace does not match immutable task execution specification")
+  checkpoint.resultKeys ??= {}; checkpoint.reused ??= {}
   let child: ChildProcess | undefined, stopping = false
   const save = () => { checkpoint.updated = new Date().toISOString(); atomicJson(checkpointPath, checkpoint) }
   let force: ReturnType<typeof setTimeout> | undefined
@@ -69,6 +72,19 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     for (const stage of spec.stages) {
       if (checkpoint.completed.includes(stage.id)) continue
       if (stopping) break
+      const key = stageKey(spec, stage, checkpoint.resultKeys)
+      let reused = false
+      for (const [index, source] of (spec.reuseSources ?? []).entries()) {
+        if (!source.stages.includes(stage.id)) continue
+        const imported = importStage(sourceDirectories[index] ?? `/reuse/${index}`, workspace, stage, key)
+        if (!imported) continue
+        checkpoint.resultKeys[stage.id] = stageResultKey(imported, key)
+        checkpoint.reused[stage.id] = source.taskId
+        checkpoint.completed.push(stage.id)
+        publishStage(directory, workspace, stage, key)
+        save(); reused = true; break
+      }
+      if (reused) continue
       checkpoint.active = stage.id; checkpoint.state = "Running"
       checkpoint.attempts[stage.id] = (checkpoint.attempts[stage.id] ?? 0) + 1
       save()
@@ -78,6 +94,8 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
         checkpoint.state = stopping ? "Suspended" : "Failed"; save()
         return stopping ? 143 : code
       }
+      const manifest = publishStage(directory, workspace, stage, key)
+      checkpoint.resultKeys[stage.id] = stageResultKey(manifest, key)
       checkpoint.completed.push(stage.id); delete checkpoint.active; save()
     }
     checkpoint.state = stopping ? "Suspended" : "Completed"; save()
@@ -89,6 +107,6 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     process.off("SIGTERM", stop); process.off("SIGINT", stop)
     // Kubernetes bind-mounts this individual file; replacing it with rename yields EBUSY.
     writeFileSync(process.env.TASK_TERMINATION_MESSAGE ?? resolve(directory, "termination.json"),
-      JSON.stringify({ state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active }) + "\n")
+      JSON.stringify({ state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused }) + "\n")
   }
 }
