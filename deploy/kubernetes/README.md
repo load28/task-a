@@ -95,3 +95,26 @@ npm run test:revisions:kubernetes
 ```
 
 세부 지원 범위와 미구현 경계는 [계획 개정 실행 설계](../../docs/revision-aware-execution.md#구현-현황)를 따른다.
+
+## 독립 Git 워크트리와 완료 작업 보관
+
+새 실행은 PVC 내부의 `/data/repository.git`을 공통 Git 저장소로 사용하고 `/data/workspace`를 연결된 워크트리로 만든다. 브랜치는 `codex/task-<태스크 식별자 해시>`다. Git 저장소까지 태스크별로 분리하므로 다른 Pod나 호스트의 Git 잠금·인덱스를 공유하지 않는다. 기존 일반 체크아웃을 새 실행기로 열면 커밋·스테이징·미커밋·미추적 파일을 보존하며 변환한다. 외부 공통 Git 저장소를 잃어버린 워크트리는 이력 손실을 막기 위해 변환을 거부한다.
+
+`archive: { claimName: "task-workspace-archives", cleanupOnCompletion: true }`를 지정하면 모든 단계가 끝난 후 `/data` 전체를 별도 보관 PVC에 압축 저장한다. Git 객체·브랜치·인덱스, 무시된 파일을 포함한 작업 파일, 모델 세션, 실행 로그, 체크포인트와 홈 디렉터리를 보존한다. 실행이 계속 중인 백그라운드 프로세스가 감지되면 자동 삭제하지 않는다. 보관 파일 fsync·SHA-256 검증 정보와 manifest를 확정한 뒤 `Archiving`으로 기록하고 Pod, 실행 PVC 순서로 삭제한다. 실패·중단 또는 보관 실패에는 실행 PVC를 남긴다. 최종 상태는 `Archived`다.
+
+보관 PVC는 실행 PVC와 별도이며 Helm 삭제에서도 보존한다. 로컬 단일 노드 kind의 기본 보관 PVC는 20Gi·ReadWriteOnce다. 여러 노드의 서버에서는 모든 작업 노드가 동시에 마운트할 수 있는 ReadWriteMany 스토리지를 설정해야 한다. 보관 저장소가 가득 차면 보관이 실패하고 원본 실행 PVC를 유지한다. 압축 보관본도 공간을 사용하며 이력의 자동 만료·삭제는 하지 않는다.
+
+```sh
+# 완료된 환경을 동일 태스크로 복원한다. 새 실행 PVC를 만들고 기존 완료 단계는 재실행하지 않는다.
+npm run instances -- resume <taskId> <next-run>
+```
+
+Archived 상태에서 resume하면 복원된 환경을 즉시 다시 지우지 않도록 cleanupOnCompletion을 false로 변경한다. SHA-256과 manifest를 검증한 후 압축을 풀고 Git worktree 경로를 복구한다. 완료 단계는 그대로 건너뛰며 복원된 실행 PVC를 유지한다. 기존 태스크의 명세를 바꾸며 작업을 이어가려면 새 태스크의 인스턴스에 `restoreFromTaskId`를 지정한다. 전체 파일과 이력을 복원하되 이전 체크포인트는 `history`에 보존하고 새 명세의 단계만 실행한다. 새 태스크는 독립된 브랜치·PVC를 가진다. `reuseSources`는 전체 복원이 아니라 유효한 단계 출력만 가져올 때 사용하며, Archived 원본에서도 동작한다.
+
+호스트 기본 정책은 `--workspace-archive-claim task-workspace-archives`로 설정한다. 이전 버전 이미지로 이미 생성된 인스턴스의 명세와 이력은 변경하지 않는다. 새 기능을 사용하는 인스턴스에는 해당 실행기가 포함된 이미지를 지정해야 한다. 컨테이너 프로세스 메모리, PVC 밖의 파일, 외부 서비스 상태는 복원 대상이 아니다. 중앙 태스크 그래프 DB는 계속 별도로 보존해야 한다.
+
+```sh
+TASK_INSTANCE_CONTEXT=kind-task-agent-local npm run test:archives:kubernetes
+```
+
+이 검증은 실제 클러스터에서 워크트리 생성, 보관 확정 후 Pod·PVC 삭제, 다른 UID의 새 PVC 복원, 커밋·스테이징·미커밋·미추적·대화 기록 보존 및 새 태스크의 전체 작업공간 복원을 확인한다.

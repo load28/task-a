@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
-import { reconcile, names } from "../packages/task-instances/src/controller.ts"
+import { reconcile, names, podFor } from "../packages/task-instances/src/controller.ts"
 import { InstanceManager } from "../packages/task-instances/src/manager.ts"
 import { runInstance } from "../packages/task-instances/src/worker.ts"
 import { createGraphMcp } from "../packages/opencode-harness/src/graph-mcp.ts"
@@ -203,4 +203,50 @@ test("Kubernetes profiles fill worker defaults and reject native claims without 
     if (oldImage === undefined) delete process.env.TASK_INSTANCE_IMAGE; else process.env.TASK_INSTANCE_IMAGE = oldImage
     if (oldSecret === undefined) delete process.env.TASK_INSTANCE_ENV_SECRET; else process.env.TASK_INSTANCE_ENV_SECRET = oldSecret
   }
+})
+
+test("archive receipt is persisted before cleanup and an archived task restores on a new volume", async () => {
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
+  await manager.create({ ...spec(), archive: { claimName: "archives", cleanupOnCompletion: true } })
+  const tick = async () => reconcile(api, await manager.load("leaf-1"))
+  for (let i = 0; i < 4; i++) await tick()
+  const instance = await manager.load("leaf-1"), ids = names(instance)
+  const pod = (await api.get("pods", ids.pod))!
+  const archive = { version: 1, instanceId: instance.metadata.uid, run: 1, file: "run-1.tar.gz", sha256: "a".repeat(64) }
+  await api.replace("pods", { ...pod, status: { phase: "Succeeded", containerStatuses: [{ name: "worker", state: { terminated: { exitCode: 0, message: JSON.stringify({ archive }) } } }] } })
+  await tick()
+  assert.equal((await manager.load("leaf-1")).status.phase, "Archiving")
+  assert.ok(await api.get("pods", ids.pod))
+  for (let i = 0; i < 3; i++) await tick()
+  assert.equal((await manager.load("leaf-1")).status.phase, "Archived")
+  assert.equal(await api.get("pods", ids.pod), undefined)
+  assert.equal(await api.get("persistentvolumeclaims", ids.volume), undefined)
+  await manager.resume("leaf-1", 2)
+  for (let i = 0; i < 3; i++) await tick()
+  const resumed = (await api.get("pods", ids.pod))!
+  assert.ok(resumed.spec.containers[0].env.some((e: any) => e.name === "TASK_WORKSPACE_ARCHIVE" && JSON.parse(e.value).sha256 === archive.sha256))
+})
+
+test("completed execution without an archive receipt never loses its Pod or PVC", async () => {
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
+  await manager.create({ ...spec(), archive: { claimName: "archives", cleanupOnCompletion: true } })
+  const tick = async () => reconcile(api, await manager.load("leaf-1"))
+  for (let i = 0; i < 4; i++) await tick()
+  const ids = names(await manager.load("leaf-1")), pod = (await api.get("pods", ids.pod))!
+  await api.replace("pods", { ...pod, status: { phase: "Succeeded" } })
+  for (let i = 0; i < 3; i++) await tick()
+  assert.equal((await manager.load("leaf-1")).status.phase, "RecoveryRequired")
+  assert.ok(await api.get("pods", ids.pod))
+  assert.ok(await api.get("persistentvolumeclaims", ids.volume))
+})
+
+test("restore and archive mounts share one volume for the same PVC while source remains read-only", () => {
+  const input: TaskInstance = { apiVersion: "tasks.task-agent.dev/v1alpha1", kind: "TaskInstance", metadata: { name: "task", uid: "uid", namespace: "test" }, spec: { ...spec(), archive: { claimName: "archives", cleanupOnCompletion: true } } }
+  const archive = { version: 1 as const, instanceId: "source", run: 1, file: "run-1.tar.gz", sha256: "a".repeat(64) }
+  const pod = podFor(input, ["archives"], [archive], { claim: "archives", archive })
+  assert.equal(pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim.claimName === "archives").length, 1)
+  const mounts = pod.spec.containers[0].volumeMounts
+  assert.equal(mounts.find((m: any) => m.mountPath === "/restore").readOnly, true)
+  assert.equal(mounts.find((m: any) => m.mountPath === "/reuse/0").readOnly, true)
+  assert.ok(!mounts.find((m: any) => m.mountPath === "/archive").readOnly)
 })

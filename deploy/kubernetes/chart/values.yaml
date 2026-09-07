@@ -9,3 +9,11 @@ controller:
     limits:
       cpu: "1"
       memory: 512Mi
+
+archive:
+  enabled: true
+  name: task-workspace-archives
+  size: 20Gi
+  accessMode: ReadWriteOnce
+  # For multi-node servers, select storage supporting ReadWriteMany.
+  storageClass: ""

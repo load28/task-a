@@ -10,6 +10,8 @@ export interface InstanceSpec {
   repository?: { url: string; commit: string }
   stages: Array<{ id: string; command: string[]; outputs?: string[]; inputDigest?: string; dependsOn?: string[] }>
   reuseSources?: Array<{ taskId: string; stages: string[] }>
+  restoreFromTaskId?: string
+  archive?: { claimName: string; cleanupOnCompletion: boolean }
   envSecret?: string
   resources?: { requests?: Record<string, string>; limits?: Record<string, string> }
   deletionPolicy: "Retain" | "Delete"
@@ -54,6 +56,8 @@ export function validateSpec(spec: InstanceSpec) {
   }
   if (spec.reuseSources?.some(source => source.taskId === spec.taskId || !source.taskId || source.stages.some(id => !ids.has(id))))
     throw new Error("Invalid reuse source or stage")
+  if (spec.restoreFromTaskId !== undefined && (!spec.restoreFromTaskId.trim() || spec.restoreFromTaskId === spec.taskId)) throw new Error("Restore source must be a different task")
+  if (spec.archive && (!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(spec.archive.claimName) || typeof spec.archive.cleanupOnCompletion !== "boolean")) throw new Error("Archive requires a PVC name and explicit cleanup policy")
   if (spec.repository && (!/^https:\/\//.test(spec.repository.url) || !/^[a-f0-9]{40,64}$/.test(spec.repository.commit)))
     throw new Error("Repository requires an HTTPS URL and exact commit hash")
 }

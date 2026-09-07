@@ -45,7 +45,18 @@ spec:
                   message: Repository snapshot is immutable
                 - rule: has(self.reuseSources) == has(oldSelf.reuseSources) && (!has(self.reuseSources) || self.reuseSources == oldSelf.reuseSources)
                   message: Reuse sources are immutable
+                - rule: has(self.archive) == has(oldSelf.archive) && (!has(self.archive) || self.archive.claimName == oldSelf.archive.claimName)
+                  message: Archive store is immutable
+                - rule: has(self.restoreFromTaskId) == has(oldSelf.restoreFromTaskId) && (!has(self.restoreFromTaskId) || self.restoreFromTaskId == oldSelf.restoreFromTaskId)
+                  message: Restore source is immutable
               properties:
+                restoreFromTaskId: {type: string, minLength: 1, maxLength: 256}
+                archive:
+                  type: object
+                  required: [claimName, cleanupOnCompletion]
+                  properties:
+                    claimName: {type: string, minLength: 1, maxLength: 253}
+                    cleanupOnCompletion: {type: boolean}
                 taskId: {type: string, minLength: 1, maxLength: 256}
                 image: {type: string, minLength: 1, maxLength: 512}
                 desiredState: {type: string, enum: [Running, Suspended]}

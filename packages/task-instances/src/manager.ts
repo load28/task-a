@@ -16,8 +16,9 @@ export class InstanceManager {
     validateSpec(spec)
     const existing = await this.api.get("taskinstances", instanceName(spec.taskId)) as TaskInstance | undefined
     if (existing) {
-      for (const key of ["taskId", "image", "storage", "repository", "stages", "reuseSources"] as const)
+      for (const key of ["taskId", "image", "storage", "repository", "stages", "reuseSources", "restoreFromTaskId"] as const)
         if (!isDeepStrictEqual(existing.spec[key], spec[key])) throw new Error("Task already has a different execution environment")
+      if (existing.spec.archive?.claimName !== spec.archive?.claimName) throw new Error("Task archive store is immutable")
       return existing
     }
     return this.api.create("taskinstances", { apiVersion: `${GROUP}/${VERSION}`, kind: "TaskInstance",
@@ -33,11 +34,11 @@ export class InstanceManager {
     // Explicit generation makes retries safe even after the requested run has already finished.
     if (instance.spec.run === run && instance.spec.desiredState === "Running") return instance
     if (run !== instance.spec.run + 1) throw new Error("Resume must request exactly the next execution generation")
-    if (!["Suspended", "Failed", "RecoveryRequired"].includes(instance.status?.phase))
+    if (!["Suspended", "Failed", "RecoveryRequired", "Archived"].includes(instance.status?.phase))
       throw new Error("Wait for a stopped or failed instance before resuming")
     if (instance.status?.phase === "RecoveryRequired")
       throw new Error("Lost execution requires operator recovery; confirm old worker termination and restore missing storage first")
-    return this.api.replace("taskinstances", { ...instance, spec: { ...instance.spec, desiredState: "Running", run } })
+    return this.api.replace("taskinstances", { ...instance, spec: { ...instance.spec, desiredState: "Running", run, ...(instance.status?.phase === "Archived" && instance.spec.archive ? { archive: { ...instance.spec.archive, cleanupOnCompletion: false } } : {}) } })
   }
   async remove(taskId: string) {
     const instance = await this.load(taskId)

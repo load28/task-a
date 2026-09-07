@@ -20,7 +20,7 @@ export async function advanceTransition(engine: TaskGraphEngine, transitionId: s
         const current = await instances.load(stop.taskId)
         if (current.spec.desiredState !== "Suspended") await instances.suspend(stop.taskId)
         const observed = await instances.load(stop.taskId)
-        if (observed.status?.phase !== "Suspended") { blocked.push({ taskId: stop.taskId, reason: "Waiting for Pod termination" }); continue }
+        if (!["Suspended", "Archived"].includes(observed.status?.phase)) { blocked.push({ taskId: stop.taskId, reason: "Waiting for Pod termination" }); continue }
         if (engine.revisions.transitions().find(t => t.id === transitionId)?.state === "waiting")
           engine.revisions.confirmStopped(transitionId, stop.taskId, stop.token, `Kubernetes observed Suspended for ${observed.metadata.uid}`)
       } else if (native && attempt?.worker?.sessionId) {

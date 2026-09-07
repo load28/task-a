@@ -11,7 +11,7 @@ export interface HostConfig {
   workspaces: Array<{ path: string; verifyCommand?: string }>
   opencodeUrl?: string
   graphMcpUrl?: string
-  kubernetes?: { namespace: string; context?: string; image?: string; envSecret?: string }
+  kubernetes?: { namespace: string; context?: string; image?: string; envSecret?: string; archiveClaim?: string }
   model?: string
   autoContinue: boolean
   maxWorkers?: number

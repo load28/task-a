@@ -161,7 +161,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
           const loaded = e.loadTask(input.taskId)
           switch (name) {
           case "task_instance_create":
-            input.spec = { image: process.env.TASK_INSTANCE_IMAGE, envSecret: process.env.TASK_INSTANCE_ENV_SECRET, ...input.spec }
+            input.spec = { ...(process.env.TASK_INSTANCE_ARCHIVE_CLAIM ? { archive: { claimName: process.env.TASK_INSTANCE_ARCHIVE_CLAIM, cleanupOnCompletion: true } } : {}), image: process.env.TASK_INSTANCE_IMAGE, envSecret: process.env.TASK_INSTANCE_ENV_SECRET, ...input.spec }
             if (input.spec.taskId !== input.taskId) throw new Error("Instance taskId must match graph taskId")
             validateSpec(input.spec)
             store.transaction(() => {

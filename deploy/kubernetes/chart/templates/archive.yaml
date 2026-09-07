@@ -1,0 +1,16 @@
+{{- if .Values.archive.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.archive.name }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ .Values.archive.accessMode }}]
+  resources:
+    requests:
+      storage: {{ .Values.archive.size }}
+  {{- if .Values.archive.storageClass }}
+  storageClassName: {{ .Values.archive.storageClass | quote }}
+  {{- end }}
+{{- end }}
