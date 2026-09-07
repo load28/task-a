@@ -763,6 +763,34 @@ test("완료 결과는 대화 종료 시 한 번만 자동 전달한다", async 
   }
 })
 
+test("상태 응답으로 전달한 질문은 종료 훅에서 반복하지 않고 새 질문은 전달한다", async (t) => {
+  const { directory } = setup(t), native = new NativeServer(),
+    service = new HostService(config(directory), native)
+  await service.start()
+  try {
+    await callService(service.config.socket, "/event", event(directory))
+    await service.wake()
+    const record = service.store.get("one")!
+    const waiting: ServerState = {
+      state: "waiting", text: "이 계획으로 시작할까요?",
+      questions: [{ id: "q1", sessionID: record.sessionID, questions: [] }],
+      permissions: [], activity: [],
+    }
+    native.states.set(record.messageID, waiting)
+    await service.wake()
+    const status = await callService(service.config.socket, "/status", { requestId: "one" })
+    assert.equal(status.questions[0].id, "q1")
+    const foreground = () => callService(service.config.socket, "/foreground", { host: "claude", sessionId: "claude" })
+    assert.deepEqual(await foreground(), {})
+    native.states.set(record.messageID, { ...waiting, questions: [{ ...waiting.questions[0]!, id: "q2" }] })
+    await service.wake()
+    assert.equal((await foreground()).present.questions[0].id, "q2")
+    assert.deepEqual(await foreground(), {})
+  } finally {
+    await service.close()
+  }
+})
+
 test("상태 확인 대화는 실행 중인 작업이 있어도 바로 종료할 수 있다", async (t) => {
   const { directory } = setup(t),
     native = new NativeServer(),

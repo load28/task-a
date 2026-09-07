@@ -146,7 +146,9 @@ export class HostService {
         const record = this.store.get(input.requestId)
         if (!record) throw new Error("Unknown requestId")
         if (req.url === "/control") {
-          res.end(JSON.stringify(await this.control(record, input)))
+          const view = await this.control(record, input)
+          this.markPresented(view)
+          res.end(JSON.stringify(view))
           return
         }
         if (req.url === "/status") {
@@ -166,9 +168,9 @@ export class HostService {
             await new Promise((r) => setTimeout(r, 200))
           } while (true)
           const latest = this.store.get(record.id)!
-          if (["completed", "failed", "interrupted", "cancelled", "uncertain"].includes(latest.phase))
-            this.store.claimDelivery(latest.id)
-          res.end(JSON.stringify(this.response(latest)))
+          const view = this.response(latest)
+          this.markPresented(view)
+          res.end(JSON.stringify(view))
           return
         }
         if (req.url === "/reply") {
@@ -217,6 +219,15 @@ export class HostService {
       void this.wake()
     }, 1000)
     void this.wake()
+  }
+  private markPresented(view: Record<string, any>) {
+    // Status/control already expose these results to the host. Stop must not replay them.
+    if (view.state === "waiting")
+      this.store.claimDelivery(`${view.requestId}:waiting:${JSON.stringify([view.questions, view.permissions])}`)
+    else if (["completed", "failed", "interrupted", "cancelled", "uncertain"].includes(view.phase))
+      this.store.claimDelivery(view.requestId)
+    for (const key of ["activeRequest", "blockedBy"])
+      if (view[key]) this.markPresented(view[key])
   }
   response(r: RelayRequest): Record<string, unknown> {
     const blocker = this.blocker(r)
