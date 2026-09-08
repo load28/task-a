@@ -192,6 +192,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
             }
             if (input.spec.taskId !== input.taskId) throw new Error("Instance taskId must match graph taskId")
             validateSpec(input.spec)
+            await instances.preflight(input.spec)
             const executionEnvironment = await instances.environment(input.spec)
             store.transaction(() => {
               e.refreshReadiness(input.taskId)
@@ -270,6 +271,11 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
       const publishesCode = name === "artifact_publish" && input.type === "code" || name === "task_complete" && (input.artifacts?.some((a: any) => a.type === "code") || e.requireTask(input.taskId).outputArtifactRefs.some(ref => e.requireArtifactVersion(ref).type === "code"))
       const attempt = input.taskId && store.currentAttempt(input.taskId)
       const token = input.attemptToken ?? attempt?.token
+      if (name === "task_complete" && instances && attempt?.worker?.agent === "kubernetes") {
+        const instance = await instances.load(physicalId(input.taskId))
+        if (instance.status?.observedRun !== instance.spec.run || !["Completed", "Archived", "Archiving"].includes(instance.status?.phase) || instance.status?.result?.exitCode !== 0)
+          throw new Error("Complete a Kubernetes task only after the current worker finishes successfully")
+      }
       if (publishesCode && attempt?.token === token && attempt?.state !== "fenced" && store.executionAllowed(input.taskId)) {
         if (instances) {
           const instance = await instances.load(physicalId(input.taskId))

@@ -12,6 +12,7 @@ export interface ServerBinding {
   workspace: string
 }
 export interface ServerState {
+  executionTaskIds?: string[]
   progress?: ReturnType<typeof executionProgress> & { workers?: ReturnType<typeof executionProgress>[] }
   state: "running" | "waiting" | "completed" | "failed" | "interrupted"
   text: string
@@ -142,7 +143,7 @@ export class OpenCodeServer implements HarnessServer {
       model,
       agent: plan ? "task-planner" : "task-manager",
       system: `${binding.control === "steer" ? "The prior native turn and its workers were explicitly interrupted to apply this user correction. Inspect the current graph and workspace, recover tasks left running by that interrupted turn using graph fail/reopen as needed, then revise and continue the original objective. Do not discard earlier requirements or claim interrupted work was verified." : ""} Host request transport. The following user message is the original request. ${verifyCommand ? `Required verification command: ${verifyCommand}. Execute it in OpenCode and record evidence.` : ""}`,
-      parts: [{ type: "text", text }],
+      parts: [{ type: "text", text: binding.control === "continue-execution" ? "Continue the existing request. Your previous response ended while graph execution was unfinished. Inspect the bound task instances, report scheduling or startup blockers, wait for actual worker results, and publish verified evidence before completing the graph tasks. Preserve the original objective and existing executions; do not create duplicate work. Original request:\n" + text : text }],
     })
   }
   private async sessions(binding: ServerBinding): Promise<Set<string>> {
@@ -197,6 +198,9 @@ export class OpenCodeServer implements HarnessServer {
     }))
     return {
       state,
+      executionTaskIds: [...new Set(answers.flatMap(m => m.parts.flatMap(p =>
+        p.type === "tool" && ["task_graph_task_instance_create", "task_graph_task_instance_resume", "task_graph_task_start"].includes(p.tool)
+          && p.state.status === "completed" && typeof p.state.input?.taskId === "string" ? [p.state.input.taskId] : [])))],
       progress: { ...executionProgress(answers.flatMap((m) => m.parts)), workers },
       text: info?.error
         ? JSON.stringify(info.error)

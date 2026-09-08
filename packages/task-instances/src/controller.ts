@@ -92,6 +92,13 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
     if (pod) { await api.remove("pods", pod); await report("Suspending"); return }
     await report("Suspended"); return
   }
+  // Recheck external storage even for instances created before admission checks existed.
+  if (instance.spec.archive && !["Succeeded", "Failed", "Running"].includes(pod?.status?.phase)) {
+    const claim = await api.get("persistentvolumeclaims", instance.spec.archive.claimName)
+    if (!claim || claim.metadata.deletionTimestamp || claim.status?.phase === "Lost") {
+      await report("Blocked", { reason: "ArchiveUnavailable", message: `Archive PVC "${instance.spec.archive.claimName}" is missing or unavailable`, ...(pod ? { podUid: pod.metadata.uid } : {}) }); return
+    }
+  }
   const restoreConsumers = (await api.list("taskinstances")).filter(r => r.spec?.restoreFromTaskId === instance.spec.taskId && !["Completed", "Archived"].includes(r.status?.phase))
   if (restoreConsumers.length && !pod && (instance.status?.observedRun !== instance.spec.run || instance.status?.phase === "WaitingForRestore" && instance.status?.reason === "Stopped workspace is pinned by repair consumers")) {
     await report("WaitingForRestore", { reason: "Stopped workspace is pinned by repair consumers" }); return
@@ -120,6 +127,13 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
         await report("RecoveryRequired", { reason: "Completion has no verified archive receipt; execution data retained" }); return
       }
       await report("Archiving", { archive, archivedRun: instance.spec.run, result: { exitCode: details.exitCode, message: details.message, codeSnapshot: JSON.parse(details.message).codeSnapshot, inputSnapshotDigest: JSON.parse(details.message).inputSnapshotDigest } }); return
+    }
+    const scheduling = pod.status?.conditions?.find((c: any) => c.type === "PodScheduled" && c.status === "False")
+    const waiting = pod.status?.initContainerStatuses?.find((c: any) => c.state?.waiting)?.state.waiting
+      ?? pod.status?.containerStatuses?.find((c: any) => c.state?.waiting)?.state.waiting
+    if (terminal === "Pending" && (scheduling || waiting)) {
+      const diagnostic = scheduling ?? waiting
+      await report("Starting", { podUid: pod.metadata.uid, reason: diagnostic.reason ?? "Pending", message: diagnostic.message ?? "" }); return
     }
     await report(terminal === "Succeeded" ? "Completed" : terminal === "Failed" ? "Failed" : terminal === "Running" ? "Running" : "Starting",
       { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "", ...(() => { try { const r = JSON.parse(details.message ?? "{}"); return { codeSnapshot: r.codeSnapshot, inputSnapshotDigest: r.inputSnapshotDigest } } catch { return {} } })() } } : {}) })
@@ -167,5 +181,13 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
       restoreSource = { claim: sourceVolume.metadata.name }
     }
   }
-  await api.create("pods", podFor(instance, sourceVolumes, sourceArchives, restoreSource))
+  const desiredPod = podFor(instance, sourceVolumes, sourceArchives, restoreSource)
+  for (const mount of desiredPod.spec.volumes) {
+    const claimName = mount.persistentVolumeClaim.claimName
+    const claim = await api.get("persistentvolumeclaims", claimName)
+    if (!claim || claim.metadata.deletionTimestamp || claim.status?.phase === "Lost") {
+      await report("Blocked", { reason: "VolumeUnavailable", message: `PVC "${claimName}" is missing or unavailable` }); return
+    }
+  }
+  await api.create("pods", desiredPod)
 }

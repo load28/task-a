@@ -1,7 +1,7 @@
 import { createServer, request, type Server } from "node:http"
 import { chmodSync, existsSync, unlinkSync } from "node:fs"
 import { resolve } from "node:path"
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { OpenCodeServer, type HarnessServer } from "../../opencode-harness/src/server.ts"
 import { RelayStore, type RelayRequest } from "./relay-store.ts"
 import type { HostEvent } from "./store.ts"
@@ -390,6 +390,29 @@ export class HostService {
           const state = await this.harness.inspect(record)
           if (["cancelling", "cancelled"].includes(this.store.get(record.id)?.phase ?? "")) continue
           if (state.state === "interrupted" && Date.now() - record.updated < 5000) continue
+          record.executionTaskIds = [...new Set([...(record.executionTaskIds ?? []), ...(state.executionTaskIds ?? [])])]
+          const graph = this.graphs.get(record.workspace)
+          if (state.state === "completed") {
+            // A manager response is a transport boundary, not execution completion.
+            const tracked = record.executionTaskIds
+            const unfinished = tracked.filter(id => !graph || !["verified", "integrated"].includes(graph.engine.requireTask(id).status))
+            if (unfinished.length) {
+              if (graph && unfinished.every(id => ["failed", "blocked"].includes(graph.engine.requireTask(id).status))) {
+                state.state = "failed"
+              } else if (!graph) {
+                state.state = "interrupted"
+                state.text = "관리자 응답은 끝났지만 실행 완료를 확인할 수 없습니다. 원격 그래프의 작업 상태를 확인해야 합니다."
+              } else {
+                record.result = { ...state, state: "running", text: "실행 결과 확인을 계속하고 있습니다." }
+                if (Date.now() - record.updated < 15000) continue
+                record.control = "continue-execution"
+                record.messageID = `msg_${Date.now().toString(16)}${randomBytes(12).toString("hex")}`
+                record.phase = "prepared"
+                this.store.save(record)
+                continue
+              }
+            }
+          }
           record.result = state
           if (["completed", "failed", "interrupted"].includes(state.state))
             record.phase = state.state as RelayRequest["phase"]

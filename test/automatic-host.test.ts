@@ -813,3 +813,34 @@ test("상태 확인 대화는 실행 중인 작업이 있어도 바로 종료할
     await service.close()
   }
 })
+
+test("관리자 종료 후 미완료 실행은 같은 요청에서 재개하고 재시작에도 중복 제출하지 않는다", async (t) => {
+  const { directory } = setup(t), native = new NativeServer(), c = config(directory)
+  const graph = createGraphRuntime(c.database)
+  const task = graph.engine.createTask({ title: "실행", goal: "완료 확인" })
+  graph.close()
+  let service = new HostService(c, native)
+  await service.start()
+  try {
+    await callService(c.socket, "/event", event(directory))
+    await service.wake()
+    const original = service.store.get("one")!
+    native.states.set(original.messageID, { state: "completed", text: "시작했습니다", questions: [], permissions: [], activity: [], executionTaskIds: [task.id] })
+    // Make the terminal-observation backoff elapsed without sleeping.
+    const aged = { ...original, updated: Date.now() - 20000 }
+    service.store.db.prepare("UPDATE relay_requests SET record=? WHERE id=?").run(JSON.stringify(aged), original.id)
+    await service.wake()
+    const continuation = service.store.get("one")!
+    assert.equal(continuation.phase, "prepared")
+    assert.equal(continuation.control, "continue-execution")
+    assert.notEqual(continuation.messageID, original.messageID)
+    assert.equal(continuation.sessionID, original.sessionID)
+    await service.close()
+    service = new HostService(c, native)
+    await service.start()
+    await service.wake()
+    await service.wake()
+    assert.equal(native.submitted.filter(s => s.binding.messageID === continuation.messageID).length, 1)
+    assert.notEqual(service.store.get("one")!.phase, "completed")
+  } finally { await service.close() }
+})

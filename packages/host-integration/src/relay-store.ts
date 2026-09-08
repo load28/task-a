@@ -20,6 +20,7 @@ export interface RelayRequest extends ServerBinding {
     | "cancelling"
     | "cancelled"
     | "interrupted"
+  executionTaskIds?: string[]
   targetId?: string
   control?: string
   result?: ServerState

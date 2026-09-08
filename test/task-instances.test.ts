@@ -128,6 +128,10 @@ test("Graph MCP exposes durable instances for existing leaves and across new MCP
     }
     await call("task_instance_create", { taskId: task.id, spec: { ...spec(), taskId: task.id }, operationId: "create-instance" })
     assert.equal(graph.engine.loadTask(task.id).task.status, "running")
+    const premature: any = await graph.server.handle({ jsonrpc: "2.0", id: 99, method: "tools/call", params: { name: "task_complete", arguments: { taskId: task.id, operationId: "premature-completion", summary: "done" } } })
+    assert.equal(premature.result.isError, true)
+    assert.match(premature.result.content[0].text, /current worker finishes successfully/)
+
     const status = await call("task_instance_status", { taskId: task.id })
     assert.equal(status.spec.taskId, task.id)
     const reconnected = new InstanceManager(api, "test")
@@ -219,6 +223,7 @@ test("Kubernetes profiles fill worker defaults and reject native claims without 
 
 test("archive receipt is persisted before cleanup and an archived task restores on a new volume", async () => {
   const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
+  await api.create("persistentvolumeclaims", { metadata: { name: "archives" } })
   await manager.create({ ...spec(), archive: { claimName: "archives", cleanupOnCompletion: true } })
   const tick = async () => reconcile(api, await manager.load("leaf-1"))
   for (let i = 0; i < 4; i++) await tick()
@@ -241,6 +246,7 @@ test("archive receipt is persisted before cleanup and an archived task restores 
 
 test("completed execution without an archive receipt never loses its Pod or PVC", async () => {
   const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
+  await api.create("persistentvolumeclaims", { metadata: { name: "archives" } })
   await manager.create({ ...spec(), archive: { claimName: "archives", cleanupOnCompletion: true } })
   const tick = async () => reconcile(api, await manager.load("leaf-1"))
   for (let i = 0; i < 4; i++) await tick()
@@ -318,4 +324,67 @@ test("worker pulls actual pinned source files and refuses a modified source befo
     await assert.rejects(runInstance({ ...consumer, taskId: "bad-consumer" }, join(dir, "bad"), "bad-uid", [source]), /do not match/)
     assert.equal(existsSync(join(dir, "bad", "workspace", "checked")), false)
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test("archive admission fails before allocation and resume revalidates storage", async () => {
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
+  const input = { ...spec(), archive: { claimName: "archives", cleanupOnCompletion: true } }
+  await assert.rejects(manager.create(input), /Archive PVC "archives".*test/)
+  assert.equal(api.resources.size, 0)
+  await api.create("persistentvolumeclaims", { metadata: { name: "archives" }, status: { phase: "Pending" } })
+  await manager.create(input) // WaitForFirstConsumer claims must not be rejected.
+  await manager.suspend(input.taskId)
+  api.resources.delete("persistentvolumeclaims/archives")
+  await assert.rejects(manager.resume(input.taskId, 2), /Archive PVC/)
+  assert.equal((await manager.load(input.taskId)).spec.run, 1)
+})
+
+test("legacy invalid archive is blocked without allocating storage and recovers after provisioning", async () => {
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
+  const instance: TaskInstance = { metadata: { name: "legacy", uid: "legacy", finalizers: [FINALIZER] }, spec: { ...spec(), archive: { claimName: "missing", cleanupOnCompletion: true } } }
+  await reconcile(api, instance)
+  assert.equal((await api.get("taskinstances", "legacy"))!.status.reason, "ArchiveUnavailable")
+  assert.equal((await api.list("pods")).length, 0)
+  assert.equal((await api.list("persistentvolumeclaims")).length, 0)
+  await api.create("persistentvolumeclaims", { metadata: { name: "missing" } })
+  await reconcile(api, (await api.get("taskinstances", "legacy")) as TaskInstance)
+  assert.ok(await api.get("persistentvolumeclaims", names(instance).volume))
+})
+
+test("scheduling and image failures remain observable and clear on startup", async () => {
+  const { api, manager, tick } = await fixture()
+  const pod = (await api.get("pods", names(await manager.load("leaf-1")).pod))!
+  for (const status of [
+    { phase: "Pending", conditions: [{ type: "PodScheduled", status: "False", reason: "Unschedulable", message: 'persistentvolumeclaim "missing" not found' }] },
+    { phase: "Pending", containerStatuses: [{ name: "worker", state: { waiting: { reason: "ImagePullBackOff", message: "image unavailable" } } }] },
+  ]) {
+    await api.replace("pods", { ...pod, status }); await tick()
+    const current = (await manager.load("leaf-1")).status
+    assert.equal(current.phase, "Starting")
+    assert.ok(current.reason)
+    assert.ok(current.message)
+  }
+  await api.replace("pods", { ...pod, status: { phase: "Running" } }); await tick()
+  assert.equal((await manager.load("leaf-1")).status.reason, undefined)
+})
+
+test("model cannot choose archive storage and missing configured storage leaves graph unclaimed", async () => {
+  const prior = process.env.TASK_INSTANCE_ARCHIVE_CLAIM
+  process.env.TASK_INSTANCE_ARCHIVE_CLAIM = "missing"
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test"), graph = createGraphMcp(":memory:", 3, manager)
+  try {
+    const task = graph.engine.createTask({ title: "Admission", goal: "Validate before claiming" })
+    await graph.server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+    await graph.server.handle({ jsonrpc: "2.0", method: "notifications/initialized" })
+    for (const override of [{ archive: { claimName: "invented", cleanupOnCompletion: true } }, {}]) {
+      const response: any = await graph.server.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "task_instance_create", arguments: { taskId: task.id, operationId: JSON.stringify(override), spec: { image: "worker", stages: spec().stages, ...override } } } })
+      assert.equal(response.result.isError, true)
+      assert.equal(graph.engine.requireTask(task.id).status, "ready")
+      assert.equal(graph.store.currentAttempt(task.id), undefined)
+      assert.equal((await api.list("taskinstances")).length, 0)
+    }
+  } finally {
+    graph.close()
+    if (prior === undefined) delete process.env.TASK_INSTANCE_ARCHIVE_CLAIM; else process.env.TASK_INSTANCE_ARCHIVE_CLAIM = prior
+  }
 })

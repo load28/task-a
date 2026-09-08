@@ -45,6 +45,7 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
           info: { id: "msg_answer", role: "assistant", parentID: "msg_one", time: { completed: 1 }, finish },
           parts: [
             { type: "text", text: "서버 결과" },
+            { type: "tool", tool: "task_graph_task_instance_create", state: { status: "completed", input: { taskId: "leaf" } } },
             { type: "tool", tool: "task_graph_task_complete", state: { status: "completed" } },
           ],
         },
@@ -113,6 +114,7 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
     assert.equal(prompt.body.format, undefined, "Host must not request planning decision JSON")
     assert.equal(await native.hasMessage(b), true)
     const state = await native.inspect(b)
+    assert.deepEqual(state.executionTaskIds, ["leaf"])
     assert.equal(state.state, "waiting")
     assert.equal(state.text, "서버 결과")
     assert.deepEqual(

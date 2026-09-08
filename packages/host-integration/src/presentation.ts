@@ -65,6 +65,9 @@ export function executionProgress(parts: any[]) {
     if (done && typeof p.state.output === "string") {
       try { result = JSON.parse(p.state.output) } catch {}
     }
+    if (p.tool === "task_graph_task_instance_status" && done && result?.status) {
+      currentAction = result.status.message ?? result.status.reason ?? `실행 상태: ${result.status.phase}`
+    }
     if (p.tool === "task_graph_task_start" && done && result?.title) {
       currentTask = result.title
       milestones.push(`작업 시작: ${result.title}`)
