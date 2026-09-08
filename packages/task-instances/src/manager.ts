@@ -6,6 +6,11 @@ export class InstanceManager {
   private api: ClusterApi
   readonly namespace: string
   constructor(api: ClusterApi, namespace: string) { this.api = api; this.namespace = namespace }
+  async environment(spec: InstanceSpec) {
+    const secret = spec.envSecret ? await this.api.get("secrets", spec.envSecret) : undefined
+    return [spec.image, spec.repository, spec.envSecret ? [spec.envSecret, secret?.metadata.uid ?? "missing", secret?.metadata.resourceVersion ?? "missing"] : null,
+      spec.stages.map(s => [s.id, s.command])]
+  }
   async load(taskId: string) {
     const instance = await this.api.get("taskinstances", instanceName(taskId)) as TaskInstance | undefined
     if (!instance) throw new Error("Task instance does not exist")
@@ -16,7 +21,7 @@ export class InstanceManager {
     validateSpec(spec)
     const existing = await this.api.get("taskinstances", instanceName(spec.taskId)) as TaskInstance | undefined
     if (existing) {
-      for (const key of ["taskId", "image", "storage", "repository", "stages", "reuseSources", "restoreFromTaskId"] as const)
+      for (const key of ["inputSnapshot", "taskId", "image", "storage", "repository", "stages", "reuseSources", "restoreFromTaskId"] as const)
         if (!isDeepStrictEqual(existing.spec[key], spec[key])) throw new Error("Task already has a different execution environment")
       if (existing.spec.archive?.claimName !== spec.archive?.claimName) throw new Error("Task archive store is immutable")
       return existing
@@ -33,6 +38,8 @@ export class InstanceManager {
     const instance = await this.load(taskId)
     // Explicit generation makes retries safe even after the requested run has already finished.
     if (instance.spec.run === run && instance.spec.desiredState === "Running") return instance
+    const consumers = (await this.api.list("taskinstances")).filter(r => r.spec?.restoreFromTaskId === taskId && !["Completed", "Archived"].includes(r.status?.phase))
+    if (consumers.length) throw new Error("Workspace is pinned by repair consumers; wait for their completion before resuming the source")
     if (run !== instance.spec.run + 1) throw new Error("Resume must request exactly the next execution generation")
     if (!["Suspended", "Failed", "RecoveryRequired", "Archived"].includes(instance.status?.phase))
       throw new Error("Wait for a stopped or failed instance before resuming")

@@ -154,6 +154,8 @@ function failure(id: JsonRpcRequest["id"], fallbackCode: number, message: string
 }
 
 export const READ_ONLY_TOOLS = [
+  "task_signal_status",
+  "task_issue_list",
   "task_search",
   "task_load",
   "task_get_runnable",
@@ -223,6 +225,19 @@ const taskFields = {
   environmentDigest: { type: "string" },
 }
 
+const planDesign = {
+  type: "object",
+  properties: {
+    basis: { type: "array", minItems: 1, items: { type: "string", minLength: 1 }, description: "Completed investigation findings with concrete file paths or source URLs; not future research promises." },
+    approach: { type: "string", minLength: 1, description: "Concrete implementation design, affected behavior and interfaces, including before/after for changes." },
+    inputs: { type: "array", items: { type: "string", minLength: 1 } },
+    outputs: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    verification: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    risks: { type: "array", items: { type: "string", minLength: 1 } },
+  },
+  required: ["basis", "approach", "inputs", "outputs", "verification", "risks"],
+}
+
 const planNode = {
   type: "object",
   properties: {
@@ -230,13 +245,23 @@ const planNode = {
     stage: { type: "string", enum: ["research", "design", "implementation", "validation"] }, outcome: { type: "string" },
     dependsOnNodeIds: { type: "array", items: { type: "string" } },
     researchTrack: { type: "string", enum: ["repository", "external_examples", "official_documentation"] },
-    taskSpec: { type: "object", properties: taskFields, required: ["goal"] },
+    taskSpec: { type: "object", properties: { ...taskFields, design: planDesign, acceptanceCriteria: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } } }, required: ["goal", "assignedRole", "writeScopes", "acceptanceCriteria", "design"] },
     reuseFromNodeIds: { type: "array", items: { type: "string" } },
   },
   required: ["nodeId", "label", "stage", "outcome", "taskSpec"],
 }
 
 export const tools = [
+  { name: "task_signal_status", description: "Inspect durable input-change signals and exact attempts awaiting observed termination.", inputSchema: { type: "object", properties: {} } },
+  { name: "task_signal_reconcile", description: "Stop outdated workers, observe their termination, coalesce input changes and release tasks for a fresh atomic pull. Preserves prior workspaces.", inputSchema: { type: "object", properties: {} } },
+  { name: "task_issue_report", description: "Record a finding from ANY task, with exact observed artifact versions and reproduction evidence. Do not patch another responsibility locally; diagnose its producer/input lineage and route it. Unknown causes remain reported.",
+    inputSchema: { type: "object", properties: { reporterTaskId: { type: "string" }, summary: { type: "string", minLength: 1 }, evidence: { type: "string", minLength: 1 }, observedRefs: { type: "array", items: artifactVersionRef } }, required: ["reporterTaskId", "summary", "evidence", "observedRefs"] } },
+  { name: "task_issue_route", description: "Confirm the causal producer with evidence. Creates an internal repair revision preserving the approved objective, restores ownership, fences affected attempts, and rewires downstream tasks. Inspect transitionId then work_plan_reconcile. Empty causeRefs is only for an unpublished self/dependency failure.",
+    inputSchema: { type: "object", properties: { issueId: { type: "string" }, causeTaskId: { type: "string" }, causeRefs: { type: "array", items: artifactVersionRef }, evidence: { type: "string", minLength: 1 } }, required: ["issueId", "causeTaskId", "causeRefs", "evidence"] } },
+  { name: "task_issue_list", description: "Load durable findings, causal owners, repair transitions and resolution evidence across sessions.",
+    inputSchema: { type: "object", properties: { rootTaskId: { type: "string" } } } },
+  { name: "task_issue_resolve", description: "Close only after the owning task publishes replacement versions, affected downstream tasks verify the current inputs, and affected integration sets pass. Engine checks these conditions; a local workaround cannot close the issue.",
+    inputSchema: { type: "object", properties: { issueId: { type: "string" }, evidence: { type: "string", minLength: 1 } }, required: ["issueId", "evidence"] } },
   { name: "work_plan_transition_status", title: "Inspect plan transition", description: "Inspect durable selective stops and revision activation. Old attempts remain fenced until actual worker termination is observed.",
     inputSchema: { type: "object", properties: { planId: { type: "string" } } } },
   { name: "work_plan_reconcile", title: "Advance plan transition", description: "Observe/stop affected Kubernetes workers and advance a durable plan transition. Does not assume native workers stopped; the host runtime confirms them.",
@@ -263,7 +288,7 @@ export const tools = [
     inputSchema: { type: "object", properties: { planId: { type: "string" }, fromVersion: { type: "number" }, toVersion: { type: "number" } }, required: ["planId"] },
   },
   {
-    name: "work_plan_present", title: "Present a work plan", description: "Return a nontechnical, sanitized work-plan graph for a user.",
+    name: "work_plan_present", title: "Present a work plan", description: "Return investigation findings and the complete task design, ownership, file scope, dependencies, acceptance and verification for user review.",
     inputSchema: { type: "object", properties: { planId: { type: "string" } }, required: ["planId"] },
   },
   {

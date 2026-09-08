@@ -2,6 +2,7 @@ export const GROUP = "tasks.task-agent.dev"
 export const VERSION = "v1alpha1"
 export const FINALIZER = `${GROUP}/stop-before-delete`
 export interface InstanceSpec {
+  inputSnapshot?: { digest: string; inputRefs: Array<{ artifactId: string; version: number }>; sources?: Array<{ taskId: string; hash: string }> }
   taskId: string
   image: string
   desiredState: "Running" | "Suspended"
@@ -37,6 +38,8 @@ export interface ClusterApi {
   remove(resource: string, value: Resource): Promise<void>
 }
 export function validateSpec(spec: InstanceSpec) {
+  if (spec.inputSnapshot && (!/^[a-f0-9]{64}$/.test(spec.inputSnapshot.digest) || !Array.isArray(spec.inputSnapshot.inputRefs))) throw new Error("Invalid pinned input snapshot")
+  if (spec.inputSnapshot?.sources?.some(s => !s.taskId || !/^[a-f0-9]{64}$/.test(s.hash))) throw new Error("Invalid source snapshot")
   if (!spec.taskId?.trim() || !spec.image?.trim()) throw new Error("taskId and image are required")
   if (!Number.isInteger(spec.run) || spec.run < 1) throw new Error("run must be a positive integer")
   if (!["Running", "Suspended"].includes(spec.desiredState)) throw new Error("Invalid desiredState")

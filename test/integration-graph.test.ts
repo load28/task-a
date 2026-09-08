@@ -58,6 +58,10 @@ test("passing integrations promote verified bundles and integrate producers", (t
   const { store, engine, integration, root, children, artifacts } = verifiedPipeline()
   t.after(() => store.close())
   const requirement = engine.addRequirement(root.id, "Union pattern inference 정확성")
+  for (const child of children) {
+    const attempt = engine.startTask(child.id)
+    engine.completeTask({ taskId: child.id, attemptToken: attempt.attemptToken, summary: "verified new requirement", verification: { passed: true } })
+  }
   const proposal = integration.proposeIntegration({
     integrationSets: [{
       name: "Match Core",
@@ -107,11 +111,11 @@ test("new artifact versions stale bundles and require reintegration", (t) => {
   const first = integration.reportRun(started.run.id, { scenarios: started.scenarios.map((scenario) => ({ scenarioId: scenario.id, status: "passed" as const })) })
   engine.reopenTask(children[1]!.id, "binding 개선")
   engine.startTask(children[1]!.id)
-  engine.publishArtifact({ taskId: children[1]!.id, name: "BindingAnalyzer", type: "code", contentRef: "git://BindingAnalyzer/v2" })
+  engine.publishArtifact({ taskId: children[1]!.id, attemptToken: engine.requireTask(children[1]!.id).attemptToken, name: "BindingAnalyzer", type: "code", contentRef: "git://BindingAnalyzer/v2" })
   assert.equal(store.findBundle(first.bundle!.artifactId, 1)!.status, "stale")
   assert.equal(store.findIntegrationSet(set.id)!.status, "stale")
   assert.equal(engine.requireTask(root.id).status, "running")
-  engine.completeTask({ taskId: children[1]!.id, summary: "v2", verification: { passed: true } })
+  engine.completeTask({ taskId: children[1]!.id, attemptToken: engine.requireTask(children[1]!.id).attemptToken, summary: "v2", verification: { passed: true } })
   const rerun = integration.startRun(set.id)
   assert.equal(rerun.cached, false)
   const second = integration.reportRun(rerun.run.id, { scenarios: rerun.scenarios.map((scenario) => ({ scenarioId: scenario.id, status: "passed" as const })) })

@@ -67,6 +67,7 @@ export interface ReportRunResult {
   set: IntegrationSet
   bundle?: VerifiedBundle
   diagnosticTask?: Task
+  issue?: import("../../task-engine/src/feedback.ts").TaskIssue
 }
 
 export function bundleArtifactName(setName: string): string {
@@ -184,6 +185,8 @@ export class IntegrationEngine {
         const latest = this.engine.latestValidVersion(member.artifactId)
         if (!latest) throw new Error(`Unverified promoted artifact: ${artifact?.name ?? member.artifactId} has no valid version`)
         const producer = this.engine.requireTask(latest.producerTaskId)
+        if (this.engine.signals.dirty(producer.id) || !this.engine.signals.settled(producer.id)) throw new Error("Integration inputs are unsettled")
+        if (!store.executionAllowed(producer.id)) throw new Error("Integration member belongs to a historical or fenced execution")
         if (latest.type !== "bundle" && !["verified", "integrating", "integrated"].includes(producer.status)) {
           throw new Error(`Member ${artifact?.name ?? member.artifactId} is not verified (producer status: ${producer.status})`)
         }
@@ -233,10 +236,12 @@ export class IntegrationEngine {
       if (missing.length > 0) throw new Error(`Scenario results missing: ${missing.map((scenario) => scenario.name).join(", ")}`)
       if (reported.size !== scenarios.length) throw new Error("Report contains unknown scenario results")
       const now = new Date().toISOString()
+      const historical = !!store.db.prepare("SELECT 1 FROM plan_retired_integrations WHERE set_id=?").get(set.id) ||
+        run.memberRefs.some(ref => this.engine.signals.dirty(this.engine.requireArtifactVersion(ref).producerTaskId) || !this.engine.signals.settled(this.engine.requireArtifactVersion(ref).producerTaskId) || !store.executionAllowed(this.engine.requireArtifactVersion(ref).producerTaskId) || store.findArtifact(ref.artifactId)?.latestVersion !== ref.version)
       for (const scenario of scenarios) {
         const result = reported.get(scenario.id)!
         if (!["passed", "failed"].includes(result.status)) throw new Error(`Invalid scenario status: ${result.status}`)
-        store.updateScenario({ ...scenario, result: { status: result.status, observed: result.observed, recordedAt: now } })
+        if (!historical) store.updateScenario({ ...scenario, result: { status: result.status, observed: result.observed, recordedAt: now } })
       }
       run.scenarioResults = scenarios.map((scenario) => ({
         scenarioId: scenario.id,
@@ -245,8 +250,7 @@ export class IntegrationEngine {
         observed: reported.get(scenario.id)!.observed,
       }))
       const failed = run.scenarioResults.filter((result) => result.status === "failed")
-      if (store.db.prepare("SELECT 1 FROM plan_retired_integrations WHERE set_id=?").get(set.id) ||
-        run.memberRefs.some(ref => !store.executionAllowed(this.engine.requireArtifactVersion(ref).producerTaskId))) {
+      if (historical) {
         run.status = failed.length ? "failed" : "passed"
         run.finishedAt = now
         store.updateIntegrationRun(run)
@@ -369,7 +373,7 @@ export class IntegrationEngine {
         goal: [
           `Integration run ${run.id} of set ${set.name} failed with an unknown cause.`,
           `Failed scenarios: ${failedScenarios.map((scenario) => scenario.name).join(", ")}.`,
-          "Reproduce the failure, isolate the interaction, determine the root cause, and report which tasks must be reopened.",
+          "Reproduce the failure, isolate the interaction, determine the causal artifact producer, then use task_issue_list and task_issue_route to send the repair to its owning responsibility.",
         ].join(" "),
         category: "diagnostic",
         parentId: set.parentTaskId,
@@ -380,8 +384,11 @@ export class IntegrationEngine {
         this.engine.markTaskStale(taskId, `Integration failure (${failure.type}) in ${set.name}`)
       }
     }
+    const issue = this.engine.feedback.report({ reporterTaskId: set.parentTaskId ?? this.engine.requireArtifactVersion(run.memberRefs[0]!).producerTaskId,
+      summary: `Integration failed: ${set.name}`, evidence: observations || `Failed scenarios: ${failedScenarioIds.join(", ")}`,
+      observedRefs: run.memberRefs })
     if (set.parentTaskId) this.engine.refreshAncestors(set.parentTaskId)
-    return { run, set: store.findIntegrationSet(set.id)!, diagnosticTask }
+    return { run, set: store.findIntegrationSet(set.id)!, diagnosticTask, issue }
   }
 
   private resolveMember(member: string, proposedNames: Set<string>, now: string): { artifactId: string; version: number; name: string; bundleOfSet?: string } {

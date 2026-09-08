@@ -16,6 +16,8 @@ if (!existsSync(authPath) && process.env.TASK_MODEL_AUTH_JSON) {
 delete process.env.TASK_MODEL_AUTH_JSON
 const args = process.argv.slice(2)
 if (!args.length) throw new Error("Pass an execution prompt to instance-model-stage.ts")
+if (process.env.TASK_INPUT_SOURCES) args.push(`Verified source workspaces (read these actual files when integrating inputs): ${process.env.TASK_INPUT_SOURCES}`)
+if (process.env.TASK_INPUT_SNAPSHOT) args.push(`Execution input snapshot (authoritative, supersedes older prompt inputs): ${process.env.TASK_INPUT_SNAPSHOT}. Integrate these exact input versions into the restored workspace before doing the assigned work. Never silently validate a previous input version.`)
 const model = process.env.TASK_WORKER_MODEL ?? "openai/gpt-5.6-terra"
 const key = createHash("sha256").update(JSON.stringify([model, args])).digest("hex")
 const statePath = join(directory, `task-stage-${key}.json`)

@@ -49,6 +49,8 @@ spec:
                   message: Archive store is immutable
                 - rule: has(self.restoreFromTaskId) == has(oldSelf.restoreFromTaskId) && (!has(self.restoreFromTaskId) || self.restoreFromTaskId == oldSelf.restoreFromTaskId)
                   message: Restore source is immutable
+                - rule: "has(self.inputSnapshot) == has(oldSelf.inputSnapshot) && (!has(self.inputSnapshot) || self.inputSnapshot == oldSelf.inputSnapshot)"
+                  message: Input snapshot is immutable; create a new execution for changed inputs
               properties:
                 restoreFromTaskId: {type: string, minLength: 1, maxLength: 256}
                 archive:
@@ -57,6 +59,29 @@ spec:
                   properties:
                     claimName: {type: string, minLength: 1, maxLength: 253}
                     cleanupOnCompletion: {type: boolean}
+                inputSnapshot:
+                  type: object
+                  required: [digest, inputRefs]
+                  properties:
+                    digest: {type: string, maxLength: 64, pattern: '^[a-f0-9]{64}$'}
+                    sources:
+                      type: array
+                      maxItems: 256
+                      items:
+                        type: object
+                        required: [taskId, hash]
+                        properties:
+                          taskId: {type: string, maxLength: 256}
+                          hash: {type: string, maxLength: 64, pattern: '^[a-f0-9]{64}$'}
+                    inputRefs:
+                      type: array
+                      maxItems: 512
+                      items:
+                        type: object
+                        required: [artifactId, version]
+                        properties:
+                          artifactId: {type: string, maxLength: 256}
+                          version: {type: integer, minimum: 1}
                 taskId: {type: string, minLength: 1, maxLength: 256}
                 image: {type: string, minLength: 1, maxLength: 512}
                 desiredState: {type: string, enum: [Running, Suspended]}

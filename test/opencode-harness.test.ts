@@ -33,7 +33,9 @@ test("OpenCode 연결은 Basic 인증을 전달하고 외부 평문 서버를 �
 
 test("관리자 지침은 새 개발의 계획 승인과 명시적 재개를 구분한다", () => {
   assert.match(MANAGER_PROMPT, /explicitly asks to continue, resume, or pick up/)
-  assert.match(MANAGER_PROMPT, /before creating, reopening, claiming, or executing any Task/)
-  assert.match(MANAGER_PROMPT, /Do not create a root, dispatch workers, modify files, or run tests until the user actually approves/)
-  assert.match(MANAGER_PROMPT, /show the plan.*change the plan.*revise the plan/s)
+  assert.match(MANAGER_PROMPT, /first complete read-only investigation/)
+  assert.match(MANAGER_PROMPT, /design the actual task graph BEFORE approval/)
+  assert.match(MANAGER_PROMPT, /Do not defer task decomposition until after approval/)
+  assert.match(MANAGER_PROMPT, /existing functionality changes/)
+  assert.match(MANAGER_PROMPT, /another detailed revision before changing affected work/)
 })

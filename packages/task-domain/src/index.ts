@@ -77,6 +77,8 @@ export type PlanStage = "research" | "design" | "implementation" | "validation"
 export type ResearchTrack = "repository" | "external_examples" | "official_documentation"
 
 export interface PlanTaskSpec {
+  design?: { basis: string[]; approach: string; inputs: string[]; outputs: string[]; verification: string[]; risks: string[] }
+  repairIssueIds?: string[]
   goal: string
   category?: TaskCategory
   acceptanceCriteria?: Array<string | Criterion>
@@ -154,7 +156,7 @@ export interface PlanTransition {
 }
 export interface TaskAttempt {
   id: string; taskId: string; token: string; state: "running" | "completed" | "failed" | "fenced"
-  inputRefs: ArtifactVersionRef[]; snapshot: unknown; worker?: { agent?: string; sessionId?: string; role?: string }
+  inputRefs: ArtifactVersionRef[]; snapshot: unknown; worker?: { agent?: string; sessionId?: string; role?: string; instanceTaskId?: string }
   createdAt: string
 }
 
@@ -170,8 +172,10 @@ export interface UserPlanView {
     outcome: string
     dependsOn: string[]
     status: string
+    taskSpec?: PlanTaskSpec
   }>
   impact?: PlanImpactReport
+  changeSummary?: string
   approvalPrompt: string
 }
 

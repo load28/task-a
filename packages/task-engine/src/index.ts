@@ -1,5 +1,7 @@
 import { normalizeScopes } from "./scheduling.ts"
 import { randomUUID } from "node:crypto"
+import { SignalCoordinator } from "./signals.ts"
+import { FeedbackCoordinator } from "./feedback.ts"
 import { RevisionCoordinator } from "./revisions.ts"
 import { buildTaskContext } from "#task-context"
 import type {
@@ -205,11 +207,15 @@ const MANUAL_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 export class TaskGraphEngine {
   readonly store: TaskGraphStore
   readonly revisions: RevisionCoordinator
+  readonly feedback: FeedbackCoordinator
+  readonly signals: SignalCoordinator
   private reflectionThreshold: number
 
   constructor(store: TaskGraphStore, options: TaskGraphEngineOptions = {}) {
     this.store = store
     this.revisions = new RevisionCoordinator(this)
+    this.feedback = new FeedbackCoordinator(this)
+    this.signals = new SignalCoordinator(this)
     this.reflectionThreshold = Math.max(2, options.reflectionThreshold ?? 5)
   }
 
@@ -317,7 +323,7 @@ export class TaskGraphEngine {
     return this.store.searchTasks(query.trim(), Math.max(1, Math.min(limit, 50)))
   }
 
-  createDraftPlan(input: CreateDraftPlanInput): UserPlanView {
+  createDraftPlan(input: CreateDraftPlanInput): UserPlanView & { planId: string } {
     return this.atomic(() => {
       requireText(input.title, "plan title")
       requireText(input.goal, "plan goal")
@@ -330,7 +336,7 @@ export class TaskGraphEngine {
       this.store.insertWorkPlan(plan)
       this.store.insertPlanRevision(revision, input.nodes)
       this.revisions.saveContext(plan.id, 1, { goal: input.goal, requirements: input.requirements ?? [], constraints: input.constraints ?? [] })
-      return this.userPlanView(plan, revision, input.nodes, [])
+      return { ...this.userPlanView(plan, revision, input.nodes, []), planId: plan.id }
     })
   }
 
@@ -354,6 +360,13 @@ export class TaskGraphEngine {
     return this.atomic(() => {
       const plan = this.requireWorkPlan(input.planId)
       if (plan.currentRevision !== input.baseVersion) throw new Error("Plan revision is stale")
+      const priorNodes = this.store.planNodes(plan.id, this.store.activePlanVersion(plan.id))
+      const unresolved = new Set(this.feedback.list(plan.rootTaskId).filter(i => i.state !== "resolved").map(i => i.id))
+      input = { ...input, nodes: input.nodes.map(n => ({ ...n, taskSpec: { ...n.taskSpec,
+        ...((priorNodes.find(p => p.nodeId === n.nodeId)?.taskSpec.repairIssueIds ?? []).some(id => unresolved.has(id)) ? {
+          repairIssueIds: [...new Set([...(n.taskSpec.repairIssueIds ?? []), ...(priorNodes.find(p => p.nodeId === n.nodeId)?.taskSpec.repairIssueIds ?? []).filter(id => unresolved.has(id))])],
+        } : {}),
+      } })) }
       this.validatePlanNodes(input.nodes)
       requireText(input.summary, "plan summary")
       const prior = this.requirePlanRevision(plan.id, plan.currentRevision)
@@ -422,6 +435,7 @@ export class TaskGraphEngine {
 
   resolveRunnable(rootId?: string): RunnableTask[] {
     return this.atomic(() => {
+      this.signals.flush()
       const scope = rootId ? this.subtreeIds(this.requireTask(rootId).id) : undefined
       const candidates: Task[] = []
       for (const task of this.allTasks()) {
@@ -440,7 +454,7 @@ export class TaskGraphEngine {
     return this.atomic(() => ({ reused: this.revisions.reuseReadyTask(taskId), task: this.requireTask(taskId) }))
   }
 
-  startTask(taskId: string, worker?: { agent?: string; sessionId?: string; role?: string }): Task {
+  startTask(taskId: string, worker?: { agent?: string; sessionId?: string; role?: string; instanceTaskId?: string }): Task {
     return this.atomic(() => {
       let task = this.requireTask(taskId)
       if (!this.store.executionAllowed(taskId)) throw new Error("Task execution is fenced by a plan transition")
@@ -454,11 +468,16 @@ export class TaskGraphEngine {
           : `Task is not ready (status: ${task.status})`)
       }
       if (worker?.role && !this.store.findRole(worker.role)) throw new Error(`Unknown role: ${worker.role}`)
+      if (this.signals.stops().some(s => s.taskId === taskId && s.state === "requested")) throw new Error("Wait for actual termination of the old attempt before pulling")
+      if (!this.signals.settled(taskId)) throw new Error("Wait for all upstream inputs to settle before pulling")
       this.setStatus(task, "running", undefined, worker ? { worker } : undefined)
       const context = buildTaskContext(this, taskId, false)
       this.store.saveAttempt({ id: randomUUID(), taskId, token: randomUUID(), state: "running", worker,
         inputRefs: [...context.inputArtifacts, ...context.verifiedBundles].map(a => ({ artifactId: a.artifactId, version: a.version })),
         snapshot: context, createdAt: new Date().toISOString() })
+      const attempt = this.store.currentAttempt(taskId)!
+      const pinned = this.signals.pin(taskId, attempt.id)
+      this.store.saveAttempt({ ...attempt, inputRefs: pinned.inputRefs })
       return this.requireTask(taskId)
     })
   }
@@ -468,11 +487,17 @@ export class TaskGraphEngine {
       requireText(input.summary, "summary")
       let task = this.requireTask(input.taskId)
       const attempt = this.store.currentAttempt(task.id)
-      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(task.id)
+      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(task.id) || Number(this.store.db.prepare("SELECT count(*) AS n FROM task_attempts WHERE task_id=?").get(task.id)!.n) > 1
       if (!this.store.executionAllowed(task.id) || (versioned || input.attemptToken) && input.attemptToken !== attempt?.token) {
         this.store.db.prepare("INSERT INTO late_task_reports VALUES(?,?,?)").run(randomUUID(), task.id, JSON.stringify(input))
         return task
       }
+      if (!this.signals.matches(task.id)) {
+        this.signals.invalidate(task.id, "snapshot mismatch at adoption")
+        this.store.db.prepare("INSERT INTO late_task_reports VALUES(?,?,?)").run(randomUUID(), task.id, JSON.stringify(input))
+        return this.requireTask(task.id)
+      }
+      if (!this.signals.settled(task.id)) return this.signals.defer(input)
       if (!isAtomic(task)) throw new Error("Composite tasks complete through their children and integrations")
       if (!["running", "implemented"].includes(task.status)) throw new Error(`Task cannot accept results in status ${task.status}`)
       for (const artifact of input.artifacts ?? []) {
@@ -494,6 +519,8 @@ export class TaskGraphEngine {
         this.afterTaskSettled(task.id)
       } else if (verification) {
         this.annotate(task, verification.evidence ? `Local verification failed: ${verification.evidence}` : "Local verification failed")
+        this.feedback.report({ reporterTaskId: task.id, summary: `Verification failed: ${task.title}`,
+          evidence: verification.evidence?.trim() || input.summary, observedRefs: [...(attempt?.inputRefs ?? []), ...task.outputArtifactRefs] })
       }
       if (attempt) this.store.saveAttempt({ ...attempt, state: "completed" })
       return this.requireTask(input.taskId)
@@ -505,7 +532,7 @@ export class TaskGraphEngine {
       requireText(reason, "reason")
       const task = this.requireTask(taskId)
       const attempt = this.store.currentAttempt(taskId)
-      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(taskId)
+      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(taskId) || Number(this.store.db.prepare("SELECT count(*) AS n FROM task_attempts WHERE task_id=?").get(taskId)!.n) > 1
       if (!this.store.executionAllowed(taskId) || (versioned || attemptToken) && attemptToken !== attempt?.token) {
         this.store.db.prepare("INSERT INTO late_task_reports VALUES(?,?,?)").run(randomUUID(), taskId, JSON.stringify({ failure: reason }))
         return task
@@ -539,8 +566,9 @@ export class TaskGraphEngine {
     return this.atomic(() => {
       const task = this.requireTask(input.taskId)
       const attempt = this.store.currentAttempt(task.id)
-      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(task.id)
-      const historical = !this.store.executionAllowed(task.id) || Boolean((versioned || input.attemptToken) && input.attemptToken !== attempt?.token)
+      const versioned = this.store.db.prepare("SELECT 1 FROM plan_task_visibility WHERE task_id=?").get(task.id) || Number(this.store.db.prepare("SELECT count(*) AS n FROM task_attempts WHERE task_id=?").get(task.id)!.n) > 1
+      const historical = !this.store.executionAllowed(task.id) || !this.signals.matches(task.id) || Boolean((versioned || input.attemptToken) && input.attemptToken !== attempt?.token)
+      if (!historical && !this.signals.settled(task.id)) throw new Error("Upstream inputs are unsettled; submit completion for deferred adoption")
       if (historical) input = { ...input, name: `${input.name} [historical:${task.id}:${input.attemptToken ?? "unknown"}]` }
       requireText(input.name, "artifact name")
       if (!isArtifactType(input.type)) throw new Error(`Invalid artifact type: ${input.type}`)
@@ -548,7 +576,7 @@ export class TaskGraphEngine {
       if (!historical && !["running", "implemented"].includes(task.status)) throw new Error(`Task in status ${task.status} cannot publish artifacts; start or reopen it first`)
       const contentRef = input.contentRef?.trim() || (input.content !== undefined ? `inline:${randomUUID()}` : undefined)
       if (!contentRef) throw new Error("Artifact requires contentRef or inline content")
-      const inputs = input.inputs ?? []
+      const inputs = input.inputs ?? attempt?.inputRefs ?? []
       for (const ref of inputs) this.requireArtifactVersion(ref)
       for (const ref of input.contractVersionRefs ?? []) {
         if (!this.store.findContract(ref.contractId, ref.version)) throw new Error(`Unknown contract version: ${ref.contractId}@${ref.version}`)
@@ -579,13 +607,14 @@ export class TaskGraphEngine {
         createdAt: now,
       }
       this.store.insertArtifactVersion(artifactVersion)
+      this.signals.attach(artifactVersion, input.type === "code" ? this.signals.outputSnapshot(task.id, input.attemptToken ?? attempt?.token) : undefined, attempt?.worker?.instanceTaskId)
       if (head) this.store.updateArtifactLatest(artifactId, version)
       const refs = { artifactId, version, name: input.name.trim() }
       this.emit(head ? "ARTIFACT_VERSIONED" : "ARTIFACT_CREATED", task.id, refs)
       const outputs = task.outputArtifactRefs.filter((ref) => ref.artifactId !== artifactId)
       outputs.push({ artifactId, version })
       if (!historical) this.store.updateTask({ ...this.requireTask(task.id), outputArtifactRefs: outputs, updatedAt: now })
-      if (head && !historical) this.propagateStale(artifactId, version, input.compatibility ?? "compatible")
+      if (!historical) this.signals.push(artifactVersion)
       if (input.type === "architecture" && head) this.emit("ARCHITECTURE_REVISED", task.id, refs)
       return artifactVersion
     })
@@ -620,6 +649,7 @@ export class TaskGraphEngine {
         refs.push({ contractId: contract.id, version: contract.version })
         this.store.updateTask({ ...this.requireTask(task.id), contractRefs: refs, updatedAt: now })
       }
+      for (const task of [provider, consumer]) if (this.store.currentAttempt(task.id)) this.signals.invalidate(task.id, `contract ${contract.id}@${contract.version}`)
       this.emit("CONTRACT_UPDATED", provider.id, { contractId: contract.id, version: contract.version, consumerTaskId: consumer.id })
       return contract
     })
@@ -640,6 +670,7 @@ export class TaskGraphEngine {
         createdAt: new Date().toISOString(),
       }
       this.store.insertRequirement(requirement)
+      for (const id of this.subtreeIds(taskId)) if (this.store.currentAttempt(id)) this.signals.invalidate(id, `requirement ${requirement.id}`)
       this.emit("REQUIREMENT_ADDED", taskId, { requirementId: requirement.id }, { description: requirement.description, kind })
       return requirement
     })
@@ -794,6 +825,8 @@ export class TaskGraphEngine {
   evaluateCompletion(taskId: string): CompletionEvaluation {
     const task = this.requireTask(taskId)
     const missing: string[] = []
+    if (!this.signals.settled(taskId) || [...this.subtreeIds(taskId)].some(id => this.signals.dirty(id))) missing.push("input changes are pending")
+    for (const issue of this.feedback.list(taskId).filter(i => i.state !== "resolved")) missing.push(`unresolved issue: ${issue.id}`)
     const children = this.store.childTasks(taskId)
     for (const child of children) {
       if (!TERMINAL_FOR_DEPENDENCY.includes(child.status)) missing.push(`child not verified: ${child.title} (${child.status})`)
@@ -900,6 +933,23 @@ export class TaskGraphEngine {
     return revision
   }
 
+  assertReviewablePlan(planId: string, version: number): void {
+    for (const node of this.store.planNodes(planId, version)) this.validateTaskDesign(node, true)
+  }
+
+  private validateTaskDesign(node: PlanNode, required = false): void {
+    const spec = node.taskSpec, design = spec.design
+    if (!design && !required) return // Existing internal plans remain loadable.
+    if (!design) throw new Error("Detailed task design and completed investigation are required; revise this plan before approval")
+    requireText(spec.assignedRole ?? "", "task responsibility")
+    requireText(design.approach, "task design approach")
+    for (const [label, values] of [["investigation evidence", design.basis], ["verification plan", design.verification], ["outputs", design.outputs], ["acceptance criteria", spec.acceptanceCriteria?.map(c => typeof c === "string" ? c : c.description)]] as const) {
+      if (!Array.isArray(values) || !values.length) throw new Error(`Detailed plan requires ${label}`)
+      for (const value of values) requireText(value, label)
+    }
+    if (!Array.isArray(spec.writeScopes) || !Array.isArray(design.inputs) || !Array.isArray(design.risks)) throw new Error("Detailed plan requires explicit file scope and risks")
+  }
+
   private validatePlanNodes(nodes: PlanNode[]): void {
     if (!Array.isArray(nodes) || nodes.length === 0) throw new Error("Work plan requires at least one node")
     const ids = new Set<string>()
@@ -911,6 +961,7 @@ export class TaskGraphEngine {
       if (node.stage === "research" && !["repository", "external_examples", "official_documentation"].includes(node.researchTrack ?? "")) throw new Error("Research plan nodes require a source track")
       if (!node.taskSpec || typeof node.taskSpec !== "object") throw new Error("Plan node requires a task specification")
       requireText(node.taskSpec.goal, "plan node task goal")
+      this.validateTaskDesign(node)
     }
     for (const node of nodes) {
       if (node.parentNodeId && !ids.has(node.parentNodeId)) throw new Error(`Unknown plan parent node: ${node.parentNodeId}`)
@@ -931,11 +982,11 @@ export class TaskGraphEngine {
     return {
       title: plan.title, summary: revision.summary, revision: revision.version, state: plan.state === "revision_pending" ? plan.state : revision.state === "approved" ? plan.state : revision.state,
       nodes: nodes.map((node) => ({
-        label: node.label, stage: node.stage, researchTrack: node.researchTrack, outcome: node.outcome,
-        dependsOn: node.dependsOnNodeIds.map((id) => nodeById.get(id)?.label ?? id),
+        label: node.label, stage: node.stage, researchTrack: node.researchTrack, outcome: node.outcome, taskSpec: structuredClone(node.taskSpec),
+        dependsOn: (node.dependsOnNodeIds ?? []).map((id) => nodeById.get(id)?.label ?? id),
         status: linkByNode.get(node.nodeId) ? (this.store.findTask(linkByNode.get(node.nodeId)!.taskId)?.status ?? "unknown") : "not started",
       })),
-      impact, approvalPrompt: revision.state === "awaiting_approval" ? "이 계획을 승인하면 작업을 시작합니다." : "계획 상태를 확인할 수 있습니다.",
+      impact, changeSummary: revision.changeSummary, approvalPrompt: revision.state === "awaiting_approval" ? "이 계획을 승인하면 작업을 시작합니다." : "계획 상태를 확인할 수 있습니다.",
     }
   }
 
@@ -972,9 +1023,10 @@ export class TaskGraphEngine {
   }
 
   refreshReadiness(taskId: string): void {
+    this.signals.prepare(taskId)
     const task = this.requireTask(taskId)
     if (!isAtomic(task)) return
-    const satisfied = task.dependencies.every((id) => TERMINAL_FOR_DEPENDENCY.includes(this.requireTask(id).status))
+    const satisfied = this.signals.settled(taskId)
     const failedUpstream = task.dependencies.filter((id) => this.requireTask(id).status === "failed")
     if (task.status === "pending" && satisfied) this.setStatus(task, "ready")
     else if (task.status === "ready" && !satisfied) this.setStatus(task, "pending", "Dependencies are no longer satisfied")
@@ -986,6 +1038,7 @@ export class TaskGraphEngine {
   }
 
   afterTaskSettled(taskId: string): void {
+    this.signals.flush()
     for (const dependent of this.store.dependentIds(taskId)) this.refreshReadiness(dependent)
     const task = this.requireTask(taskId)
     if (task.parentId) this.refreshAncestors(task.parentId)

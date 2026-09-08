@@ -25,7 +25,7 @@ function tree(path: string): string | null {
 }
 export function stageKey(spec: InstanceSpec, stage: InstanceSpec["stages"][number], completed: Record<string, string>) {
   const dependencies = stage.dependsOn ?? Object.keys(completed)
-  return hash([spec.image, stage.command, stage.outputs ?? [], stage.inputDigest ?? spec.repository ?? null,
+  return hash([spec.inputSnapshot?.digest ?? null, spec.image, stage.command, stage.outputs ?? [], stage.inputDigest ?? spec.repository ?? null,
     dependencies.map(id => [id, completed[id] ?? "unavailable"])])
 }
 export function publishStage(directory: string, workspace: string, stage: InstanceSpec["stages"][number], key: string): StageCache | undefined {

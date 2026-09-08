@@ -186,7 +186,14 @@ test("Kubernetes profiles fill worker defaults and reject native claims without 
     const denied: any = await call("task_start", { taskId: task.id, operationId: "native-denied" })
     assert.equal(denied.result.isError, true)
     assert.equal(graph.engine.requireTask(task.id).status, "ready")
-    const { image, ...input } = { ...spec(), taskId: task.id }
+    const invalid: any = await call("task_instance_create", {
+      taskId: task.id, operationId: "invalid-spec",
+      spec: { stages: [{ id: "build", argv: ["true"] }], deletionPolicy: "Archive" },
+    })
+    assert.equal(invalid.result.isError, true)
+    assert.match(invalid.result.content[0].text, /command/)
+    assert.equal(graph.engine.requireTask(task.id).status, "ready")
+    const input = { stages: spec().stages }
     const args = { taskId: task.id, spec: input, operationId: "profile-create" }
     for (let n = 0; n < 2; n++) {
       const result: any = await call("task_instance_create", args)
@@ -195,6 +202,11 @@ test("Kubernetes profiles fill worker defaults and reject native claims without 
     assert.equal("image" in args.spec, false)
     const instance = await manager.load(task.id)
     assert.equal(instance.spec.image, "configured-worker:local")
+    assert.equal(instance.spec.taskId, task.id)
+    assert.equal(instance.spec.run, 1)
+    assert.equal(instance.spec.desiredState, "Running")
+    assert.equal(instance.spec.storage.size, "1Gi")
+    assert.equal(instance.spec.deletionPolicy, "Retain")
     assert.equal(instance.spec.envSecret, "configured-auth")
     assert.equal(graph.store.currentAttempt(task.id)!.worker!.agent, "kubernetes")
     assert.equal((await api.list("taskinstances")).length, 1)
@@ -249,4 +261,61 @@ test("restore and archive mounts share one volume for the same PVC while source 
   assert.equal(mounts.find((m: any) => m.mountPath === "/restore").readOnly, true)
   assert.equal(mounts.find((m: any) => m.mountPath === "/reuse/0").readOnly, true)
   assert.ok(!mounts.find((m: any) => m.mountPath === "/archive").readOnly)
+})
+
+test("repair restores a stopped workspace including dirty files and session state without mutating its source", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "repair-stopped-")), source = join(dir, "source"), target = join(dir, "target")
+  const previous = process.env.TASK_RESTORE_DIRECTORY
+  try {
+    const original = { ...spec(), taskId: "stopped-owner", stages: [{ id: "partial", command: ["node", "-e", "require('fs').writeFileSync('partial','preserved');require('fs').writeFileSync(process.env.HOME+'/session','history');process.exit(1)"] }] }
+    assert.equal(await runInstance(original, source, "source-uid"), 1)
+    const checkpoint = readFileSync(join(source, "checkpoint.json"), "utf8")
+    process.env.TASK_RESTORE_DIRECTORY = source
+    const repaired = { ...spec(), taskId: "replacement-owner", restoreFromTaskId: original.taskId, stages: [{ id: "repair", command: ["node", "-e", "const f=require('fs'),a=require('assert/strict');a.equal(f.readFileSync('partial','utf8'),'preserved');a.equal(f.readFileSync(process.env.HOME+'/session','utf8'),'history');f.writeFileSync('partial','fixed')"] }] }
+    assert.equal(await runInstance(repaired, target, "target-uid"), 0)
+    assert.equal(readFileSync(join(source, "workspace", "partial"), "utf8"), "preserved")
+    assert.equal(readFileSync(join(target, "workspace", "partial"), "utf8"), "fixed")
+    assert.equal(readFileSync(join(source, "checkpoint.json"), "utf8"), checkpoint)
+    assert.equal(readFileSync(join(target, "history", "source-stopped-owner", "checkpoint.json"), "utf8"), checkpoint)
+  } finally {
+    if (previous === undefined) delete process.env.TASK_RESTORE_DIRECTORY; else process.env.TASK_RESTORE_DIRECTORY = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("controller pins stopped source PVC read-only for repair and refuses source resume while consumed", async () => {
+  const { api, manager, tick } = await fixture()
+  await tick(); await tick(); await tick()
+  const source = await manager.load("leaf-1"), sourceNames = names(source)
+  await manager.suspend("leaf-1"); await tick(); await tick()
+  const replacement = await manager.create({ ...spec(), taskId: "repair", restoreFromTaskId: "leaf-1" })
+  for (let n = 0; n < 3; n++) await reconcile(api, await manager.load("repair"))
+  const pod = await api.get("pods", names(replacement as TaskInstance).pod)
+  assert.ok(pod)
+  assert.equal(pod!.spec.volumes.find((v: any) => v.name === "restore").persistentVolumeClaim.claimName, sourceNames.volume)
+  assert.equal(pod!.spec.containers[0].volumeMounts.find((v: any) => v.name === "restore").readOnly, true)
+  assert.ok(pod!.spec.containers[0].env.some((v: any) => v.name === "TASK_RESTORE_DIRECTORY"))
+  await assert.rejects(manager.resume("leaf-1", 2), /pinned/)
+  const stopped = await manager.load("leaf-1")
+  await api.replace("taskinstances", { ...stopped, spec: { ...stopped.spec, desiredState: "Running", run: 2 } })
+  await tick(); await tick()
+  assert.equal(await api.get("pods", sourceNames.pod), undefined)
+  assert.equal((await manager.load("leaf-1")).status?.phase, "WaitingForRestore")
+})
+
+test("worker pulls actual pinned source files and refuses a modified source before execution", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-source-")), source = join(dir, "source"), target = join(dir, "target")
+  try {
+    const fs = await import("node:fs"), { snapshotCode } = await import("../packages/task-snapshots/src/index.ts")
+    const original = { ...spec(), taskId: "producer", stages: [{ id: "code", command: ["node", "-e", "require('fs').writeFileSync('value.cjs','module.exports = 42')"] }] }
+    await runInstance(original, source, "source-uid")
+    const snapshot = snapshotCode(join(source, "workspace"))
+    const consumer = { ...spec(), taskId: "consumer", inputSnapshot: { digest: snapshot.hash, inputRefs: [], sources: [{ taskId: "producer", hash: snapshot.hash }] },
+      reuseSources: [{ taskId: "producer", stages: [] }], stages: [{ id: "check", command: ["node", "-e", "const s=JSON.parse(process.env.TASK_INPUT_SOURCES);require('assert/strict').equal(require(s[0].path+'/value.cjs'),42);require('fs').writeFileSync('checked','yes')"] }] }
+    assert.equal(await runInstance(consumer, target, "target-uid", [source]), 0)
+    assert.equal(fs.readFileSync(join(target, "workspace", "checked"), "utf8"), "yes")
+    fs.writeFileSync(join(source, "workspace", "value.cjs"), "module.exports = 43")
+    await assert.rejects(runInstance({ ...consumer, taskId: "bad-consumer" }, join(dir, "bad"), "bad-uid", [source]), /do not match/)
+    assert.equal(existsSync(join(dir, "bad", "workspace", "checked")), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

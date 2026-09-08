@@ -15,17 +15,33 @@ export function hostView(raw: any, depth = 0): Record<string, any> {
 const stageLabels: Record<string, string> = { research: "살펴보기", design: "설계하기", implementation: "만들기", validation: "확인하기" }
 const researchLabels: Record<string, string> = { repository: "현재 프로젝트 확인", external_examples: "유사 사례 조사", official_documentation: "공식 자료 확인" }
 
-/** Remove graph implementation details before a plan crosses the host boundary. */
+function taskDesignView(value: any): Record<string, any> | undefined {
+  if (!value || typeof value !== "object") return
+  const list = (x: any) => Array.isArray(x) ? x.filter((v: any) => typeof v === "string") : []
+  return {
+    goal: typeof value.goal === "string" ? value.goal : "",
+    responsibility: value.assignedRole ?? value.responsibility ?? "",
+    files: list(value.writeScopes ?? value.files),
+    acceptanceCriteria: Array.isArray(value.acceptanceCriteria) ? value.acceptanceCriteria.map((c: any) => typeof c === "string" ? c : c.description).filter((c: any) => typeof c === "string") : [],
+    ...(value.design ? { design: { basis: list(value.design.basis), approach: typeof value.design.approach === "string" ? value.design.approach : "", inputs: list(value.design.inputs), outputs: list(value.design.outputs), verification: list(value.design.verification), risks: list(value.design.risks) } } : {}),
+  }
+}
+
+/** Preserve reviewable task design while removing execution identifiers. */
 export function userPlanView(plan: any): Record<string, any> | undefined {
   if (!plan || typeof plan !== "object" || !Array.isArray(plan.nodes)) return
   const nodes = plan.nodes.filter((node: any) => node && typeof node.label === "string").map((node: any) => ({
-    label: node.label, stage: stageLabels[node.stage] ?? "계획",
-    ...(researchLabels[node.researchTrack] ? { research: researchLabels[node.researchTrack] } : {}),
+    ...(taskDesignView(node.taskSpec ?? node.task) ? { task: taskDesignView(node.taskSpec ?? node.task) } : {}),
+    label: node.label, stage: stageLabels[node.stage] ?? (Object.values(stageLabels).includes(node.stage) ? node.stage : "계획"),
+    ...(researchLabels[node.researchTrack] ? { research: researchLabels[node.researchTrack] } : Object.values(researchLabels).includes(node.research) ? { research: node.research } : {}),
     ...(typeof node.outcome === "string" ? { outcome: node.outcome } : {}),
     ...(Array.isArray(node.dependsOn) && node.dependsOn.length ? { dependsOn: node.dependsOn.filter((x: unknown) => typeof x === "string") } : {}),
     ...(typeof node.status === "string" ? { status: node.status } : {}),
   }))
-  return { ...(typeof plan.title === "string" ? { title: plan.title } : {}), ...(typeof plan.summary === "string" ? { summary: plan.summary } : {}), ...(typeof plan.revision === "number" ? { revision: plan.revision } : {}), ...(typeof plan.state === "string" ? { state: plan.state } : {}), nodes, ...(typeof plan.approvalPrompt === "string" ? { approvalPrompt: plan.approvalPrompt, approvalNeeded: true } : {}), ...(plan.impact && typeof plan.impact === "object" ? { impact: plan.impact } : {}) }
+  const approvalNeeded = typeof plan.state === "string"
+    ? ["awaiting_approval", "revision_pending"].includes(plan.state)
+    : typeof plan.approvalNeeded === "boolean" ? plan.approvalNeeded : typeof plan.approvalPrompt === "string"
+  return { ...(typeof plan.changeSummary === "string" ? { changeSummary: plan.changeSummary } : {}), ...(typeof plan.title === "string" ? { title: plan.title } : {}), ...(typeof plan.summary === "string" ? { summary: plan.summary } : {}), ...(typeof plan.revision === "number" ? { revision: plan.revision } : {}), ...(typeof plan.state === "string" ? { state: plan.state } : {}), nodes, ...(typeof plan.approvalPrompt === "string" ? { approvalPrompt: plan.approvalPrompt, approvalNeeded } : {}), ...(plan.impact && typeof plan.impact === "object" ? { impact: plan.impact } : {}) }
 }
 
 function projectProgress(progress: any): Record<string, any> {

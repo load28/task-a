@@ -40,7 +40,7 @@ test("task results are versioned artifacts with lineage", (t) => {
   assert.deepEqual(task.outputArtifactRefs, [{ artifactId: analyzer.artifactId, version: 1 }])
 })
 
-test("compatible upstream changes stale downstream artifacts but keep implementations", (t) => {
+test("compatible labels cannot bypass input-change rework; historical outputs remain intact", (t) => {
   const { store, engine, ir, binding } = pipeline()
   t.after(() => store.close())
   engine.startTask(ir.id)
@@ -51,9 +51,9 @@ test("compatible upstream changes stale downstream artifacts but keep implementa
   engine.completeTask({ taskId: binding.id, summary: "done", verification: { passed: true } })
   engine.reopenTask(ir.id, "IR 개선")
   engine.startTask(ir.id)
-  engine.publishArtifact({ taskId: ir.id, name: "PatternIR", type: "code", contentRef: "git://ir/v2", compatibility: "compatible" })
-  assert.equal(store.findArtifactVersion(analyzer.artifactId, 1)!.status, "stale")
-  assert.equal(engine.requireTask(binding.id).status, "verified")
+  engine.publishArtifact({ taskId: ir.id, attemptToken: engine.requireTask(ir.id).attemptToken, name: "PatternIR", type: "code", contentRef: "git://ir/v2", compatibility: "compatible" })
+  assert.equal(store.findArtifactVersion(analyzer.artifactId, 1)!.status, "valid")
+  assert.equal(engine.requireTask(binding.id).status, "stale")
   const impact = engine.calculateImpact(v1.artifactId)
   assert.deepEqual(impact.staleArtifactVersions, [{ artifactId: analyzer.artifactId, version: 1 }])
   assert.deepEqual(impact.reopenRecommendedTaskIds, [])
@@ -70,12 +70,11 @@ test("breaking upstream changes mark consumer tasks stale for reopen", (t) => {
   engine.completeTask({ taskId: binding.id, summary: "done", verification: { passed: true } })
   engine.reopenTask(ir.id, "IR 계약 변경")
   engine.startTask(ir.id)
-  engine.publishArtifact({ taskId: ir.id, name: "PatternIR", type: "code", contentRef: "git://ir/v2", compatibility: "breaking" })
+  engine.publishArtifact({ taskId: ir.id, attemptToken: engine.requireTask(ir.id).attemptToken, name: "PatternIR", type: "code", contentRef: "git://ir/v2", compatibility: "breaking" })
   assert.equal(engine.requireTask(binding.id).status, "stale")
   const impact = engine.calculateImpact(v1.artifactId, "breaking")
   assert.deepEqual(impact.reopenRecommendedTaskIds, [binding.id])
-  engine.completeTask({ taskId: ir.id, summary: "v2 done", verification: { passed: true } })
-  engine.reopenTask(binding.id, "새 IR 반영")
+  engine.completeTask({ taskId: ir.id, attemptToken: engine.requireTask(ir.id).attemptToken, summary: "v2 done", verification: { passed: true } })
   assert.equal(engine.requireTask(binding.id).status, "ready")
 })
 

@@ -1,6 +1,7 @@
+import { snapshotCode } from "../packages/task-snapshots/src/index.ts"
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskGraphStore } from "#task-store"
@@ -21,8 +22,14 @@ function setup(engine: TaskGraphEngine, nodes: PlanNode[]) {
   return id
 }
 const taskId = (e: TaskGraphEngine, plan: string, version: number, nodeId: string) => e.store.planLinks(plan, version).find(l => l.nodeId === nodeId)!.taskId
+function attest(e: TaskGraphEngine, taskId: string, content: string) {
+  const dir = mkdtempSync(join(tmpdir(), "verified-source-"))
+  try { writeFileSync(join(dir, "code.ts"), content); e.signals.attest(taskId, e.requireTask(taskId).attemptToken!, snapshotCode(dir)) }
+  finally { rmSync(dir, { recursive: true, force: true }) }
+}
 function complete(e: TaskGraphEngine, id: string, content = "result") {
   const task = e.startTask(id, { agent: "native", sessionId: `session-${id}` })
+  attest(e, id, content)
   return e.completeTask({ taskId: id, attemptToken: task.attemptToken, summary: "done", artifacts: [{ name: id, type: "code", content }],
     verification: { passed: true, evidence: "actual test", criteriaSatisfied: task.acceptanceCriteria.map(c => c.id) } })
 }
@@ -170,6 +177,7 @@ test("identical dependency content reuses verification only through explicit ado
     const nodes = [node("producer"), node("consumer", ["producer"])], plan = setup(e, nodes)
     const finishProducer = (id: string) => {
       const task = e.startTask(id)
+      attest(e, id, "same bytes")
       e.completeTask({ taskId: id, attemptToken: task.attemptToken, summary: "done", artifacts: [{ name: "stable-api", type: "code", content: "same bytes" }],
         verification: { passed: true, criteriaSatisfied: task.acceptanceCriteria.map(c => c.id) } })
     }
@@ -183,7 +191,11 @@ test("identical dependency content reuses verification only through explicit ado
     assert.equal(e.requireTask(consumer).status, "ready")
     assert.equal(e.reuseTask(consumer).reused, true)
     assert.equal(e.requireTask(consumer).status, "verified")
-    assert.deepEqual(e.requireTask(consumer).outputArtifactRefs, e.requireTask(oldConsumer).outputArtifactRefs)
+    const priorRef = e.requireTask(oldConsumer).outputArtifactRefs[0]!, newRef = e.requireTask(consumer).outputArtifactRefs[0]!
+    assert.equal(newRef.artifactId, priorRef.artifactId)
+    assert.ok(newRef.version > priorRef.version)
+    assert.equal(e.requireArtifactVersion(newRef).content, e.requireArtifactVersion(priorRef).content)
+    assert.deepEqual(e.requireArtifactVersion(newRef).inputs, e.requireTask(taskId(e, plan, 2, "producer")).outputArtifactRefs)
     assert.equal(store.currentAttempt(consumer)!.worker!.agent, "verified-result-cache")
   } finally { store.close() }
 })

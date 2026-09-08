@@ -7,7 +7,7 @@ import { RelayStore, type RelayRequest } from "./relay-store.ts"
 import type { HostEvent } from "./store.ts"
 import { workspaceFor, type HostConfig } from "./config.ts"
 import { createGraphRuntime } from "../../../apps/task-agent/src/graph-runtime.ts"
-import { advanceTransition } from "../../task-instances/src/transitions.ts"
+import { advanceTransition, advanceInputSignals } from "../../task-instances/src/transitions.ts"
 import { InstanceManager } from "../../task-instances/src/manager.ts"
 import { KubectlApi } from "../../task-instances/src/kubectl.ts"
 import { KubernetesApi } from "../../task-instances/src/api.ts"
@@ -317,6 +317,9 @@ export class HostService {
       if (!graph) { graph = createGraphRuntime(database); this.graphs.set(workspace, graph) }
       const k = this.config.kubernetes
       const instances = k ? new InstanceManager(k.context ? new KubectlApi(k.context, k.namespace) : new KubernetesApi(k.namespace), k.namespace) : undefined
+      await advanceInputSignals(graph.engine, instances, this.harness.stopWorker ? {
+        stopAndInspect: sessionId => this.harness.stopWorker!(workspace, sessionId),
+      } : undefined)
       for (const t of graph.engine.revisions.transitions().filter(t => t.state === "waiting")) {
         await advanceTransition(graph.engine, t.id, instances, this.harness.stopWorker ? {
           stopAndInspect: sessionId => this.harness.stopWorker!(workspace, sessionId),

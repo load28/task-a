@@ -7,7 +7,7 @@ export function names(instance: TaskInstance) {
   const suffix = createHash("sha256").update(instance.metadata.uid!).digest("hex").slice(0, 24)
   return { pod: `task-${suffix}`, volume: `task-${suffix}-data` }
 }
-export function podFor(instance: TaskInstance, sourceVolumes: string[] = [], sourceArchives: Array<WorkspaceArchive | null> = [], restoreSource?: { claim: string; archive: WorkspaceArchive }): Resource {
+export function podFor(instance: TaskInstance, sourceVolumes: string[] = [], sourceArchives: Array<WorkspaceArchive | null> = [], restoreSource?: { claim: string; archive?: WorkspaceArchive }): Resource {
   const { pod, volume } = names(instance)
   const result: Resource = { apiVersion: "v1", kind: "Pod", metadata: {
     name: pod, namespace: instance.metadata.namespace,
@@ -20,7 +20,7 @@ export function podFor(instance: TaskInstance, sourceVolumes: string[] = [], sou
     containers: [{ name: "worker", image: instance.spec.image, imagePullPolicy: "IfNotPresent",
       command: ["node", "/app/scripts/instance-worker.ts"],
       env: [{ name: "TASK_INSTANCE_SPEC", value: JSON.stringify(instance.spec) }, { name: "TASK_INSTANCE_ID", value: instance.metadata.uid },
-        ...(restoreSource ? [{ name: "TASK_WORKSPACE_ARCHIVE", value: JSON.stringify(restoreSource.archive) }, { name: "TASK_RESTORE_ROOT", value: "/restore" }] : []),
+        ...(restoreSource ? restoreSource.archive ? [{ name: "TASK_WORKSPACE_ARCHIVE", value: JSON.stringify(restoreSource.archive) }, { name: "TASK_RESTORE_ROOT", value: "/restore" }] : [{ name: "TASK_RESTORE_DIRECTORY", value: "/restore" }] : []),
         ...(instance.status?.archive && instance.spec.run > instance.status.archive.run ? [{ name: "TASK_WORKSPACE_ARCHIVE", value: JSON.stringify(instance.status.archive) }] : []),
         ...(sourceArchives.some(Boolean) ? [{ name: "TASK_REUSE_ARCHIVES", value: JSON.stringify(sourceArchives) }] : []),
         { name: "TASK_TERMINATION_MESSAGE", value: "/dev/termination-log" },
@@ -63,7 +63,7 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
     if (pod) { await api.remove("pods", pod); return }
     if (instance.spec.deletionPolicy === "Delete") {
       const consumers = (await api.list("taskinstances")).filter(r => r.metadata.uid !== instance.metadata.uid &&
-        !["Completed", "Archived"].includes(r.status?.phase) && r.spec.reuseSources?.some((s: any) => s.taskId === instance.spec.taskId))
+        !["Completed", "Archived"].includes(r.status?.phase) && (r.spec.restoreFromTaskId === instance.spec.taskId || r.spec.reuseSources?.some((s: any) => s.taskId === instance.spec.taskId)))
       if (consumers.length) { await report("RetainedForConsumers", { reason: "Other revisions still reference stage snapshots" }); return }
       if (pvc) {
         if (!owned(pvc)) throw new Error("PVC ownership mismatch")
@@ -82,7 +82,7 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
   // after either deletion and still distinguish cleanup from accidental loss.
   if (instance.status?.archive && instance.status.archivedRun === instance.spec.run && instance.spec.archive?.cleanupOnCompletion) {
     const consumers = (await api.list("taskinstances")).filter(r => r.metadata.uid !== instance.metadata.uid &&
-      !["Completed", "Archived"].includes(r.status?.phase) && r.spec.reuseSources?.some((source: any) => source.taskId === instance.spec.taskId))
+      !["Completed", "Archived"].includes(r.status?.phase) && (r.spec.restoreFromTaskId === instance.spec.taskId || r.spec.reuseSources?.some((source: any) => source.taskId === instance.spec.taskId)))
     if (consumers.length) { await report("Archiving", { reason: "Waiting for active stage consumers before releasing the source volume" }); return }
     if (pod) { await api.remove("pods", pod); return }
     if (pvc) { if (!owned(pvc)) throw new Error("Archive cleanup volume identity mismatch"); await api.remove("persistentvolumeclaims", pvc); return }
@@ -91,6 +91,10 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
   if (instance.spec.desiredState === "Suspended") {
     if (pod) { await api.remove("pods", pod); await report("Suspending"); return }
     await report("Suspended"); return
+  }
+  const restoreConsumers = (await api.list("taskinstances")).filter(r => r.spec?.restoreFromTaskId === instance.spec.taskId && !["Completed", "Archived"].includes(r.status?.phase))
+  if (restoreConsumers.length && !pod && (instance.status?.observedRun !== instance.spec.run || instance.status?.phase === "WaitingForRestore" && instance.status?.reason === "Stopped workspace is pinned by repair consumers")) {
+    await report("WaitingForRestore", { reason: "Stopped workspace is pinned by repair consumers" }); return
   }
   if (!pvc) {
     if (instance.status?.volumeName && !(instance.status?.archive && instance.spec.run > instance.status.archive.run)) { await report("RecoveryRequired", { reason: "Previously allocated volume is missing" }); return }
@@ -115,10 +119,10 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
       if (!archive || archive.version !== 1 || archive.instanceId !== instance.metadata.uid || archive.run !== instance.spec.run || archive.file !== `run-${instance.spec.run}.tar.gz` || !/^[a-f0-9]{64}$/.test(archive.sha256)) {
         await report("RecoveryRequired", { reason: "Completion has no verified archive receipt; execution data retained" }); return
       }
-      await report("Archiving", { archive, archivedRun: instance.spec.run, result: { exitCode: details.exitCode, message: details.message } }); return
+      await report("Archiving", { archive, archivedRun: instance.spec.run, result: { exitCode: details.exitCode, message: details.message, codeSnapshot: JSON.parse(details.message).codeSnapshot, inputSnapshotDigest: JSON.parse(details.message).inputSnapshotDigest } }); return
     }
     await report(terminal === "Succeeded" ? "Completed" : terminal === "Failed" ? "Failed" : terminal === "Running" ? "Running" : "Starting",
-      { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "" } } : {}) })
+      { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "", ...(() => { try { const r = JSON.parse(details.message ?? "{}"); return { codeSnapshot: r.codeSnapshot, inputSnapshotDigest: r.inputSnapshotDigest } } catch { return {} } })() } } : {}) })
     return
   }
   if (instance.status?.observedRun === instance.spec.run && instance.status?.podUid) {
@@ -143,13 +147,25 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
     }
     sourceVolumes.push(sourceVolume.metadata.name); sourceArchives.push(null)
   }
-  let restoreSource: { claim: string; archive: WorkspaceArchive } | undefined
+  let restoreSource: { claim: string; archive?: WorkspaceArchive } | undefined
   if (instance.spec.restoreFromTaskId && !instance.status?.archive) {
     const source = await api.get("taskinstances", instanceName(instance.spec.restoreFromTaskId)) as TaskInstance | undefined
-    if (!source?.status?.archive || !source.spec.archive || !["Archived", "Archiving", "Completed"].includes(source.status.phase)) {
-      await report("WaitingForRestore", { reason: "Source task must have a durable completed archive" }); return
+    if (!source || source.metadata.deletionTimestamp || !["Suspended", "Failed", "Completed", "Archived", "Archiving"].includes(source.status?.phase)) {
+      await report("WaitingForRestore", { reason: "Source task must be stopped before restoring its workspace" }); return
     }
-    restoreSource = { claim: source.spec.archive.claimName, archive: source.status.archive }
+    if (source.status?.archive && source.spec.archive && source.status.archive.run === source.spec.run) {
+      restoreSource = { claim: source.spec.archive.claimName, archive: source.status.archive }
+    } else {
+      const sourcePod = await api.get("pods", names(source).pod)
+      const sourceVolume = await api.get("persistentvolumeclaims", names(source).volume)
+      if (sourcePod && !["Succeeded", "Failed"].includes(sourcePod.status?.phase)) {
+        await report("WaitingForRestore", { reason: "Source worker termination is not confirmed" }); return
+      }
+      if (!sourceVolume || sourceVolume.metadata.labels?.[`${GROUP}/uid`] !== source.metadata.uid) {
+        await report("RecoveryRequired", { reason: "Stopped source workspace is missing or has changed identity" }); return
+      }
+      restoreSource = { claim: sourceVolume.metadata.name }
+    }
   }
   await api.create("pods", podFor(instance, sourceVolumes, sourceArchives, restoreSource))
 }

@@ -44,7 +44,7 @@ test("context is compiled from the graph, not from conversation history", (t) =>
   assert.equal(context.inputArtifacts[0]!.name, "MatchArchitecture")
   assert.equal(context.contracts[0]!.contractId, contract.id)
   assert.equal(context.contracts[0]!.role, "consumer")
-  assert.deepEqual(context.dependencies, [{ id: architecture.id, title: "Architecture", status: "verified" }])
+  assert.deepEqual(context.dependencies, [{ id: architecture.id, title: "Architecture", status: "stale" }])
   assert.equal(context.acceptanceCriteria.length, 1)
   const text = formatTaskContext(context)
   assert.ok(text.includes("특정 케이스 hack 금지"))

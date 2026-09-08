@@ -96,9 +96,10 @@ export class RevisionCoordinator {
         const attempt = this.store.currentAttempt(taskId)
         const reservation = this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_reservations'").get() &&
           this.store.db.prepare("SELECT 1 FROM task_reservations WHERE task_id=?").get(taskId)
-        if (keep.has(taskId) && !(reservation && ["failed", "blocked", "stale"].includes(task.status))) continue
+        const pendingInputStop = this.engine.signals.stops().some(s => s.taskId === taskId && s.token === attempt?.token && s.state === "requested")
+        if (keep.has(taskId) && !pendingInputStop && !(reservation && ["failed", "blocked", "stale"].includes(task.status))) continue
         this.store.setTaskVisibility(taskId, planId, true, true)
-        if (attempt?.state === "running" || task.status === "running" && !task.childIds.length || reservation) {
+        if (pendingInputStop || attempt?.state === "running" || task.status === "running" && !task.childIds.length || reservation) {
           const token = attempt?.token ?? randomUUID()
           if (attempt) this.store.saveAttempt({ ...attempt, state: "fenced" })
           if (!stops.has(taskId)) stops.set(taskId, { taskId, token, state: "requested" })
@@ -128,6 +129,8 @@ export class RevisionCoordinator {
     const plan = this.store.findWorkPlan(t.planId)!
     if (plan.currentRevision !== t.toVersion || this.store.activePlanVersion(plan.id) !== t.fromVersion) return
     const impact = this.analyze(plan.id, t.toVersion, t.fromVersion), context = this.context(plan.id, t.toVersion)
+    const priorDescendants = new Set(this.store.planLinks(plan.id, t.fromVersion).flatMap(l => [...this.engine.subtreeIds(l.taskId)]))
+    const repair = this.engine.feedback.list().find(i => i.planId === plan.id && i.repairRevision === t.toVersion)
     const createdTaskIds: string[] = []
     const root = plan.rootTaskId ? this.engine.requireTask(plan.rootTaskId) : this.engine.createTask({ title: plan.title, goal: context.goal })
     if (!plan.rootTaskId) createdTaskIds.push(root.id)
@@ -188,6 +191,36 @@ export class RevisionCoordinator {
       mapped.set(node.nodeId, task.id)
       this.store.insertPlanLink({ planId: plan.id, revision: t.toVersion, nodeId: node.nodeId, taskId: task.id, action: decision.action as PlanTaskLink["action"] })
     }
+    // Runtime decomposition is also durable work: preserve its responsibilities and
+    // workspace ancestry when replacing a planned group, not just the group label.
+    const priorPlanned = new Set(this.store.planLinks(plan.id, t.fromVersion).map(l => l.taskId))
+    const descendantMap = new Map<string, string>()
+    for (const decision of impact.decisions!) if (decision.priorTaskId && decision.action !== "exclude")
+      descendantMap.set(decision.priorTaskId, mapped.get(decision.nodeId)!)
+    const cloned: Array<{ prior: Task; taskId: string }> = []
+    const cloneChildren = (oldParent: string, newParent: string) => {
+      // Historical visibility was already changed, so read saved task identities directly.
+      const rows = this.store.db.prepare("SELECT id FROM tasks WHERE parent_id=?").all(oldParent)
+      for (const row of rows) {
+        const oldId = String(row.id)
+        if (priorPlanned.has(oldId) || !priorDescendants.has(oldId)) continue
+        const prior = this.engine.requireTask(oldId)
+        const next = this.engine.createTask({ title: prior.title, goal: prior.goal, category: prior.category, parentId: newParent,
+          acceptanceCriteria: prior.acceptanceCriteria, writeScopes: prior.writeScopes, assignedRole: prior.assignedRole,
+          integrationPolicy: prior.integrationPolicy, contextPolicy: prior.contextPolicy,
+          requirements: this.store.requirementsOf([oldId]).map(r => ({ description: r.description, kind: r.kind })) })
+        this.store.setTaskVisibility(next.id, plan.id, true)
+        descendantMap.set(oldId, next.id); cloned.push({ prior, taskId: next.id }); createdTaskIds.push(next.id)
+        this.store.db.prepare("INSERT INTO task_reuse_candidates VALUES(?,?)").run(next.id, JSON.stringify({ action: "replace",
+          sources: [{ taskId: oldId, task: prior, attempt: this.store.currentAttempt(oldId) }],
+          instruction: "Continue the prior responsibility and workspace; repair the reported cause or validate the current dependency versions." }))
+        cloneChildren(oldId, next.id)
+      }
+    }
+    for (const decision of impact.decisions!) if (decision.priorTaskId && ["replace", "revalidate"].includes(decision.action))
+      cloneChildren(decision.priorTaskId, mapped.get(decision.nodeId)!)
+    for (const { prior, taskId } of cloned) for (const dep of prior.dependencies)
+      this.store.addDependency(taskId, descendantMap.get(dep) ?? dep, new Date().toISOString())
     for (const node of nodes) {
       const id = mapped.get(node.nodeId)!
       this.store.db.prepare("DELETE FROM task_dependencies WHERE task_id=?").run(id)
@@ -205,15 +238,25 @@ export class RevisionCoordinator {
     for (const id of invalidGroups) {
       const group = this.engine.requireTask(id)
       this.store.updateTask({ ...group, status: "pending", outputArtifactRefs: [] })
-      for (const set of this.store.integrationSetsByParent(id)) this.store.db.prepare("INSERT OR IGNORE INTO plan_retired_integrations VALUES(?)").run(set.id)
+      for (const set of this.store.integrationSetsByParent(id)) if (!repair) this.store.db.prepare("INSERT OR IGNORE INTO plan_retired_integrations VALUES(?)").run(set.id)
     }
-    if (impact.changedNodeIds.length || impact.removedNodeIds.length || impact.addedNodeIds.length) {
+    if (!repair && (impact.changedNodeIds.length || impact.removedNodeIds.length || impact.addedNodeIds.length)) {
       for (const set of this.store.integrationSetsByParent(root.id)) this.store.db.prepare("INSERT OR IGNORE INTO plan_retired_integrations VALUES(?)").run(set.id)
+    }
+    if (repair) for (const setId of repair.integrationSetIds ?? []) {
+      const set = this.store.findIntegrationSet(setId)!
+      const priorLink = this.store.planLinks(plan.id, t.fromVersion).find(l => l.taskId === set.parentTaskId)
+      this.store.updateIntegrationSet({ ...set, parentTaskId: priorLink ? mapped.get(priorLink.nodeId) : set.parentTaskId,
+        status: "stale", outputBundleRef: undefined, updatedAt: new Date().toISOString() })
+      if (set.outputBundleRef) {
+        this.store.markBundleStale(set.outputBundleRef.artifactId, set.outputBundleRef.version)
+        this.store.markArtifactVersionStale(set.outputBundleRef.artifactId, set.outputBundleRef.version)
+      }
     }
     this.store.db.prepare("INSERT INTO plan_active_revisions VALUES(?,?) ON CONFLICT(plan_id) DO UPDATE SET version=excluded.version").run(plan.id, t.toVersion)
     this.store.updateWorkPlan({ ...plan, rootTaskId: root.id, goal: context.goal, state: "active", updatedAt: new Date().toISOString() })
-    for (const taskId of mapped.values()) this.engine.refreshReadiness(taskId)
-    for (const taskId of mapped.values()) this.engine.refreshAncestors(taskId)
+    for (const taskId of [...mapped.values(), ...cloned.map(c => c.taskId)]) this.engine.refreshReadiness(taskId)
+    for (const taskId of [...mapped.values(), ...cloned.map(c => c.taskId)]) this.engine.refreshAncestors(taskId)
     this.save({ ...t, state: "applied" })
     return { rootTaskId: root.id, createdTaskIds }
   }
@@ -227,15 +270,32 @@ export class RevisionCoordinator {
     if (candidate.action !== "revalidate" || candidate.sources.length !== 1) return false
     const source = candidate.sources[0]
     if (!["verified", "integrated"].includes(source.task.status) || !source.attempt) return false
-    const refs = task.dependencies.flatMap(id => this.engine.requireTask(id).outputArtifactRefs)
-    const signature = (values: Array<{ artifactId: string; version: number }>) => values.map(ref => {
-      const version = this.engine.requireArtifactVersion(ref), head = this.store.findArtifact(ref.artifactId)!
-      return [head.name, version.type, version.content === undefined ? [ref.artifactId, ref.version] : fingerprint(version.content), version.contractVersionRefs]
-    }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    const sourceEnvironment = this.store.db.prepare("SELECT digest FROM task_environments WHERE task_id=?").get(source.task.id)?.digest
+    const targetEnvironment = this.store.db.prepare("SELECT digest FROM task_environments WHERE task_id=?").get(taskId)?.digest
+    if (sourceEnvironment !== targetEnvironment) return false
+    const refs = this.engine.signals.capture(taskId).inputRefs
+    const allRefs = [...refs, ...source.attempt.inputRefs]
+    if (allRefs.some(ref => !this.engine.signals.signature(ref).reusable)) return false
+    const signature = (values: Array<{ artifactId: string; version: number }>) => values.map(ref => this.engine.signals.signature(ref).value)
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
     if (fingerprint(signature(refs)) !== fingerprint(signature(source.attempt.inputRefs))) return false
-    if (!source.task.outputArtifactRefs.every((r: any) => this.store.findArtifactVersion(r.artifactId, r.version)?.status === "valid")) return false
+    const outputs = source.task.outputArtifactRefs.map((r: any) => this.engine.requireArtifactVersion(r))
+    // Staleness from identical inputs can be discharged without another model run,
+    // but publish fresh lineage instead of making historical evidence current again.
+    if (outputs.some((v: any) => v.type === "bundle" || v.inputs.some((r: any) =>
+      !source.attempt.inputRefs.some((i: any) => i.artifactId === r.artifactId && i.version === r.version)))) return false
+    for (const output of outputs) {
+      const snapshot = this.engine.signals.code(output)
+      if (output.type === "code" && !snapshot) return false
+    }
     const started = this.engine.startTask(taskId, { agent: "verified-result-cache" })
-    this.store.updateTask({ ...started, outputArtifactRefs: source.task.outputArtifactRefs })
+    for (const output of outputs) {
+      const snapshot = this.engine.signals.code(output)
+      if (snapshot) this.engine.signals.attest(taskId, started.attemptToken!, snapshot)
+      this.engine.publishArtifact({ taskId, attemptToken: started.attemptToken,
+      name: this.store.findArtifact(output.artifactId)!.name, type: output.type, content: output.content, contentRef: output.contentRef,
+      inputs: refs, contractVersionRefs: output.contractVersionRefs })
+    }
     this.engine.completeTask({ taskId, attemptToken: started.attemptToken, summary: `Reused verified result from ${source.task.id}`,
       verification: { passed: true, evidence: `Previous verified attempt ${source.attempt.id}; identical effective specification and input content`, criteriaSatisfied: started.acceptanceCriteria.map(c => c.id) } })
     return true

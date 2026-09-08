@@ -95,7 +95,7 @@ export class TaskGraphStore {
   }
   insertPlanRevision(revision: PlanRevision, nodes: PlanNode[]): void {
     this.db.prepare("INSERT INTO plan_revisions (plan_id, version, state, summary, change_summary, approval_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(revision.planId, revision.version, revision.state, revision.summary, revision.changeSummary ?? null, revision.approval ? JSON.stringify(revision.approval) : null, revision.createdAt)
-    for (const node of nodes) this.db.prepare("INSERT INTO plan_revision_nodes (plan_id, revision, node_id, parent_node_id, label, stage, outcome, depends_on_json, research_track, task_spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(revision.planId, revision.version, node.nodeId, node.parentNodeId ?? null, node.label, node.stage, node.outcome, JSON.stringify(node.dependsOnNodeIds), node.researchTrack ?? null, JSON.stringify(node.taskSpec))
+    for (const node of nodes) this.db.prepare("INSERT INTO plan_revision_nodes (plan_id, revision, node_id, parent_node_id, label, stage, outcome, depends_on_json, research_track, task_spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(revision.planId, revision.version, node.nodeId, node.parentNodeId ?? null, node.label, node.stage, node.outcome, JSON.stringify(node.dependsOnNodeIds ?? []), node.researchTrack ?? null, JSON.stringify(node.taskSpec))
   }
   updatePlanRevision(revision: PlanRevision): void {
     this.db.prepare("UPDATE plan_revisions SET state=?, summary=?, change_summary=?, approval_json=? WHERE plan_id=? AND version=?").run(revision.state, revision.summary, revision.changeSummary ?? null, revision.approval ? JSON.stringify(revision.approval) : null, revision.planId, revision.version)
@@ -577,6 +577,14 @@ export class TaskGraphStore {
 
   private migrate(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS task_input_signals(task_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_input_stops(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_input_snapshots(attempt_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_output_snapshots(task_id TEXT NOT NULL, token TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(task_id,token));
+      CREATE TABLE IF NOT EXISTS artifact_code_snapshots(artifact_id TEXT NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(artifact_id,version));
+      CREATE TABLE IF NOT EXISTS task_environments(task_id TEXT PRIMARY KEY, digest TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_pending_results(task_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_issues(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS task_write_scopes (task_id TEXT PRIMARY KEY, scopes TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS plan_active_revisions(plan_id TEXT PRIMARY KEY, version INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS plan_revision_context(plan_id TEXT NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(plan_id,version));

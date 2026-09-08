@@ -1,5 +1,6 @@
+import { snapshotCode, type CodeSnapshot } from "../../task-snapshots/src/index.ts"
 import { spawn, type ChildProcess } from "node:child_process"
-import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, appendFileSync, rmSync } from "node:fs"
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, appendFileSync, rmSync, cpSync, readdirSync } from "node:fs"
 import { resolve, dirname } from "node:path"
 import { createHash } from "node:crypto"
 import { validateSpec, type InstanceSpec } from "./types.ts"
@@ -36,16 +37,31 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     }
     atomicJson(resolve(directory, "restored.json"), restore)
   }
+  const stoppedSource = process.env.TASK_RESTORE_DIRECTORY
+  if (stoppedSource && !existsSync(resolve(directory, "restored.json"))) {
+    if (!spec.restoreFromTaskId) throw new Error("Stopped workspace restoration requires a source task")
+    mkdirSync(directory, { recursive: true })
+    // Retry a partial copy from the same read-only, stopped source. Never alter its files.
+    for (const entry of readdirSync(directory)) rmSync(resolve(directory, entry), { recursive: true, force: true })
+    for (const entry of readdirSync(stoppedSource)) if (entry !== "restored.json")
+      cpSync(resolve(stoppedSource, entry), resolve(directory, entry), { recursive: true, verbatimSymlinks: true })
+    const history = resolve(directory, "history", `source-${spec.restoreFromTaskId}`)
+    mkdirSync(history, { recursive: true })
+    for (const file of ["checkpoint.json", "initialized.json", "resume.json", "termination.json"]) if (existsSync(resolve(directory, file))) renameSync(resolve(directory, file), resolve(history, file))
+    atomicJson(resolve(directory, "restored.json"), { sourceTaskId: spec.restoreFromTaskId })
+  }
+  let codeSnapshot: CodeSnapshot | undefined
   let savedArchive: WorkspaceArchive | undefined
   mkdirSync(directory, { recursive: true })
   mkdirSync(resolve(directory, "home"), { recursive: true })
   const workspace = resolve(directory, "workspace")
   const checkpointPath = resolve(directory, "checkpoint.json")
-  const identity = createHash("sha256").update(JSON.stringify([instanceId, spec.taskId, spec.image, spec.repository, spec.stages])).digest("hex")
+  const identity = createHash("sha256").update(JSON.stringify([instanceId, spec.taskId, spec.image, spec.repository, spec.stages, spec.inputSnapshot])).digest("hex")
   const checkpoint: Checkpoint = existsSync(checkpointPath) ? JSON.parse(readFileSync(checkpointPath, "utf8")) :
     { version: 1, identity, completed: [], state: "Starting", attempts: {}, updated: "" }
   if (checkpoint.identity !== identity) throw new Error("Saved workspace does not match immutable task execution specification")
   checkpoint.resultKeys ??= {}; checkpoint.reused ??= {}
+  const inputSources: Array<{ taskId: string; hash: string; path: string }> = []
   let child: ChildProcess | undefined, stopping = false
   const save = () => { checkpoint.updated = new Date().toISOString(); atomicJson(checkpointPath, checkpoint) }
   let force: ReturnType<typeof setTimeout> | undefined
@@ -64,7 +80,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     if (stopping) return done(143)
     child = spawn(command[0]!, command.slice(1), { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"], env: {
       ...process.env, HOME: resolve(directory, "home"), TASK_ID: spec.taskId,
-      TASK_CHECKPOINT: checkpointPath, TASK_RESUME_CONTEXT: resolve(directory, "resume.json"),
+      TASK_INPUT_SOURCES: JSON.stringify(inputSources), TASK_INPUT_SNAPSHOT: JSON.stringify(spec.inputSnapshot ?? {}), TASK_CHECKPOINT: checkpointPath, TASK_RESUME_CONTEXT: resolve(directory, "resume.json"),
     } })
     child.stdout?.on("data", chunk => { appendFileSync(resolve(directory, "execution.log"), chunk); process.stdout.write(chunk) })
     child.stderr?.on("data", chunk => { appendFileSync(resolve(directory, "execution.log"), chunk); process.stderr.write(chunk) })
@@ -83,6 +99,13 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
       const target = resolve(directory, `reuse-source-${index}`)
       await restoreWorkspace(target, `/reuse/${index}`, archive)
       sourceDirectories[index] = target
+    }
+    for (const source of spec.inputSnapshot?.sources ?? []) {
+      const index = (spec.reuseSources ?? []).findIndex(s => s.taskId === source.taskId)
+      if (index < 0) throw new Error("Pinned source workspace is not mounted")
+      const path = resolve(sourceDirectories[index] ?? `/reuse/${index}`, "workspace")
+      if (snapshotCode(path).hash !== source.hash) throw new Error("Pulled files do not match the pinned source hash")
+      inputSources.push({ ...source, path })
     }
     for (const stage of spec.stages) {
       if (checkpoint.completed.includes(stage.id)) continue
@@ -114,6 +137,10 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
       checkpoint.completed.push(stage.id); delete checkpoint.active; save()
     }
     for (const [index, archive] of reuseArchives.entries()) if (archive) rmSync(resolve(directory, `reuse-source-${index}`), { recursive: true, force: true })
+    if (!stopping) {
+      codeSnapshot = snapshotCode(workspace)
+      atomicJson(resolve(directory, "source-snapshot.json"), codeSnapshot)
+    }
     checkpoint.state = stopping ? "Suspended" : "Completed"; save()
     if (!stopping && spec.archive?.cleanupOnCompletion) savedArchive = await saveWorkspace(directory, archiveRoot, instanceId, spec.run)
     return stopping ? 143 : 0
@@ -124,6 +151,6 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     process.off("SIGTERM", stop); process.off("SIGINT", stop)
     // Kubernetes bind-mounts this individual file; replacing it with rename yields EBUSY.
     writeFileSync(process.env.TASK_TERMINATION_MESSAGE ?? resolve(directory, "termination.json"),
-      JSON.stringify({ state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused, ...(savedArchive ? { archive: savedArchive } : {}) }) + "\n")
+      JSON.stringify({ codeSnapshot, inputSnapshotDigest: spec.inputSnapshot?.digest, state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused, ...(savedArchive ? { archive: savedArchive } : {}) }) + "\n")
   }
 }

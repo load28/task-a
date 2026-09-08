@@ -1,3 +1,5 @@
+import { advanceInputSignals } from "../../task-instances/src/transitions.ts"
+import type { IssueReport, IssueRoute, TaskIssue } from "../../task-engine/src/feedback.ts"
 import type { ArtifactVersion, Learning, Requirement, Role, Task, TaskContract } from "#task-domain"
 import type {
   CompleteTaskInput,
@@ -45,6 +47,12 @@ export interface OrchestrationRunner {
 }
 
 export interface TaskAgent {
+  signalStatus(): Promise<unknown>
+  reconcileSignals(): Promise<unknown>
+  reportIssue(input: IssueReport): Promise<TaskIssue>
+  routeIssue(input: IssueRoute): Promise<TaskIssue>
+  listIssues(input: { rootTaskId?: string }): Promise<TaskIssue[]>
+  resolveIssue(input: { issueId: string; evidence: string }): Promise<TaskIssue>
   createTask(input: CreateTaskInput): Promise<Task>
   searchTasks(input: { query: string; limit?: number }): Promise<Task[]>
   loadTask(input: { taskId: string }): Promise<TaskLoadResult>
@@ -80,6 +88,13 @@ export class TaskAgentService implements TaskAgent {
     this.integration = integration
     this.orchestrator = orchestrator
   }
+
+  async signalStatus() { return { signals: this.engine.signals.list(), stops: this.engine.signals.stops() } }
+  async reconcileSignals() { return advanceInputSignals(this.engine) }
+  async reportIssue(input: IssueReport) { return this.engine.feedback.report(input) }
+  async routeIssue(input: IssueRoute) { return this.engine.feedback.route(input) }
+  async listIssues(input: { rootTaskId?: string }) { return this.engine.feedback.list(input.rootTaskId) }
+  async resolveIssue(input: { issueId: string; evidence: string }) { return this.engine.feedback.resolve(input.issueId, input.evidence) }
 
   attachOrchestrator(orchestrator: OrchestrationRunner): void {
     this.orchestrator = orchestrator
@@ -216,6 +231,8 @@ export class TaskAgentService implements TaskAgent {
 }
 
 export const OPERATIONS = [
+  "task_signal_status", "task_signal_reconcile",
+  "task_issue_report", "task_issue_route", "task_issue_list", "task_issue_resolve",
   "task_create",
   "task_search",
   "task_load",
@@ -243,6 +260,12 @@ export const OPERATIONS = [
 
 export async function dispatchOperation(agent: TaskAgent, operation: string, input: Record<string, any>): Promise<unknown> {
   switch (operation) {
+    case "task_signal_status": return agent.signalStatus()
+    case "task_signal_reconcile": return agent.reconcileSignals()
+    case "task_issue_report": return agent.reportIssue(input as IssueReport)
+    case "task_issue_route": return agent.routeIssue(input as IssueRoute)
+    case "task_issue_list": return agent.listIssues(input)
+    case "task_issue_resolve": return agent.resolveIssue(input as { issueId: string; evidence: string })
     case "task_create":
       return agent.createTask(input as Parameters<TaskAgent["createTask"]>[0])
     case "task_search":

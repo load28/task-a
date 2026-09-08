@@ -45,7 +45,7 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string, pinned
   return engine.atomic(() => {
     const store = engine.store
     const attempt = store.currentAttempt(taskId)
-    if (pinned && attempt?.state === "running" && attempt.snapshot) return structuredClone(attempt.snapshot) as TaskContext
+    if (pinned && attempt && ["running", "fenced"].includes(attempt.state) && attempt.snapshot) return structuredClone(attempt.snapshot) as TaskContext
     const task = engine.requireTask(taskId)
     const policy = task.contextPolicy
     const ancestors = engine.ancestorsOf(taskId)
@@ -63,7 +63,7 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string, pinned
       .filter((requirement) => requirement.kind === "constraint" && (policy.inheritConstraints || requirement.taskId === taskId))
       .map((requirement) => requirement.description)
 
-    const dependencies = task.dependencies.map((id) => engine.requireTask(id))
+    const dependencies = engine.signals.dependencies(taskId).map((id) => engine.requireTask(id))
     const inputArtifacts: ContextArtifact[] = []
     const verifiedBundles: ContextArtifact[] = []
     const seenInputs = new Set<string>()
@@ -84,7 +84,10 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string, pinned
       })
     }
     if (policy.inheritArtifacts !== "none") {
-      const candidateRefs: ArtifactVersionRef[] = [...task.inputArtifactRefs]
+      const candidateRefs: ArtifactVersionRef[] = task.inputArtifactRefs.map((ref) => ({
+        artifactId: ref.artifactId,
+        version: store.findArtifact(ref.artifactId)!.latestVersion,
+      }))
       for (const dependency of dependencies) {
         for (const output of dependency.outputArtifactRefs) {
           const latest = store.findArtifactVersion(output.artifactId, output.version)
@@ -198,6 +201,7 @@ export function buildTaskContext(engine: TaskGraphEngine, taskId: string, pinned
       context.reuse = { instruction: data.instruction, sources: data.sources.map((s: any) => ({ taskId: s.taskId, goal: s.task.goal,
         outputs: s.task.outputArtifactRefs, attemptId: s.attempt?.id })) }
     }
+    for (const issue of engine.feedback.context(taskId)) context.knownFailures.push(JSON.stringify({ issueId: issue.id, summary: issue.summary, evidence: issue.evidence, cause: issue.cause, instruction: "Repair at the recorded producer; preserve prior work and validate the new exact dependency versions before resolving." }))
     return context
   })
 }
