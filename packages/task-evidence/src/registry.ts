@@ -93,8 +93,12 @@ export class ValidatorRegistry {
         })
       } catch(error) {
         this.store.atomic(()=>{
-          this.store.db.prepare("UPDATE validation_jobs SET state='failed',payload=? WHERE id=? AND token=?").run(canonical({error:error instanceof Error?error.message:"Validator execution failed"}),selected.id,selected.token)
-          this.setFailed(selected.obligation)
+          const message=error instanceof Error?error.message:"Validator execution failed"
+          const changed=this.store.db.prepare("UPDATE validation_jobs SET state='failed',payload=? WHERE id=? AND token=? AND state='running'").run(canonical({error:message}),selected.id,selected.token)
+          if(changed.changes) {
+            this.setFailed(selected.obligation)
+            this.store.event({id:randomUUID(),type:"ValidatorExecutionFailed",entityId:selected.obligation.entityId,correlationId:selected.obligation.entityId,schemaVersion:1,timestamp:Date.now(),payload:{jobId:selected.id,obligationId:selected.obligation.id,error:message}})
+          }
         })
         results.push({jobId:selected.id,state:"failed"})
       }

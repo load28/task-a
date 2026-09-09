@@ -12,6 +12,9 @@ import { canonical, digest } from "./value.ts"
 import { controlCompletionMissing } from "./completion.ts"
 import { LocalRepairs } from "./local-repairs.ts"
 import { AdmissionBudgetUnavailableError } from "./admission.ts"
+import { INTEGRATION_DIMENSIONS } from "../../task-evidence/src/integration.ts"
+import { selectWorkerPrecision } from "./worker-precision.ts"
+import { SpecialistQuestions } from "./specialist-questions.ts"
 import { WorkerQuestions } from "./worker-questions.ts"
 import { RequestQuestions } from "./request-questions.ts"
 import { RegionalRepairs } from "./regional-repairs.ts"
@@ -24,9 +27,13 @@ export interface ControllerProgram {
   planValidators:string[]; observationValidators:string[]; predictionPolicy:PredictionPolicy
   readScopes:string[]; writeScopes:string[]; maxTasks:number; grantLifetimeMs:number
   account:string; tokenLimit:number
+  workerPrecision?:{profiles:ReasoningProfile[];failureThresholds:Array<{minimumFailures:number;profileId:string}>}
+  adversarialValidator?:string
+  integrationValidators?:Record<typeof INTEGRATION_DIMENSIONS[number],string>
+  fileObservation?:{maxFiles:number;maxBytes:number}
   maxClarifications?:number
   maxLocalRepairs?:number
-  replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number}
+  replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number;selection?:{validator:string;candidateLimit:number;evaluationBudget:number;costUnit:string}}
 }
 type Expected = Omit<TaskExpectation,"id"|"version"|"taskId"|"specHash"|"evidence">
 export interface ProposedTask { node:PlanNode; expectation:Expected }
@@ -48,6 +55,7 @@ export class RequestController {
   readonly regional:RegionalRepairs
   readonly questions:RequestQuestions
   readonly workerQuestions:WorkerQuestions
+  readonly specialistQuestions:SpecialistQuestions
   constructor(runtime:ControlRuntime) {
     this.runtime=runtime
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS control_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,task_id TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL);
@@ -56,14 +64,20 @@ export class RequestController {
     this.store.db.exec("CREATE TABLE IF NOT EXISTS request_plan_admissions(plan_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,state TEXT NOT NULL)")
     this.questions=new RequestQuestions(this)
     this.workerQuestions=new WorkerQuestions(this)
+    this.specialistQuestions=new SpecialistQuestions(this)
     this.repairs=new LocalRepairs(this)
     this.regional=new RegionalRepairs(this)
   }
   get store(){return this.runtime.store}
   register(program:ControllerProgram):void {
+    if(program.fileObservation&&![program.fileObservation.maxFiles,program.fileObservation.maxBytes].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Native input observation needs explicit finite budgets")
     if(program.maxClarifications!==undefined&&(!Number.isSafeInteger(program.maxClarifications)||program.maxClarifications<0))throw new Error("Clarification quota must be explicit and nonnegative")
     if(program.maxLocalRepairs!==undefined&&(!Number.isSafeInteger(program.maxLocalRepairs)||program.maxLocalRepairs<0))throw new Error("Local repair quota must be explicit and nonnegative")
     if(program.replanner&&(!Number.isSafeInteger(program.replanner.maxAttempts)||program.replanner.maxAttempts<1||!program.replanner.validators.length||program.maxLocalRepairs===undefined))throw new Error("Regional repair requires explicit local/region quotas and validators")
+    if(program.replanner?.selection) {
+      const selection=program.replanner.selection
+      if(!selection.costUnit||![selection.candidateLimit,selection.evaluationBudget].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Region selection requires explicit finite budgets and a common cost unit")
+    }
     validatePredictionPolicy(program.predictionPolicy)
     if(!program.id||!Number.isSafeInteger(program.version)||program.version<1||!program.authorization.length||!program.planValidators.length||!program.observationValidators.length||!program.account||!Number.isSafeInteger(program.tokenLimit)||program.tokenLimit<1||!Number.isSafeInteger(program.maxTasks)||program.maxTasks<1||!Number.isSafeInteger(program.grantLifetimeMs)||program.grantLifetimeMs<1)throw new Error("Incomplete controller program")
     if([...program.readScopes,...program.writeScopes].some(scope=>!validScope(scope)))throw new Error("Invalid program file scope")
@@ -77,7 +91,22 @@ export class RequestController {
       if(!role||role.lifecycle==="candidate"||role.allowedTools.some(tool=>!allowedTools.has(tool)))throw new Error("Request role exceeds the cognitive gateway")
       if(program.specialists?.includes(entry)&&(role.allowedTools.includes("task_graph_cognitive_write")||!role.validators.length))throw new Error("Specialists require read-only capabilities and independent result validators")
     }
-    for(const validator of [...program.planValidators,...program.observationValidators,...(program.replanner?.validators??[]),...(program.specialists??[]).flatMap(entry=>this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!.validators)]) {
+    for(const entry of [program.planner,...(program.specialists??[]),...(program.replanner?[program.replanner]:[])])if(entry.profile.level===5)throw new Error("L5 execution currently requires the worker adversarial protocol")
+    const workerProfiles=[program.worker.profile,...(program.workerPrecision?.profiles??[])]
+    if(program.workerPrecision) {
+      const {profiles,failureThresholds}=program.workerPrecision
+      if(!profiles.length||!failureThresholds.length||new Set(profiles.map(profile=>profile.id)).size!==profiles.length)throw new Error("Adaptive precision needs unique registered profiles and explicit thresholds")
+      let count=0,level=program.worker.profile.level
+      for(const threshold of failureThresholds) {
+        const profile=profiles.find(profile=>profile.id===threshold.profileId)
+        if(!profile||!Number.isSafeInteger(threshold.minimumFailures)||threshold.minimumFailures<=count||profile.level<level)throw new Error("Precision escalation must preserve increasing failure thresholds and nondecreasing levels")
+        count=threshold.minimumFailures;level=profile.level
+      }
+      for(const profile of profiles){validateProfile(profile);if(profile.level<2)throw new Error("Adaptive worker execution needs a supported model profile")}
+    }
+    if(workerProfiles.some(profile=>profile.level===5&&(!program.adversarialValidator||profile.independentRoles.some(id=>!program.specialists?.some(entry=>entry.role.id===id&&entry.profile.level<5)))))throw new Error("L5 requires separately registered read-only reviewers and a joint validator")
+    if(program.integrationValidators&&INTEGRATION_DIMENSIONS.some(dimension=>!program.integrationValidators![dimension]))throw new Error("Integration policy requires all seven dimensions")
+    for(const validator of [...(program.adversarialValidator?[program.adversarialValidator]:[]),...(program.replanner?.selection?[program.replanner.selection.validator]:[]),...Object.values(program.integrationValidators??{}),...program.planValidators,...program.observationValidators,...(program.replanner?.validators??[]),...(program.specialists??[]).flatMap(entry=>this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!.validators)]) {
       const match=/^([a-z][a-z0-9-]*)\/v([1-9][0-9]*)$/.exec(validator)
       const spec=match&&this.store.get<{output?:string}>("validator_versions",match[1]!,Number(match[2]))
       if(!spec||program.observationValidators.includes(validator)&&spec.output!=="semantic-state")throw new Error("Program needs registered validators")
@@ -157,6 +186,7 @@ export class RequestController {
         const question=this.questions.get(request.clarifications!.at(-1)!.questionId)!
         if(question.target) {
           if(question.target.kind==="regional")this.regional.resume(request,program,question)
+          else if(question.target.kind==="specialist") {if(!this.specialistQuestions.resume(request,program,question))return}
           else if(!this.workerQuestions.resume(request,program,question))return
           request.state="executing";delete request.reason;this.save(request);return
         }
@@ -205,6 +235,7 @@ export class RequestController {
         if(engine.store.childTasks(link.taskId).length)continue
         this.runtime.pinExpectation({...proposed.expectation,id:link.taskId,taskId:link.taskId,version:1,specHash:engine.signals.capture(link.taskId).specHash,evidence:obligation.evidence},program.predictionPolicy,program.observationValidators)
       }
+      this.registerIntegration(request,program)
       request.state="executing";this.save(request)
     }
     if(request.state==="executing") {
@@ -212,8 +243,9 @@ export class RequestController {
       for(const id of this.tasks(request.id)) {
         const task=engine.requireTask(id)
         if(engine.store.childTasks(id).length)continue
-        if(this.workerQuestions.advance(request,program,id))return
-        for(const run of this.store.db.prepare("SELECT r.payload FROM agent_runs r JOIN activation_grants g ON g.id=r.grant_id WHERE r.task_id=? AND r.state='completed' AND json_extract(g.payload,'$.executionMode')='cognition'").all(id)) {
+        if(this.workerQuestions.advance(request,program,id)||this.specialistQuestions.advance(request,program,id))return
+        for(const run of this.store.db.prepare("SELECT r.grant_id,r.payload FROM agent_runs r JOIN activation_grants g ON g.id=r.grant_id WHERE r.task_id=? AND r.state='completed' AND json_extract(g.payload,'$.executionMode')='cognition'").all(id)) {
+          if(this.specialistQuestions.superseded(String(run.grant_id)))continue
           const output=JSON.parse(String(run.payload)).output as AgentOutput
           if(output.requiresEscalation||output.unresolvedQuestions.length)throw new Error("Specialist left unresolved questions; scoped escalation evidence is required")
         }
@@ -227,6 +259,13 @@ export class RequestController {
         this.finish(request)
       }
     }
+  }
+  registerIntegration(request:ControlledRequest,program:ControllerProgram):void {
+    if(!program.integrationValidators||!request.planId)return
+    const members=this.tasks(request.id).filter(id=>!this.runtime.engine.store.childTasks(id).length)
+    if(!members.length)return
+    const id=`integration:${request.planId}`
+    this.runtime.boundaries.register({id,version:this.store.head("planning_boundaries",id)+1,members,exits:[],invariants:["All registered integration dimensions must pass for the exact current observation tuple"],bindingsComplete:false,validators:program.integrationValidators,authorization:program.authorization})
   }
   private finish(request:ControlledRequest):void {
     const content={requestId:request.id,planId:request.planId,tasks:this.tasks(request.id),planValidation:request.obligationId,planOnly:request.planOnly}
@@ -254,18 +293,19 @@ export class RequestController {
       if(!n.taskSpec.acceptanceCriteria?.length||n.taskSpec.acceptanceCriteria.some(c=>typeof c==="string"||!c.id||e.expectedBehavior[c.id]!==true))throw new Error("Acceptance criteria require stable IDs and expected behavior")
     }
   }
-  issueRepair(request:ControlledRequest,program:ControllerProgram,taskId:string,content:unknown,causeId:string):ActivationGrant {
-    return this.issue(request,program,taskId,"worker",content,causeId)
+  issueRepair(request:ControlledRequest,program:ControllerProgram,taskId:string,content:unknown,causeId:string,pinnedProfile?:ReasoningProfile):ActivationGrant {
+    return this.issue(request,program,taskId,"worker",content,causeId,pinnedProfile?{...program.worker,profile:pinnedProfile}:undefined)
   }
   issueReplanner(request:ControlledRequest,program:ControllerProgram,content:unknown,causeId:string,deadline?:number):ActivationGrant {
     return this.issue(request,program,request.taskId,"planner",content,causeId,program.replanner!,deadline)
   }
   private issue(request:ControlledRequest,program:ControllerProgram,taskId:string,kind:"planner"|"worker",content:unknown,causeId?:string,override?:ControllerProgram["planner"],deadline=Infinity):ActivationGrant {
-    const entry=override??program[kind],role=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
+    const precision=kind==="worker"&&!override&&program.workerPrecision?selectWorkerPrecision(this.store,program,taskId):undefined
+    const entry=override??(precision?{...program.worker,profile:precision.profile}:program[kind]),role=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
     const snapshot=this.runtime.engine.signals.capture(taskId)
     this.runtime.drain()
     const vector=[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
-    const context=controlledContext(this.runtime,taskId,role,program.policy,entry.profile,[{id:`request-context:${taskId}`,version:1,kind:"task",content:canonical(content),required:true,depth:0,relevance:1,level:0,dependencies:vector,path:[request.id,taskId],evidence:[request.evidence,...(request.clarifications??[]).flatMap(item=>[item.source,item.evidence])]},...(request.clarifications??[]).map(item=>({id:item.source.id,version:item.source.version,kind:"evidence" as const,content:canonical(this.runtime.evidence.require(item.source)),required:true,depth:0,relevance:1,level:0 as const,dependencies:vector,path:[request.id,taskId],evidence:[item.source,item.evidence]}))])
+    const context=controlledContext(this.runtime,taskId,role,program.policy,entry.profile,[{id:`request-context:${taskId}`,version:1,kind:"task",content:canonical(precision?{request:content,reasoningSelection:precision}:content),required:true,depth:0,relevance:1,level:0,dependencies:vector,path:[request.id,taskId],evidence:[request.evidence,...(request.clarifications??[]).flatMap(item=>[item.source,item.evidence])]},...(request.clarifications??[]).map(item=>({id:item.source.id,version:item.source.version,kind:"evidence" as const,content:canonical(this.runtime.evidence.require(item.source)),required:true,depth:0,relevance:1,level:0 as const,dependencies:vector,path:[request.id,taskId],evidence:[item.source,item.evidence]}))])
     this.store.put("context_manifests",context.id,1,context)
     // The primary role discharges explicit user work; no artificial risk/failure
     // signal is manufactured to cross an optional specialist threshold.

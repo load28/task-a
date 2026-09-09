@@ -62,6 +62,12 @@ test("Pod 파일 gateway는 live grant·CAS·scope·alias를 실제 파일에서
     await assert.rejects(gateway.execute("cognitive_write",{...input,authorizationCallId:"stale",content:"changed"}),/changed after read/)
     symlinkSync(join(dir,"output.txt"),join(dir,"alias.txt"))
     await assert.rejects(gateway.execute("cognitive_read",{...identity,authorizationCallId:"alias",path:"alias.txt"}),/alias/)
+    const read={...identity,authorizationCallId:"read",path:"output.txt"}
+    assert.equal((await gateway.execute("cognitive_read",read) as {content:string}).content,"actual")
+    await gateway.execute("cognitive_read",read)
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM observed_file_reads WHERE grant_id=?").get(grant.id)!.n,1)
+    await assert.rejects(client.request("/observe-read",{sessionId:"pod-session",callId:"read",path:"output.txt",hash:digest("forged")}),/identity conflict/)
+    await assert.rejects(client.request("/observe-read",{sessionId:"pod-session",callId:"missing",path:"output.txt",hash:digest("actual")}),/matching admitted/)
     r.control.admission.fence(grant.taskId)
     await assert.rejects(gateway.execute("cognitive_write",input),/fenced/)
     assert.equal(readFileSync(join(dir,"output.txt"),"utf8"),"actual")

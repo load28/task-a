@@ -75,7 +75,7 @@ export class GrantDispatcher {
   async recover():Promise<void> {
     for(const row of this.db.prepare("SELECT d.*,g.payload AS grant_payload,g.state AS grant_state FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE d.state IN ('dispatching','stopping')").all()) {
       const id=String(row.grant_id)
-      if(this.active.has(id))continue
+      if(this.active.has(id)&&row.grant_state!=="fenced")continue
       if(row.grant_state==="completed") {
         if(this.executor.completion&&!await this.executor.completion(id))continue
         this.save(id,"completed",{recoveredReceipt:true});continue

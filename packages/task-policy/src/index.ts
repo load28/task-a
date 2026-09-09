@@ -62,17 +62,30 @@ export class PolicyLearning {
       const proposal=this.store.get<PolicyProposal>("policy_proposals",evaluation.proposal.id,evaluation.proposal.version)
       if(!proposal)throw new Error("Unknown policy proposal")
       if(!evaluation.evidence.length||!evaluation.evidence.every(validEvidence))throw new Error("Evaluation needs actual evidence")
-      const priorVersion=this.store.head("policy_evaluations",proposal.id)
-      const prior=priorVersion?this.store.get<Evaluation>("policy_evaluations",proposal.id,priorVersion):undefined
+      unit(evaluation.qualityLowerBound,"Quality lower bound");unit(evaluation.missedCriticalUpperBound,"Missed critical upper bound")
+      unit(evaluation.confidenceWidth,"Confidence width");unit(gate.maxConfidenceWidth,"Maximum confidence width")
+      unit(gate.qualityFloor,"Quality floor");unit(gate.maxMissedCritical,"Maximum missed critical")
+      if(!Number.isSafeInteger(evaluation.effectiveSamples)||evaluation.effectiveSamples<0||!Number.isSafeInteger(gate.minimumSamples)||gate.minimumSamples<1)throw new Error("Invalid effective sample count")
+      for(const values of [evaluation.episodes,evaluation.holdoutEpisodes,evaluation.criticalStrata,gate.criticalStrata])if(new Set(values).size!==values.length||values.some(value=>!value.trim()))throw new Error("Duplicate or empty evaluation membership")
+      if(evaluation.episodes.some(value=>evaluation.holdoutEpisodes.includes(value)))throw new Error("Training/holdout episode leakage")
+      // Each immutable proposal version must complete its own lifecycle. Preserve
+      // existing legacy history, but never borrow another version's validation.
+      const legacyHead=this.store.head("policy_evaluations",proposal.id)
+      const legacy=legacyHead?this.store.get<Evaluation>("policy_evaluations",proposal.id,legacyHead):undefined
+      const lifecycleId=legacy&&digest(legacy.proposal)===digest(evaluation.proposal)?proposal.id:`proposal:${digest(evaluation.proposal)}`
+      const priorVersion=this.store.head("policy_evaluations",lifecycleId)
+      const prior=priorVersion?this.store.get<Evaluation & {evaluationGate?:EvaluationGate}>("policy_evaluations",lifecycleId,priorVersion):undefined
       const expected=prior?.stage==="shadow"?"validated":prior?.stage==="validated"?"active":"shadow"
       if(evaluation.stage!==expected||prior?.stage==="active")throw new Error("Policy lifecycle cannot skip stages")
+      if(prior&&(!prior.evaluationGate||digest(prior.evaluationGate)!==digest(gate)))throw new Error("Evaluation gates are frozen before shadow outcomes")
+      if(prior&&(digest(prior.episodes)!==digest(evaluation.episodes)||digest(prior.holdoutEpisodes)!==digest(evaluation.holdoutEpisodes)))throw new Error("Evaluation episode partitions are frozen before shadow outcomes")
       if(evaluation.stage!=="shadow") {
         if(evaluation.episodes.some(e=>evaluation.holdoutEpisodes.includes(e))||!evaluation.holdoutEpisodes.length)throw new Error("Training/holdout episode leakage")
         if(evaluation.effectiveSamples<gate.minimumSamples||evaluation.confidenceWidth>gate.maxConfidenceWidth||evaluation.usefulGainLowerBound<=0||evaluation.qualityLowerBound<gate.qualityFloor||evaluation.missedCriticalUpperBound>gate.maxMissedCritical||gate.criticalStrata.some(s=>!evaluation.criticalStrata.includes(s)))throw new Error("Policy has not met evidence and correctness gates")
       }
       if(evaluation.stage==="active"&&gate.requiresApproval&&!evaluation.authorized)throw new Error("Policy approval is required")
-      this.store.put("policy_evaluations",proposal.id,priorVersion+1,evaluation)
-      this.store.advance("policy_evaluations",proposal.id,priorVersion,priorVersion+1)
+      this.store.put("policy_evaluations",lifecycleId,priorVersion+1,{...evaluation,evaluationGate:gate})
+      this.store.advance("policy_evaluations",lifecycleId,priorVersion,priorVersion+1)
       if(evaluation.stage==="active") {
         this.store.put("policy_versions",proposal.id,proposal.version,proposal)
         this.store.db.prepare("INSERT INTO policy_heads VALUES(?,?,?) ON CONFLICT(target) DO UPDATE SET policy_id=excluded.policy_id,version=excluded.version").run(proposal.target,proposal.id,proposal.version)
@@ -80,12 +93,18 @@ export class PolicyLearning {
       }
     })
   }
-  rollback(target:PolicyTarget,ref:VersionRef,evidence:VersionRef[],validEvidence:(r:VersionRef)=>boolean):void {
+  head(target:PolicyTarget):{policy:VersionRef|null;revision:number} {
+    const row=this.store.db.prepare("SELECT policy_id,version FROM policy_heads WHERE target=?").get(target)
+    return {policy:row?{id:String(row.policy_id),version:Number(row.version)}:null,revision:Number(this.store.db.prepare("SELECT revision FROM policy_head_revisions WHERE target=?").get(target)?.revision??0)}
+  }
+  rollback(target:PolicyTarget,ref:VersionRef,evidence:VersionRef[],validEvidence:(r:VersionRef)=>boolean,expected?:{policy:VersionRef|null;revision:number}):void {
     this.store.atomic(()=>{
+      const previous=this.head(target)
+      if(expected&&digest(previous)!==digest(expected))throw new Error("Stale policy rollback head")
       const version=this.store.get<PolicyProposal>("policy_versions",ref.id,ref.version)
       if(!version||version.target!==target||!evidence.length||!evidence.every(validEvidence))throw new Error("Rollback requires a verified prior policy and evidence")
       this.store.db.prepare("INSERT INTO policy_heads VALUES(?,?,?) ON CONFLICT(target) DO UPDATE SET policy_id=excluded.policy_id,version=excluded.version").run(target,ref.id,ref.version)
-      this.store.event({id:randomUUID(),type:"PolicyRolledBack",entityId:target,correlationId:ref.id,schemaVersion:1,timestamp:Date.now(),payload:{ref,evidence}})
+      this.store.event({id:randomUUID(),type:"PolicyRolledBack",entityId:target,correlationId:ref.id,schemaVersion:1,timestamp:Date.now(),payload:{ref,evidence,previous}})
     })
   }
 }

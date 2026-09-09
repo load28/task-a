@@ -18,6 +18,18 @@ export function controlledContext(runtime:ControlRuntime,taskId:string,role:Role
   for(const decision of architectureDecisions)append(`architecture:${decision.artifactId}`,"history",decision,true,0,decision.version)
   for(const learning of learnings)append(`learning:${digest(learning)}`,"knowledge",{legacyHint:learning,validatedEvidence:false},false,0)
   for(const history of recentHistory??[])append(`history:${digest(history)}`,"history",history,false,0)
+  for(const row of runtime.store.db.prepare("SELECT id,version FROM assumption_task_consumers WHERE task_id=?").all(taskId)) {
+    const ref={id:String(row.id),version:Number(row.version)}
+    if(!runtime.assumptions.valid(ref))throw new ContextBudgetExceeded([`unvalidated assumption ${ref.id}@${ref.version}`])
+    const assumption=runtime.store.get<import("../../task-control/src/assumptions.ts").RegisteredAssumption>("assumptions",ref.id,ref.version)!
+    items.push({...ref,kind:"assumption",content:canonical(assumption),required:true,depth:0,relevance:1,level:0,dependencies:[...dependencies,{entityId:ref.id,port:"proposition",view:"assumption",version:ref.version,hash:digest(assumption)}],path:[taskId,ref.id],evidence:assumption.evidence})
+  }
+  for(const row of runtime.store.db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(taskId)) {
+    const ref={id:String(row.id),version:Number(row.version)}
+    if(!runtime.decisions.valid(ref))throw new ContextBudgetExceeded([`unvalidated decision ${ref.id}@${ref.version}`])
+    const decision=runtime.store.get<import("../../task-control/src/decisions.ts").RegisteredDecision>("decision_versions",ref.id,ref.version)!
+    items.push({...ref,kind:"decision",content:canonical(decision),required:true,depth:0,relevance:1,level:0,dependencies:[...dependencies,{entityId:ref.id,port:"conclusion",view:"decision",version:ref.version,hash:digest(decision)}],path:[taskId,ref.id],evidence:decision.evidence})
+  }
   for(const selector of role.requiredContext) {
     if(!Number.isSafeInteger(selector.depth)||selector.depth<0||!Array.isArray(selector.ports)||!RELATIONS.includes(selector.relation as typeof RELATIONS[number]))throw new Error("Invalid role context selector")
     let frontier=[taskId];const visited=new Set(frontier)

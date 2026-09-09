@@ -5,8 +5,8 @@ import { canonical, digest } from "./value.ts"
 
 export interface RequestQuestion {
   id:string;requestId:string;sessionId:string;grantId:string;questions:string[]
-  target?:{kind:"regional";repairId:string}|{kind:"worker";taskId:string;attemptId:string;expectationVersion:number}
-  state:"pending"|"answered"|"cancelled";source:VersionRef;answers?:string[][];evidence?:VersionRef
+  target?:{kind:"specialist";taskId:string;decisionId:string}|{kind:"regional";repairId:string}|{kind:"worker";taskId:string;attemptId:string;expectationVersion:number}
+  state:"pending"|"answered"|"cancelled"|"superseded";source:VersionRef;answers?:string[][];evidence?:VersionRef
 }
 
 /** User clarification is evidence for a new bounded decision, never permission
@@ -69,6 +69,8 @@ export class RequestQuestions {
   assertCurrent(request:ControlledRequest,id:string):ActivationGrant {
     const question=this.get(id),controller=this.controller
     if(!question||question.requestId!==request.id)throw new Error("Question refers to stale planning inputs")
+    controller.runtime.files.assertObservedReadsCurrent(question.grantId)
+    if(question.target?.kind==="specialist")return controller.specialistQuestions.assertQuestion(request,question)
     if(question.target?.kind==="worker")return controller.workerQuestions.assertQuestion(request,question)
     if(question.target?.kind==="regional")controller.regional.assertQuestion(request,question)
     else if(question.grantId!==request.plannerGrant)throw new Error("Question refers to stale planning inputs")
@@ -77,6 +79,23 @@ export class RequestQuestions {
     const snapshot=controller.runtime.engine.signals.capture(request.taskId)
     if(row?.state!=="completed"||!grant||grant.specHash!==snapshot.specHash||grant.inputVector[0]?.hash!==snapshot.digest)throw new Error("Question refers to stale planning inputs")
     return grant
+  }
+  history(requestId:string):RequestQuestion[] {
+    return this.controller.store.db.prepare("SELECT payload FROM request_questions WHERE request_id=? ORDER BY rowid").all(requestId).map(row=>JSON.parse(String(row.payload)))
+  }
+  supersedeForChange(requestId:string,causeId:string):void {
+    const request=this.controller.get(requestId)
+    if(!request?.planId||!["waiting","resuming"].includes(request.state)||!request.program)return
+    const program=this.controller.store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version)
+    if(!program?.replanner)return
+    const questions=this.history(requestId).filter(question=>question.state==="pending"||request.state==="resuming"&&question.state==="answered"&&question.id===request.clarifications?.at(-1)?.questionId)
+    if(!questions.length)return
+    for(const question of questions) {
+      question.state="superseded";this.save(question)
+      this.controller.store.event({id:`question-superseded:${question.id}`,type:"RequestQuestionSuperseded",entityId:request.taskId,correlationId:request.id,causationId:causeId,schemaVersion:1,timestamp:Date.now(),payload:{questionId:question.id,causeId,source:question.source,answer:question.evidence??null}})
+    }
+    request.state="executing";delete request.reason
+    this.controller.store.db.prepare("UPDATE control_requests SET state=?,payload=? WHERE id=?").run(request.state,canonical(request),request.id)
   }
   cancel(requestId:string):void {
     for(const question of this.pending(requestId)){question.state="cancelled";this.save(question)}

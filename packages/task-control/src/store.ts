@@ -6,7 +6,7 @@ export interface SystemEvent {
   id: string; type: string; entityId: string; timestamp: number; payload: unknown
   causationId?: string; correlationId: string; schemaVersion: 1
 }
-export const COLLECTIONS = ["evidence_versions", "decision_versions", "assumptions", "task_expectations", "task_observations", "prediction_errors", "planning_boundaries", "boundary_proofs", "role_versions", "policy_versions", "signal_snapshots", "context_manifests", "cognitive_records", "routine_versions", "policy_proposals", "policy_evaluations", "outcome_labels", "replan_regions", "replan_leases", "validator_versions", "controller_programs"] as const
+export const COLLECTIONS = ["evidence_versions", "decision_versions", "assumptions", "task_expectations", "task_observations", "prediction_errors", "planning_boundaries", "boundary_proofs", "role_versions", "policy_versions", "signal_snapshots", "context_manifests", "cognitive_records", "routine_versions", "policy_proposals", "policy_evaluations", "policy_replay_frames", "policy_shadow_trials", "policy_shadow_predictions", "policy_regression_watches", "outcome_labels", "replan_regions", "replan_leases", "validator_versions", "controller_programs"] as const
 export type Collection = typeof COLLECTIONS[number]
 
 /** Every writer uses the graph connection; nested graph transactions remain atomic. */
@@ -31,6 +31,12 @@ export class ControlStore {
         CREATE TABLE IF NOT EXISTS cognitive_dependencies(record_id TEXT NOT NULL,record_version INTEGER NOT NULL,entity_id TEXT NOT NULL,port TEXT NOT NULL,view TEXT NOT NULL,version INTEGER NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(record_id,record_version,entity_id,port,view));
         CREATE INDEX IF NOT EXISTS cognitive_consumers ON cognitive_dependencies(entity_id,port,view);
         CREATE TABLE IF NOT EXISTS cognitive_invalidations(record_id TEXT NOT NULL,record_version INTEGER NOT NULL,event_id TEXT NOT NULL,PRIMARY KEY(record_id,record_version,event_id));
+        CREATE TABLE IF NOT EXISTS evidence_retractions(id TEXT NOT NULL,version INTEGER NOT NULL,event_id TEXT NOT NULL,PRIMARY KEY(id,version));
+        CREATE TABLE IF NOT EXISTS evidence_expirations(id TEXT NOT NULL,version INTEGER NOT NULL,expires_at INTEGER NOT NULL,emitted INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(id,version));
+        CREATE INDEX IF NOT EXISTS evidence_expiration_queue ON evidence_expirations(emitted,expires_at);
+        CREATE TABLE IF NOT EXISTS cognitive_references(record_id TEXT NOT NULL,record_version INTEGER NOT NULL,kind TEXT NOT NULL,ref_id TEXT NOT NULL,ref_version INTEGER NOT NULL,PRIMARY KEY(record_id,record_version,kind,ref_id,ref_version));
+        CREATE INDEX IF NOT EXISTS cognitive_reference_consumers ON cognitive_references(kind,ref_id,ref_version);
+        CREATE TABLE IF NOT EXISTS cognitive_retired_references(kind TEXT NOT NULL,ref_id TEXT NOT NULL,ref_version INTEGER NOT NULL,event_id TEXT NOT NULL,PRIMARY KEY(kind,ref_id,ref_version));
         CREATE TABLE IF NOT EXISTS validation_obligations(id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,tuple_hash TEXT NOT NULL,mandatory INTEGER NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS unresolved_obligations ON validation_obligations(entity_id,state);
         CREATE TABLE IF NOT EXISTS activation_decisions(id TEXT PRIMARY KEY,event_id TEXT NOT NULL,task_id TEXT NOT NULL,role_id TEXT NOT NULL,policy_version TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(event_id,task_id,role_id,policy_version));
@@ -43,6 +49,17 @@ export class ControlStore {
         CREATE TABLE IF NOT EXISTS propagation_observations(id TEXT PRIMARY KEY,edge_id TEXT NOT NULL,episode TEXT NOT NULL,payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS replay_jobs(id TEXT PRIMARY KEY,state TEXT NOT NULL,payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS policy_heads(target TEXT PRIMARY KEY,policy_id TEXT NOT NULL,version INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS policy_head_revisions(target TEXT PRIMARY KEY,revision INTEGER NOT NULL);
+        INSERT OR IGNORE INTO policy_head_revisions SELECT target,1 FROM policy_heads;
+        CREATE TRIGGER IF NOT EXISTS policy_head_insert AFTER INSERT ON policy_heads BEGIN
+          INSERT INTO policy_head_revisions VALUES(NEW.target,1) ON CONFLICT(target) DO UPDATE SET revision=revision+1;
+        END;
+        CREATE TRIGGER IF NOT EXISTS policy_head_update AFTER UPDATE ON policy_heads BEGIN
+          INSERT INTO policy_head_revisions VALUES(NEW.target,1) ON CONFLICT(target) DO UPDATE SET revision=revision+1;
+        END;
+        CREATE TRIGGER IF NOT EXISTS policy_head_delete AFTER DELETE ON policy_heads BEGIN
+          INSERT INTO policy_head_revisions VALUES(OLD.target,1) ON CONFLICT(target) DO UPDATE SET revision=revision+1;
+        END;
         CREATE TABLE IF NOT EXISTS control_task_changes(task_id TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS control_projection_edges(id TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS control_attempt_expectations(attempt_id TEXT PRIMARY KEY,task_id TEXT NOT NULL,expectation_version INTEGER NOT NULL,spec_hash TEXT NOT NULL,input_vector TEXT NOT NULL);
@@ -100,6 +117,24 @@ export class ControlStore {
       for (const table of COLLECTIONS) host.db.exec(`CREATE TABLE IF NOT EXISTS ${table}(id TEXT NOT NULL,version INTEGER NOT NULL,hash TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(id,version));
         CREATE TRIGGER IF NOT EXISTS ${table}_immutable_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT,'Immutable version'); END;
         CREATE TRIGGER IF NOT EXISTS ${table}_immutable_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'Immutable version'); END;`)
+      host.db.exec(`CREATE TRIGGER IF NOT EXISTS evidence_expiration_insert AFTER INSERT ON evidence_versions
+        WHEN json_extract(NEW.payload,'$.expiresAt') IS NOT NULL BEGIN
+          INSERT OR IGNORE INTO evidence_expirations(id,version,expires_at) VALUES(NEW.id,NEW.version,json_extract(NEW.payload,'$.expiresAt'));
+        END;
+        INSERT OR IGNORE INTO evidence_expirations(id,version,expires_at) SELECT id,version,json_extract(payload,'$.expiresAt') FROM evidence_versions WHERE json_extract(payload,'$.expiresAt') IS NOT NULL;
+        CREATE TRIGGER IF NOT EXISTS cognitive_reference_insert AFTER INSERT ON cognitive_records BEGIN
+          INSERT OR IGNORE INTO cognitive_references SELECT NEW.id,NEW.version,'evidence',json_extract(value,'$.id'),json_extract(value,'$.version') FROM json_each(NEW.payload,'$.evidenceIndex');
+          INSERT OR IGNORE INTO cognitive_references SELECT NEW.id,NEW.version,'assumption',json_extract(value,'$.id'),json_extract(value,'$.version') FROM json_each(NEW.payload,'$.assumptions');
+          INSERT OR IGNORE INTO cognitive_references VALUES(NEW.id,NEW.version,'policy',json_extract(NEW.payload,'$.policy.id'),json_extract(NEW.payload,'$.policy.version'));
+          INSERT OR IGNORE INTO cognitive_references SELECT NEW.id,NEW.version,'decision',json_extract(value,'$.entityId'),json_extract(value,'$.version') FROM json_each(NEW.payload,'$.dependencyVersion') WHERE json_extract(value,'$.port')='conclusion' AND json_extract(value,'$.view')='decision';
+        END;
+        INSERT OR IGNORE INTO cognitive_references SELECT c.id,c.version,'evidence',json_extract(j.value,'$.id'),json_extract(j.value,'$.version') FROM cognitive_records c,json_each(c.payload,'$.evidenceIndex') j;
+        INSERT OR IGNORE INTO cognitive_references SELECT c.id,c.version,'assumption',json_extract(j.value,'$.id'),json_extract(j.value,'$.version') FROM cognitive_records c,json_each(c.payload,'$.assumptions') j;
+        INSERT OR IGNORE INTO cognitive_references SELECT id,version,'policy',json_extract(payload,'$.policy.id'),json_extract(payload,'$.policy.version') FROM cognitive_records;`)
+      host.db.exec(`CREATE TRIGGER IF NOT EXISTS cognitive_decision_reference_insert AFTER INSERT ON cognitive_records BEGIN
+        INSERT OR IGNORE INTO cognitive_references SELECT NEW.id,NEW.version,'decision',json_extract(value,'$.entityId'),json_extract(value,'$.version') FROM json_each(NEW.payload,'$.dependencyVersion') WHERE json_extract(value,'$.port')='conclusion' AND json_extract(value,'$.view')='decision';
+      END;
+      INSERT OR IGNORE INTO cognitive_references SELECT c.id,c.version,'decision',json_extract(j.value,'$.entityId'),json_extract(j.value,'$.version') FROM cognitive_records c,json_each(c.payload,'$.dependencyVersion') j WHERE json_extract(j.value,'$.port')='conclusion' AND json_extract(j.value,'$.view')='decision';`)
       host.db.exec(`CREATE TRIGGER IF NOT EXISTS boundary_members_insert AFTER INSERT ON planning_boundaries BEGIN
         INSERT OR IGNORE INTO planning_boundary_members SELECT NEW.id,NEW.version,value FROM json_each(NEW.payload,'$.members');
       END;
@@ -117,7 +152,7 @@ export class ControlStore {
     if (!COLLECTIONS.includes(collection) || !id.trim() || !Number.isSafeInteger(version) || version < 1) throw new Error("Invalid version identity")
     const payload = canonical(value), hash = digest(value)
     const prior = this.db.prepare(`SELECT hash FROM ${collection} WHERE id=? AND version=?`).get(id, version)
-    if (prior) { if (prior.hash !== hash) throw new Error("Immutable version conflict"); return }
+    if (prior) { if (prior.hash !== hash) throw new Error(`Immutable version conflict: ${collection}/${id}@${version}`); return }
     this.db.prepare(`INSERT INTO ${collection} VALUES(?,?,?,?)`).run(id, version, hash, payload)
   }
   get<T>(collection: Collection, id: string, version: number): T | undefined {

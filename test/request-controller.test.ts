@@ -9,6 +9,8 @@ import { ControlServer } from "../packages/host-integration/src/control-server.t
 import { digest } from "../packages/task-control/src/value.ts"
 import type { ControllerProgram, ProposedTask } from "../packages/task-control/src/requests.ts"
 import type { ActivationGrant, RoleVersion, AgentOutput } from "../packages/task-cognition/src/model.ts"
+import { selectWorkerPrecision } from "../packages/task-control/src/worker-precision.ts"
+import { PolicyLearning } from "../packages/task-policy/src/index.ts"
 import { TaskScheduler } from "../packages/task-engine/src/scheduling.ts"
 import { withTaskAdmission } from "../packages/task-control/src/task-admission.ts"
 
@@ -24,11 +26,12 @@ function install(r:ReturnType<typeof createGraphRuntime>):ControllerProgram {
   const program:ControllerProgram={id:"program",version:1,authorization:[authorization],policy:{id:"operator-policy",version:1},planner:entry,worker:entry,planValidators:["plan/v1"],observationValidators:["state/v1"],predictionPolicy:{weights:{contract:.25,behavior:.25,dependency:.25,goal:.25},enter:.5,exit:.1},readScopes:["result.txt"],writeScopes:["result.txt"],maxTasks:2,grantLifetimeMs:60000,account:"test",tokenLimit:100000}
   r.control.requests.register(program);return program
 }
-function accept(r:ReturnType<typeof createGraphRuntime>,grantId:string,tasks:unknown[]=[],extra:Partial<AgentOutput>={}) {
+function accept(r:ReturnType<typeof createGraphRuntime>,grantId:string,tasks:unknown[]=[],extra:Partial<AgentOutput>={},observed?:(grant:ActivationGrant)=>void) {
   const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grantId)!.payload)) as ActivationGrant
   const worker=`worker-${grantId}`
   if(grant.executionMode==="task")withTaskAdmission(r.engine,grantId,worker,()=>new TaskScheduler(r.engine,1).claim(grant.taskId,{agent:"fixture",sessionId:worker}))
   r.control.admission.claim(grantId,{worker,specHash:grant.specHash,inputVector:grant.inputVector,graphHash:r.control.graph.hash(),generation:grant.generation,now:Date.now()})
+  observed?.(grant)
   const output:AgentOutput={taskId:grant.taskId,findings:[],decisions:[],risks:[],unresolvedQuestions:[],evidence:[],proposedTasks:tasks,confidence:1,requiresEscalation:false,...extra}
   r.control.admission.submit(grantId,worker,output,{inputTokens:1,outputTokens:1,toolCalls:0,elapsedMs:1})
   if(grant.executionMode==="task") {r.engine.completeTask({taskId:grant.taskId,attemptToken:r.store.currentAttempt(grant.taskId)!.token,summary:"fixture wrote actual file"});new TaskScheduler(r.engine,1).release(grant.taskId,true)}
@@ -58,6 +61,20 @@ test("요청 해석→실제 계획 validator→worker grant→파일 검증→�
     for(let i=0;i<100;i++){await s.wake();if(s.store.get("event")!.phase==="completed")break;await new Promise(resolve=>setTimeout(resolve,10))}
     assert.equal(s.store.get("event")!.phase,"completed",JSON.stringify(s.store.get("event")))
     assert.equal(calls.length,2);assert.equal(readFileSync(join(dir,"result.txt"),"utf8"),"done")
+    const measured=createGraphRuntime(database)
+    try {
+      const row=measured.store.db.prepare("SELECT payload FROM outcome_labels WHERE json_extract(payload,'$.type')='request-outcome'").get()!
+      assert.ok(row)
+      const outcome=JSON.parse(String(row.payload))
+      assert.equal(outcome.runs.length,2)
+      assert.deepEqual(outcome.cost,{inputTokens:2,outputTokens:2,toolCalls:0,elapsedWorkMs:2,complete:true})
+      assert.equal(outcome.sampleType,"synthetic")
+      assert.equal(outcome.quality.usefulActivations,null)
+      assert.equal(outcome.quality.missedFailures,null)
+      for(let i=0;i<3;i++)measured.engine.atomic(()=>measured.control.outcomes.ingest())
+      assert.equal(measured.store.db.prepare("SELECT count(*) n FROM outcome_labels").get()!.n,1)
+    }finally{measured.close()}
+
     for(let i=0;i<3;i++)await s.wake();assert.equal(calls.length,2)
   }finally{await s.close();rmSync(dir,{recursive:true,force:true})}
 })
@@ -83,6 +100,9 @@ test("실제 의미 실패는 필요한 QA만 깨우며 quota와 결과 검증 �
     const baseline=install(r),base=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
     r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const chunk of process.stdin)value+=chunk;const data=JSON.parse(value);if(!data.evidence[0].content.output.findings.includes('file mismatch confirmed'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
     for(const [id,hard] of [["qa",true],["architect",false]] as const)r.store.control.put("role_versions",id,1,{...base,id,validators:["review/v1"],activationPolicy:{...base.activationPolicy,hardTriggers:hard?["failure"]:[],softSignals:hard?{}:{architectureViolation:1}}})
+    new PolicyLearning(r.store.control).propose({id:"architect-trigger",version:1,target:"activation",observedPattern:"실패 관찰",rootCause:"구조 검토 판단",proposedInvariant:"필수 의무 보존",proposedRule:{op:"gte",feature:"failure",value:.5},expectedBenefit:1,regressionRisk:.1,evidence:[{id:"operator",version:1}],counterexamples:[],rollback:baseline.policy},ref=>r.control.evidence.valid(ref))
+    r.control.policyReplay.register({id:"architect-shadow",proposal:{id:"architect-trigger",version:1},role:{id:"architect",version:1},effect:"additional-trigger",split:{seed:"pre-outcome",holdoutBuckets:25}})
+    r.control.policyReplay.register({id:"qa-shadow",proposal:{id:"architect-trigger",version:1},role:{id:"qa",version:1},effect:"additional-trigger",split:{seed:"pre-outcome",holdoutBuckets:25}})
     const program:ControllerProgram={...baseline,version:2,tokenLimit:66003,specialists:["qa","architect"].map(id=>({role:{id,version:1},profile:baseline.worker.profile}))}
     r.control.requests.register(program)
     r.control.requests.submit({id:"request",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
@@ -101,11 +121,21 @@ test("실제 의미 실패는 필요한 QA만 깨우며 quota와 결과 검증 �
     assert.equal(r.store.db.prepare("SELECT state FROM specialist_demands WHERE task_id=? AND mandatory=1").get(taskId)!.state,"issued")
     const roles=r.store.db.prepare("SELECT json_extract(payload,'$.role.id') role,id FROM activation_grants WHERE task_id=?").all(taskId)
     assert.deepEqual(roles.map(row=>row.role).sort(),["bounded","qa"])
+    const shadow=r.control.policyReplay.report("architect-shadow")
+    assert.ok(shadow.length>0)
+    assert.ok(shadow.every(row=>row.actual==="defer"&&row.predicted==="activate"&&row.phase==="shadow"))
+    assert.ok(shadow.every(row=>row.observed.grant===null&&row.candidateCost===null&&row.promotionEligible===false))
     assert.equal(r.engine.requireTask(taskId).status,"implemented")
     const qa=String(roles.find(row=>row.role==="qa")!.id),grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(qa)!.payload)) as ActivationGrant
     r.control.admission.claim(qa,{worker:"qa-worker",specHash:grant.specHash,inputVector:grant.inputVector,graphHash:r.control.graph.hash(),generation:1,now:Date.now()})
     r.control.admission.submit(qa,"qa-worker",{taskId,findings:["file mismatch confirmed"],decisions:[],risks:[],unresolvedQuestions:[],evidence:[],proposedTasks:[],confidence:1,requiresEscalation:false},{inputTokens:1,outputTokens:1,toolCalls:0,elapsedMs:1})
     assert.ok(r.control.evidence.unresolved(taskId).some(obligation=>obligation.kind==="role-output"))
+    const measuredShadow=r.control.policyReplay.report("qa-shadow").find(row=>row.observed.grant?.id===qa)!
+    assert.ok(measuredShadow)
+    assert.deepEqual(measuredShadow.observed.usage,{inputTokens:1,outputTokens:1,toolCalls:0,elapsedMs:1})
+    assert.deepEqual(measuredShadow.observed.grant!.context,grant.context)
+    assert.equal(measuredShadow.observed.completion,null)
+    assert.equal(measuredShadow.usefulActivation,null)
     await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})
     assert.equal(r.control.evidence.unresolved(taskId).filter(obligation=>obligation.kind==="role-output").length,0)
     assert.equal(r.store.db.prepare("SELECT state FROM specialist_demands WHERE task_id=? AND mandatory=1").get(taskId)!.state,"satisfied")
@@ -144,27 +174,104 @@ test("측정된 leaf 실패는 원래 기대치를 보존한 새 허가로 복�
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })
 
-for(const questionMode of ["none","resume","budget","budget-stale","stale","expired","generation"] as const)test(`국소 복구 소진의 검증된 scoped revision과 질문 재개: ${questionMode}`,async(t)=>{
+for(const questionMode of ["none","input-change","coalesced-input","question-input","assumption-loss","preserve-assumption","decision-loss","preserve-decision","selection","selection-unknown","resume","budget","budget-stale","stale","expired","generation"] as const)test(`국소 복구 소진의 검증된 scoped revision과 질문 재개: ${questionMode}`,async(t)=>{
   const dir=mkdtempSync(join(tmpdir(),"regional-repair-")),database=join(dir,"graph.db")
   let r=createGraphRuntime(database)
   try {
     const baseline=install(r)
     r.control.validators.register({id:"repair",version:1,command:[process.execPath,"-e",`let text='';for await(const chunk of process.stdin)text+=chunk;const input=JSON.parse(text);const p=input.evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;if(p.metadata.clarifications?.length&&p.metadata.clarifications[0].answers[0][0]!=='UTF-8로 검증해 주세요')process.exit(1);if(p.metadata.goal!=='Write done'||p.metadata.expectations[0].expectation.expectedArtifacts['result.txt']!=='done'||p.patch.revisedTasks[0].objective!=='Write done with verified encoding')process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
-    const program={...baseline,version:2,maxLocalRepairs:1,maxClarifications:1,tokenLimit:questionMode.startsWith("budget")?33012:100000,replanner:{...baseline.planner,validators:["repair/v1"],maxAttempts:1}};r.control.requests.register(program)
+    if(questionMode.startsWith("selection"))r.control.validators.register({id:"region-cost",version:1,command:[process.execPath,"-e",`let text='';for await(const chunk of process.stdin)text+=chunk;const input=JSON.parse(text);const candidate=input.evidence.find(e=>e.validatorVersion==='region-candidate/v1').content;if(candidate.context.goal!=='Write done'||candidate.required.some(id=>!candidate.candidate.nodes.includes(id)))process.exit(1);console.log(JSON.stringify({feasible:${questionMode==="selection"?'true':'"unknown"'},costUnit:'work-units',costs:{planning:1,reasoning:2,context:3,reexecution:4,integration:5,expectedFailure:6},reason:'registered structural fixture evaluator'}));`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
+    const program={...baseline,version:2,fileObservation:{maxFiles:10,maxBytes:10000},maxLocalRepairs:1,maxClarifications:1,tokenLimit:questionMode.startsWith("budget")?33012:100000,replanner:{...baseline.planner,validators:["repair/v1"],maxAttempts:["coalesced-input","question-input"].includes(questionMode)?2:1,...(questionMode.startsWith("selection")?{selection:{validator:"region-cost/v1",candidateLimit:10,evaluationBudget:5,costUnit:"work-units"}}:{})}};r.control.requests.register(program)
     r.control.requests.submit({id:"regional",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
     r.control.requests.tick();accept(r,r.control.requests.get("regional")!.plannerGrant!,proposal);r.control.requests.tick()
     await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
     const oldTask=r.control.requests.tasks("regional")[0]!,plan=r.control.requests.get("regional")!.planId!
+    if(["assumption-loss","preserve-assumption"].includes(questionMode)) {
+      const content={premise:"registered precondition"},source=r.control.evidence.put({id:"source-premise",version:1,type:"code",source:"fixture",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:1,expiresAt:null})
+      r.control.validators.register({id:"assumption",version:1,command:[process.execPath,"-e",`console.log(JSON.stringify({verdict:'valid',reason:'Registered fixture precondition verified'}))`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+      r.control.assumptions.register({id:"premise",version:1,statement:"Registered precondition remains valid",tasks:[oldTask],evidence:[source],authorization:[{id:"operator",version:1}],validator:"assumption/v1"})
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})
+      assert.equal(r.control.assumptions.valid({id:"premise",version:1}),true)
+    }
+    if(["decision-loss","preserve-decision"].includes(questionMode)) {
+      const content={basis:"registered decision basis"},source=r.control.evidence.put({id:"decision-source",version:1,type:"code",source:"fixture",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:1,expiresAt:null})
+      r.control.validators.register({id:"choice",version:1,command:[process.execPath,"-e",`let s='';for await(const c of process.stdin)s+=c;const d=JSON.parse(s).evidence.find(e=>e.validatorVersion==='decision-input/v1').content.decision;if(d.conclusion!=='Preserve the registered output contract')process.exit(1);console.log(JSON.stringify({verdict:'validated',reason:'Fixture contract decision verified'}))`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
+      r.control.decisions.register({id:"choice",version:1,conclusion:"Preserve the registered output contract",tasks:[oldTask],assumptions:[],evidence:[source],authorization:[{id:"operator",version:1}],validator:"choice/v1"})
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})
+      assert.equal(r.control.decisions.valid({id:"choice",version:1}),true)
+    }
     writeFileSync(join(dir,"result.txt"),"wrong")
-    for(let i=0;i<2;i++) {
+    for(let i=0;i<(["input-change","coalesced-input","assumption-loss","decision-loss"].includes(questionMode)?1:2);i++) {
       const id=String(r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='issued'").get(oldTask)!.id)
-      accept(r,id);await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+      accept(r,id,[],{},["input-change","coalesced-input","question-input"].includes(questionMode)?grant=>{r.control.files.read(grant,dir,"result.txt",digest(readFileSync(join(dir,"result.txt"),"utf8")),`observed-before-external-edit:${grant.id}`)}:undefined)
+      if(["input-change","coalesced-input"].includes(questionMode)) {
+        writeFileSync(join(dir,"result.txt"),"external change")
+        const host=new ControlServer({version:1,directory:dir,database,socket:join(dir,"host.sock"),workspaces:[{path:dir}],autoContinue:false,maxRuns:1},()=>r.control,async()=>({stopped:true,evidence:"fixture"}))
+        await host.inspect({workspace:dir,sessionID:"user",messageID:"regional"} as Parameters<ControlServer["inspect"]>[0])
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='InputObservationChanged'").get()!.n,1)
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='LocalRepairExhausted'").get()!.n,0)
+      }else if(questionMode==="decision-loss") {
+        r.control.evidence.retract({id:"decision-source",version:1},[{id:"operator",version:1}],"The decision basis was withdrawn")
+        r.control.requests.tick()
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='DecisionValidityLost'").get()!.n,1)
+      }else if(questionMode==="assumption-loss") {
+        r.control.evidence.retract({id:"source-premise",version:1},[{id:"operator",version:1}],"The execution precondition was withdrawn")
+        r.control.requests.tick()
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='AssumptionValidityLost'").get()!.n,1)
+      }else {await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()}
     }
     r.control.requests.tick()
+    if(questionMode.startsWith("selection")) {
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0)
+      assert.ok(r.store.db.prepare("SELECT count(*) n FROM region_candidate_evaluations").get()!.n as number>0)
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+      if(questionMode==="selection-unknown") {
+        assert.equal(r.control.requests.get("regional")!.state,"waiting")
+        assert.match(r.control.requests.get("regional")!.reason!,/No proven feasible region/)
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0)
+        return
+      }
+    }
     const row=r.store.db.prepare("SELECT payload FROM request_region_repairs").get()
     assert.ok(row,r.control.requests.get("regional")!.reason)
     let repair=JSON.parse(String(row.payload))
-    if(questionMode!=="none") {
+    if(questionMode==="coalesced-input") {
+      const previous=repair
+      writeFileSync(join(dir,"result.txt"),"a newer external change")
+      r.control.files.refreshNative(dir,{maxFiles:10,maxBytes:10000});r.control.requests.tick()
+      assert.equal(r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(previous.grantId)!.state,"fenced")
+      assert.equal(r.store.db.prepare("SELECT state FROM request_region_repairs WHERE id=?").get(previous.id)!.state,"superseded")
+      assert.throws(()=>r.control.replanning.assertCurrent(previous.lease.id),/fenced/)
+      r.control.requests.tick()
+      repair=JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE state='planning'").get()!.payload))
+      assert.notEqual(repair.grantId,previous.grantId)
+      assert.ok(repair.lease.generation>previous.lease.generation)
+      const contextGrant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(repair.grantId)!.payload)) as ActivationGrant
+      const context=JSON.stringify(r.store.control.get("context_manifests",contextGrant.context.id,contextGrant.context.version))
+      assert.ok(context.includes(digest("a newer external change")))
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='RegionalRepairSuperseded'").get()!.n,1)
+    }
+    if(questionMode==="question-input") {
+      const previous=repair
+      accept(r,repair.grantId,[],{unresolvedQuestions:[{kind:"user",question:"변경 전 인코딩 조건을 확인해 주세요."}]});r.control.requests.tick()
+      const question=r.control.requests.questions.pending("regional")[0]!
+      assert.equal(r.control.requests.get("regional")!.state,"waiting")
+      r.close();r=createGraphRuntime(database)
+      writeFileSync(join(dir,"result.txt"),"changed while awaiting clarification")
+      r.control.files.refreshNative(dir,{maxFiles:10,maxBytes:10000});r.control.requests.tick();r.control.requests.tick()
+      assert.equal(r.control.requests.questions.get(question.id)!.state,"superseded")
+      assert.throws(()=>r.control.requests.questions.answer("regional","user",question.id,[["이전 조건"]]),/no longer pending/)
+      assert.throws(()=>r.control.replanning.assertCurrent(previous.lease.id),/fenced/)
+      repair=JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE state='planning'").get()!.payload))
+      assert.notEqual(repair.grantId,previous.grantId)
+      const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(repair.grantId)!.payload)) as ActivationGrant
+      const context=JSON.stringify(r.store.control.get("context_manifests",grant.context.id,grant.context.version))
+      assert.ok(context.includes("변경 전 인코딩 조건을 확인해 주세요."))
+      assert.ok(context.includes(digest("changed while awaiting clarification")))
+      assert.equal(r.control.requests.get("regional")!.clarifications?.length??0,0)
+    }
+    if(questionMode==="assumption-loss")assert.deepEqual(repair.lease.invalidAssumptions,[{id:"premise",version:1}])
+    if(questionMode!=="none"&&questionMode!=="input-change"&&questionMode!=="coalesced-input"&&questionMode!=="question-input"&&questionMode!=="assumption-loss"&&questionMode!=="preserve-assumption"&&questionMode!=="decision-loss"&&questionMode!=="preserve-decision"&&!questionMode.startsWith("selection")) {
       const original=repair,oldGrant=repair.grantId
       accept(r,oldGrant,[],{findings:["수정 전 실패 원인을 보존한다"],unresolvedQuestions:[{kind:"user",question:"수정할 인코딩 조건을 확인해 주세요."}]})
       r.control.requests.tick()
@@ -216,8 +323,17 @@ for(const questionMode of ["none","resume","budget","budget-stale","stale","expi
       r.control.requests.tick()
       assert.equal(JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs").get()!.payload)).grantId,repair.grantId)
     }
+    if(questionMode==="decision-loss") {
+      assert.deepEqual(repair.lease.invalidDecisions,[{id:"choice",version:1}])
+      assert.deepEqual(repair.lease.immutableDecisions,[])
+    }
+    if(questionMode==="preserve-decision")assert.deepEqual(repair.lease.immutableDecisions,[{id:"choice",version:1}])
     const node={...proposal[0]!.node,taskSpec:{...proposal[0]!.node.taskSpec,goal:"Write done with verified encoding"}}
-    const patch={revisedTasks:[{id:node.nodeId,dependencies:[],objective:node.taskSpec.goal,expectedOutcome:node.outcome,decisionRefs:[]}],newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:[],invalidatedAssumptions:[],expectedOutcomes:[{taskId:node.nodeId,value:node.outcome}],confidence:1}
+    const patch={revisedTasks:[{id:node.nodeId,dependencies:[],objective:node.taskSpec.goal,expectedOutcome:node.outcome,assumptionRefs:questionMode==="preserve-assumption"?[{id:"premise",version:1}]:[],decisionRefs:questionMode==="preserve-decision"?[{id:"choice",version:1}]:[]}],newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:questionMode==="preserve-decision"?[{id:"choice",version:1}]:[],invalidatedAssumptions:questionMode==="assumption-loss"?[{id:"premise",version:1}]:[],expectedOutcomes:[{taskId:node.nodeId,value:node.outcome}],confidence:1}
+    if(questionMode==="preserve-assumption") {
+      assert.deepEqual(repair.lease.immutableAssumptions,[{id:"premise",version:1}])
+      assert.throws(()=>r.control.replanning.stage(repair.lease.id,{...patch,revisedTasks:patch.revisedTasks.map(node=>({...node,assumptionRefs:[]}))},[node],"drop premise"),/valid assumption binding/)
+    }
     accept(r,repair.grantId,[{patch,tasks:[{node,expectation:proposal[0]!.expectation}],summary:"Correct the failed implementation while preserving the requested outcome"}])
     r.control.requests.tick()
     assert.equal(r.store.findWorkPlan(plan)!.currentRevision,1)
@@ -226,6 +342,9 @@ for(const questionMode of ["none","resume","budget","budget-stale","stale","expi
     const next=r.control.requests.tasks("regional")[0]!
     assert.notEqual(next,oldTask)
     assert.equal(r.store.control.head("task_expectations",next),1)
+    if(questionMode==="preserve-assumption")assert.ok(r.store.db.prepare("SELECT 1 FROM assumption_task_consumers WHERE task_id=? AND id='premise'").get(next))
+    if(questionMode==="preserve-decision")assert.ok(r.store.db.prepare("SELECT 1 FROM decision_task_consumers WHERE task_id=? AND id='choice'").get(next))
+    if(questionMode==="decision-loss")assert.equal(r.store.db.prepare("SELECT 1 FROM decision_task_consumers WHERE task_id=? AND id='choice'").get(next),undefined)
     assert.throws(()=>r.engine.startTask(next,{agent:"bypass",sessionId:"raw"}),/adapter admission/)
     r.control.requests.tick()
     const worker=r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='issued'").get(next)
@@ -234,6 +353,11 @@ for(const questionMode of ["none","resume","budget","budget-stale","stale","expi
     await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
     assert.equal(r.control.requests.get("regional")!.state,"completed",r.control.requests.get("regional")!.reason)
     assert.equal(r.store.findWorkPlan(plan)!.goal,"Write done")
+    if(questionMode==="preserve-assumption") {
+      r.control.evidence.retract({id:"source-premise",version:1},[{id:"operator",version:1}],"The preserved premise was withdrawn")
+      assert.equal(r.control.assumptions.valid({id:"premise",version:1}),false)
+      assert.equal(r.engine.signals.matches(next),false)
+    }
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })
 
@@ -468,5 +592,237 @@ for(const mode of ["resume","budget","stale","cancel","quota"] as const)test(`wo
     }
     assert.equal(r.control.requests.get("request")!.state,"completed",r.control.requests.get("request")!.reason)
     assert.equal(r.store.control.head("task_expectations",taskId),1)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+
+for(const integrationMode of ["pass","fail","repair"] as const)test(`공유 경계의 실제 7차원 검증이 요청 완료를 제어한다: ${integrationMode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"boundary-validation-")),r=createGraphRuntime(":memory:")
+  try {
+    const program=install(r),integrationPass=integrationMode==="pass"
+    const dimensions=["behavior","interface","data","temporal","error-propagation","resource-contention","semantic"] as const
+    const validators=Object.fromEntries(dimensions.map(dimension=>[dimension,`joint-${dimension}/v1`])) as Record<typeof dimensions[number],string>
+    for(const dimension of dimensions)r.control.validators.register({id:`joint-${dimension}`,version:1,command:[process.execPath,"-e",`let text='';for await(const chunk of process.stdin)text+=chunk;const input=JSON.parse(text);const joint=input.evidence.find(e=>e.validatorVersion==='integration-input/v1').content;if(joint.observations.length!==2||joint.observations.some(o=>o.state.artifacts['result.txt']!=='done'))process.exit(2);if(${JSON.stringify(dimension)}==='data'&&!${integrationPass}&&(${integrationMode!=="repair"}||joint.boundary.version<2))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    if(integrationMode==="repair")r.control.validators.register({id:"joint-repair",version:1,command:[process.execPath,"-e",`let text='';for await(const c of process.stdin)text+=c;const p=JSON.parse(text).evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;if(p.metadata.goal!=='Write done'||p.patch.revisedTasks.length!==2||p.metadata.expectations.some(item=>item.expectation.expectedArtifacts['result.txt']!=='done'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
+    r.control.requests.register({...program,version:2,integrationValidators:validators,...(integrationMode==="repair"?{maxLocalRepairs:0,replanner:{...program.planner,validators:["joint-repair/v1"],maxAttempts:1}}:{})})
+    r.control.requests.submit({id:"joint",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
+    r.control.requests.tick()
+    const second={...proposal[0]!,node:{...proposal[0]!.node,nodeId:"confirm",label:"Confirm",dependsOnNodeIds:["write"]}}
+    accept(r,r.control.requests.get("joint")!.plannerGrant!,[proposal[0]!,second]);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    const ids=r.control.requests.tasks("joint")
+    const boundaryId=`integration:${r.control.requests.get("joint")!.planId}`
+    assert.equal(r.store.control.head("planning_boundaries",boundaryId),1)
+    writeFileSync(join(dir,"result.txt"),"done")
+    for(let i=0;i<2;i++) {
+      const grant=r.store.db.prepare("SELECT g.id FROM activation_grants g JOIN control_request_tasks t ON t.task_id=g.task_id WHERE t.request_id='joint' AND g.state='issued'").get()!
+      assert.ok(grant,r.control.requests.get("joint")!.reason)
+      accept(r,String(grant.id));await r.control.validators.run(dir,{maxJobs:1,maxDurationMs:1500});r.control.requests.tick()
+    }
+    assert.notEqual(r.control.requests.get("joint")!.state,"completed")
+    assert.equal(r.control.evidence.unresolved(boundaryId).length,7)
+    await r.control.validators.run(dir,{maxJobs:10,maxDurationMs:10000});r.control.requests.tick()
+    assert.equal(r.control.requests.get("joint")!.state==="completed",integrationPass,r.control.requests.get("joint")!.reason)
+    assert.equal(r.control.evidence.unresolved(boundaryId).length,integrationPass?0:1)
+    const count=r.store.db.prepare("SELECT count(*) n FROM validation_obligations WHERE entity_id=?").get(boundaryId)!.n
+    assert.equal(count,7)
+    for(let i=0;i<3;i++)r.engine.atomic(()=>r.control.boundaries.ingest())
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM validation_obligations WHERE entity_id=?").get(boundaryId)!.n,count)
+    if(integrationMode==="repair") {
+      const repair=JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs").get()!.payload))
+      assert.equal(r.control.evidence.unresolved(boundaryId).length,1)
+      assert.ok(repair.lease.violatedInvariants.some((value:string)=>value.includes("Failed integration boundary")))
+      const tasks=[proposal[0]!,second].map(item=>({...item,node:{...item.node,taskSpec:{...item.node.taskSpec,goal:"Write done with joint validation"}}}))
+      const patch={revisedTasks:tasks.map(item=>({id:item.node.nodeId,dependencies:item.node.dependsOnNodeIds,objective:item.node.taskSpec.goal,expectedOutcome:item.node.outcome,decisionRefs:[]})),newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:[],invalidatedAssumptions:[],expectedOutcomes:tasks.map(item=>({taskId:item.node.nodeId,value:item.node.outcome})),confidence:1}
+      accept(r,repair.grantId,[{patch,tasks,summary:"Repair measured joint failure while preserving the requested outcome"}]);r.control.requests.tick()
+      assert.equal(r.store.control.head("planning_boundaries",boundaryId),1)
+      await r.control.validators.run(dir,{maxJobs:1,maxDurationMs:1500});r.control.requests.tick()
+      assert.equal(r.store.control.head("planning_boundaries",boundaryId),2,r.control.requests.get("joint")!.reason)
+      assert.ok(r.control.requests.tasks("joint").every(id=>!ids.includes(id)))
+      for(let i=0;i<2;i++) {
+        r.control.requests.tick()
+        const fresh=r.store.db.prepare("SELECT g.id FROM activation_grants g JOIN control_request_tasks t ON t.task_id=g.task_id WHERE t.request_id='joint' AND g.state='issued'").get()!
+        assert.ok(fresh,r.control.requests.get("joint")!.reason)
+        accept(r,String(fresh.id));await r.control.validators.run(dir,{maxJobs:1,maxDurationMs:1500})
+      }
+      assert.notEqual(r.control.requests.get("joint")!.state,"completed")
+      assert.equal(r.control.evidence.unresolved(boundaryId).length,7)
+      await r.control.validators.run(dir,{maxJobs:10,maxDurationMs:10000});r.control.requests.tick()
+      assert.equal(r.control.requests.get("joint")!.state,"completed",r.control.requests.get("joint")!.reason)
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='JointIntegrationFailed'").get()!.n,1)
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM validation_obligations WHERE entity_id=?").get(boundaryId)!.n,14)
+    }
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+test("질문 전에 실제로 읽은 파일이 바뀌면 원래 계획 답변을 새 입력으로 오인하지 않는다",()=>{
+  const dir=mkdtempSync(join(tmpdir(),"question-file-input-")),r=createGraphRuntime(":memory:")
+  try {
+    const baseline=install(r),program={...baseline,version:2,maxClarifications:1}
+    r.control.requests.register(program)
+    r.control.requests.submit({id:"question",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}});r.control.requests.tick()
+    const grantId=r.control.requests.get("question")!.plannerGrant!
+    writeFileSync(join(dir,"result.txt"),"initial premise")
+    accept(r,grantId,[],{unresolvedQuestions:[{kind:"user",question:"이 전제를 유지할까요?"}]},grant=>{r.control.files.read(grant,dir,"result.txt",digest(readFileSync(join(dir,"result.txt"),"utf8")),"question-input")})
+    r.control.requests.tick()
+    const question=r.control.requests.questions.pending("question")[0]!
+    writeFileSync(join(dir,"result.txt"),"different premise")
+    r.control.files.refreshNative(dir,{maxFiles:10,maxBytes:1000})
+    assert.throws(()=>r.control.requests.questions.answer("question","user",question.id,[["유지"]]),/stale observed file inputs/)
+    assert.equal(r.control.requests.questions.get(question.id)!.state,"pending")
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM activation_grants").get()!.n,1)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["repeat","quota","stale"] as const)test(`전문 검토 질문은 필수 의무와 읽기 전용 범위를 유지해 재개한다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"specialist-question-")),database=join(dir,"graph.db");let r=createGraphRuntime(database)
+  try {
+    const base=install(r),role=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
+    r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const chunk of process.stdin)value+=chunk;const data=JSON.parse(value);if(!data.evidence[0].content.output.findings.includes('verified review'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    r.store.control.put("role_versions","qa",1,{...role,id:"qa",validators:["review/v1"],activationPolicy:{...role.activationPolicy,hardTriggers:["failure"],maxInvocationsPerTask:mode==="quota"?1:3}})
+    const program={...base,version:2,maxClarifications:2,maxLocalRepairs:1,specialists:[{role:{id:"qa",version:1},profile:base.worker.profile}]};r.control.requests.register(program)
+    r.control.requests.submit({id:"review-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
+    r.control.requests.tick();accept(r,r.control.requests.get("review-request")!.plannerGrant!,proposal);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    const taskId=r.control.requests.tasks("review-request")[0]!,worker=String(r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=?").get(taskId)!.id)
+    writeFileSync(join(dir,"result.txt"),"wrong");accept(r,worker)
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})
+    const demand=()=>r.store.db.prepare("SELECT * FROM specialist_demands WHERE task_id=? AND mandatory=1").get(taskId)!
+    const oldObligations:string[]=[]
+    for(let round=0;round<(mode==="repeat"?2:1);round++) {
+      const grantId=String(demand().grant_id)
+      accept(r,grantId,[],{unresolvedQuestions:[{kind:"user",question:"어떤 기준으로 검토할까요?"}]})
+      oldObligations.push(String(demand().obligation_id))
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+      const question=r.control.requests.questions.pending("review-request")[0]!
+      assert.equal(question.target?.kind,"specialist")
+      r.close();r=createGraphRuntime(database)
+      if(mode==="stale") {
+        r.control.evidence.retract(question.source,[{id:"operator",version:1}],"질문 근거 철회")
+        assert.throws(()=>r.control.requests.questions.answer("review-request","user",question.id,[["기존 기준을 유지해 주세요"]]))
+        assert.equal(demand().grant_id,grantId);return
+      }
+      r.control.requests.questions.answer("review-request","user",question.id,[["기존 기준을 유지해 주세요"]]);r.control.requests.tick()
+      if(mode==="quota") {
+        assert.equal(demand().grant_id,grantId)
+        assert.equal(r.control.requests.get("review-request")!.state,"resuming")
+        assert.ok(r.control.evidence.unresolved(taskId).some(item=>item.id===oldObligations[0]));return
+      }
+      assert.notEqual(demand().grant_id,grantId)
+      assert.equal(demand().state,"issued")
+      assert.equal(r.engine.requireTask(taskId).status,"implemented")
+      const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(String(demand().grant_id))!.payload)) as ActivationGrant
+      assert.deepEqual(grant.writeScopes,[]);assert.ok(!grant.allowedTools.includes("task_graph_cognitive_write"))
+      assert.notEqual(r.control.requests.get("review-request")!.state,"completed")
+      assert.ok(oldObligations.every(id=>!r.control.evidence.applicable(r.control.evidence.obligation(id)!)))
+    }
+    accept(r,String(demand().grant_id),[],{findings:["verified review"]})
+    assert.equal(demand().state,"validating")
+    assert.ok(r.control.evidence.unresolved(taskId).some(item=>item.kind==="role-output"))
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    assert.equal(demand().state,"satisfied")
+    assert.equal(r.control.evidence.unresolved(taskId).filter(item=>item.kind==="role-output").length,0)
+    assert.notEqual(r.control.requests.get("review-request")!.state,"completed")
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM specialist_question_resumptions").get()!.n,2)
+    const repair=r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='issued'").get(taskId)!
+    assert.ok(repair)
+    writeFileSync(join(dir,"result.txt"),"done");accept(r,String(repair.id))
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    assert.equal(r.control.requests.get("review-request")!.state,"completed",r.control.requests.get("review-request")!.reason)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["pass","conflict","question","repair","adaptive"] as const)test(`L5는 서로 독립된 실제 검토와 합동 판정 없이는 완료되지 않는다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"adversarial-runtime-")),database=join(dir,"graph.db");let r=createGraphRuntime(database)
+  try {
+    const base=install(r),role=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
+    r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value);if(!input.evidence[0].content.output.findings.length)process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    r.control.validators.register({id:"joint",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value),joint=input.evidence.find(e=>e.validatorVersion==='adversarial-joint/v1').content;if(joint.reviews.length!==2||new Set(joint.reviews.map(r=>r.role.id)).size!==2||joint.reviews.some(r=>!r.output.findings.includes('contract confirmed')))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    if(mode==="repair")r.control.validators.register({id:"adversarial-repair",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value),p=input.evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;if(p.metadata.goal!=='Write done'||p.metadata.expectations[0].expectation.expectedArtifacts['result.txt']!=='done')process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    for(const id of ["qa","critic"])r.store.control.put("role_versions",id,1,{...role,id,validators:["review/v1"],activationPolicy:{...role.activationPolicy,maxInvocationsPerTask:2}})
+    const program:ControllerProgram={...base,version:2,maxClarifications:1,...(mode==="repair"?{maxLocalRepairs:0,replanner:{...base.planner,validators:["adversarial-repair/v1"],maxAttempts:1}}:{}),adversarialValidator:"joint/v1",worker:{...base.worker,profile:{...base.worker.profile,level:5,independentRoles:["qa","critic"]}},specialists:["qa","critic"].map(id=>({role:{id,version:1},profile:base.worker.profile}))}
+    if(mode==="adaptive") {
+      program.maxLocalRepairs=3
+      program.worker={...base.worker,profile:{...base.worker.profile,id:"depth-2",level:2}}
+      program.workerPrecision={profiles:([3,4,5] as const).map(level=>({...base.worker.profile,id:`depth-${level}`,level,independentRoles:level===5?["qa","critic"]:[]})),failureThresholds:[{minimumFailures:1,profileId:"depth-3"},{minimumFailures:2,profileId:"depth-4"},{minimumFailures:3,profileId:"depth-5"}]}
+    }
+    assert.throws(()=>r.control.requests.register({...program,adversarialValidator:undefined}),/L5 requires/)
+    r.control.requests.register(program)
+    r.control.requests.submit({id:"adversarial",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
+    r.control.requests.tick();accept(r,r.control.requests.get("adversarial")!.plannerGrant!,proposal);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    const taskId=r.control.requests.tasks("adversarial")[0]!,worker=String(r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=?").get(taskId)!.id)
+    writeFileSync(join(dir,"result.txt"),mode==="adaptive"?"wrong":"done");accept(r,worker)
+    if(mode==="adaptive")for(const level of [3,4,5]) {
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+      const next=r.store.db.prepare("SELECT id,payload FROM activation_grants WHERE task_id=? AND state='issued' AND json_extract(payload,'$.executionMode')='task'").get(taskId)!
+      assert.ok(next,r.control.requests.get("adversarial")!.reason)
+      const grant=JSON.parse(String(next.payload)) as ActivationGrant
+      assert.equal(grant.profile.level,level)
+      assert.equal(grant.profile.id,`depth-${level}`)
+      const manifest=JSON.stringify(r.store.control.get("context_manifests",grant.context.id,grant.context.version))
+      assert.ok(manifest.includes("measuredFailures"))
+      writeFileSync(join(dir,"result.txt"),level===5?"done":"wrong");accept(r,String(next.id))
+    }
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    assert.equal(r.engine.requireTask(taskId).status,"implemented")
+    assert.notEqual(r.control.requests.get("adversarial")!.state,"completed")
+    let reviews=r.store.db.prepare("SELECT grant_id FROM specialist_demands WHERE task_id=? ORDER BY decision_id").all(taskId)
+    assert.equal(reviews.length,2)
+    r.close();r=createGraphRuntime(database)
+    const reviewed:string[]=[]
+    for(let i=0;i<reviews.length;i++) {
+      let id=String(reviews[i]!.grant_id)
+      const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)!.payload)) as ActivationGrant
+      assert.deepEqual(grant.writeScopes,[])
+      assert.ok(!grant.allowedTools.includes("task_graph_cognitive_write"))
+      if(mode==="question"&&i===0) {
+        accept(r,id,[],{unresolvedQuestions:[{kind:"user",question:"검토 기준을 확인해 주세요."}]});r.control.requests.tick()
+        const question=r.control.requests.questions.pending("adversarial")[0]!
+        r.control.requests.questions.answer("adversarial","user",question.id,[["원래 계약을 검토해 주세요"]]);r.control.requests.tick()
+        id=String(r.store.db.prepare("SELECT new_grant FROM specialist_question_resumptions WHERE old_grant=?").get(id)!.new_grant)
+      }
+      reviewed.push(id)
+      accept(r,id,[],{findings:[["conflict","repair"].includes(mode)&&i===1?"contract contradicted":"contract confirmed"]})
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})
+      if(i===0)assert.notEqual(r.control.requests.get("adversarial")!.state,"completed")
+    }
+    for(let i=0;i<4;i++){await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()}
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM specialist_demands WHERE state='satisfied'").get()!.n,2)
+    assert.equal(r.store.db.prepare("SELECT state FROM adversarial_reviews").get()!.state,["conflict","repair"].includes(mode)?"failed":"satisfied",JSON.stringify({jobs:r.store.db.prepare("SELECT payload,state FROM validation_jobs WHERE validator='joint/v1'").all(),events:r.store.db.prepare("SELECT type,payload FROM event_outbox WHERE type IN ('ValidatorFailed','ValidatorExecutionFailed')").all()}))
+    assert.equal(r.control.requests.get("adversarial")!.state==="completed",!["conflict","repair"].includes(mode),r.control.requests.get("adversarial")!.reason)
+    if(mode==="repair") {
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='AdversarialReviewFailed'").get()!.n,1)
+      const repair=JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE state='planning'").get()!.payload))
+      const node={...proposal[0]!.node,taskSpec:{...proposal[0]!.node.taskSpec,goal:"Write done after reconciled review"}}
+      const patch={revisedTasks:[{id:node.nodeId,dependencies:[],objective:node.taskSpec.goal,expectedOutcome:node.outcome,decisionRefs:[]}],newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:[],invalidatedAssumptions:[],expectedOutcomes:[{taskId:node.nodeId,value:node.outcome}],confidence:1}
+      accept(r,repair.grantId,[{patch,tasks:[{node,expectation:proposal[0]!.expectation}],summary:"Resolve independently observed disagreement under the same contract"}]);r.control.requests.tick()
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick();r.control.requests.tick()
+      const next=r.control.requests.tasks("adversarial")[0]!
+      assert.notEqual(next,taskId)
+      const nextWorker=String(r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='issued'").get(next)!.id)
+      accept(r,nextWorker)
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+      assert.notEqual(r.control.requests.get("adversarial")!.state,"completed")
+      for(const row of r.store.db.prepare("SELECT grant_id FROM specialist_demands WHERE task_id=?").all(next))accept(r,String(row.grant_id),[],{findings:["contract confirmed"]})
+      for(let i=0;i<4;i++){await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()}
+      assert.equal(r.control.requests.get("adversarial")!.state,"completed",r.control.requests.get("adversarial")!.reason)
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM adversarial_reviews WHERE state='satisfied'").get()!.n,1)
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM adversarial_reviews WHERE state='failed'").get()!.n,1)
+    }
+    if(mode==="adaptive") {
+      assert.equal(selectWorkerPrecision(r.store.control,program,taskId).measuredFailures,3)
+      const measured=r.store.db.prepare("SELECT payload FROM task_observations WHERE json_extract(payload,'$.taskId')=?").all(taskId).map(row=>JSON.parse(String(row.payload))).find(observation=>observation.state.artifacts['result.txt']==='wrong')
+      const aggregate=r.control.evidence.require(measured.evidence[0])
+      const receipt=(aggregate.content as {observations:Array<{id:string;version:number}>}).observations[0]!
+      r.control.evidence.retract(receipt,[{id:"operator",version:1}],"Withdraw a measured failure receipt")
+      assert.throws(()=>selectWorkerPrecision(r.store.control,program,taskId),/unresolved historical failure evidence/)
+    }
+    for(const id of reviewed) {
+      const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)!.payload)) as ActivationGrant
+      const decision=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_decisions WHERE id=?").get(grant.decisionId)!.payload))
+      assert.equal(decision.signals.failure,null)
+      assert.ok(decision.reasons.includes("registered mandatory review"))
+    }
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })

@@ -39,13 +39,13 @@ export class WorkerQuestions {
     return grant
   }
   resume(request:ControlledRequest,program:ControllerProgram,question:RequestQuestion):boolean {
-    this.assertQuestion(request,question)
+    const previous=this.assertQuestion(request,question)
     if(question.target?.kind!=="worker"||question.state!=="answered"||!question.evidence)throw new Error("Worker resume requires an answered question")
     const {runtime,store}=this.controller,engine=runtime.engine,{taskId,attemptId}=question.target
     if(store.db.prepare("SELECT 1 FROM activation_grants WHERE task_id=? AND state IN ('issued','claimed')").get(taskId))return false
     const expectation=store.get("task_expectations",taskId,question.target.expectationVersion)
     withTaskInvalidation(engine,taskId,[question.source,question.evidence],()=>engine.reopenTask(taskId,`User clarified worker question ${question.id}`))
-    const grant=this.controller.issueRepair(request,program,taskId,{request:request.text,task:engine.requireTask(taskId),expectation,clarifications:request.clarifications,contract:"Continue the interrupted work using the user's clarification. Keep the original goal, expectation, acceptance criteria, and write scopes. Scope changes require evidence-based escalation."},`answer:${question.id}`)
+    const grant=this.controller.issueRepair(request,program,taskId,{request:request.text,task:engine.requireTask(taskId),expectation,clarifications:request.clarifications,contract:"Continue the interrupted work using the user's clarification. Keep the original goal, expectation, acceptance criteria, and write scopes. Scope changes require evidence-based escalation."},`answer:${question.id}`,previous.profile)
     store.db.prepare("INSERT INTO worker_question_resumptions VALUES(?,?,?,?)").run(question.id,taskId,attemptId,grant.id)
     store.event({id:`worker-resume:${question.id}`,type:"WorkerQuestionResumed",entityId:taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{questionId:question.id,attemptId,grantId:grant.id,evidence:question.evidence}})
     return true

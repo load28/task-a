@@ -26,6 +26,13 @@ export class Admission {
       if(decision.action!=="activate"||decision.taskId!==input.taskId||digest(decision.role)!==digest(input.role)||digest(decision.policy)!==digest(input.policy)) throw new Error("No matching activation authorization")
       if(input.expiresAt<=Date.now()) throw new Error("Expired grant")
       validateProfile(input.profile)
+      if(input.profile.level===5) {
+        const owner=this.store.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(input.taskId)
+        const row=owner&&this.store.db.prepare("SELECT payload FROM control_requests WHERE id=?").get(String(owner.request_id))
+        const request=row&&JSON.parse(String(row.payload))
+        const program=request?.program&&this.store.get<import("./requests.ts").ControllerProgram>("controller_programs",request.program.id,request.program.version)
+        if(input.executionMode!=="task"||!program?.adversarialValidator||![program.worker.profile,...(program.workerPrecision?.profiles??[])].some(profile=>digest(profile)===digest(input.profile))||digest(program.worker.role)!==digest(input.role))throw new Error("L5 grant requires the registered independent review execution protocol")
+      }
       const role=this.store.get<RoleVersion>("role_versions",input.role.id,input.role.version)
       const context=this.store.get<ContextManifest>("context_manifests",input.context.id,input.context.version)
       if(!role||role.lifecycle==="candidate"||!context||context.hash!==input.contextHash||context.taskId!==input.taskId||digest(context.role)!==digest(input.role)||digest(context.policy)!==digest(input.policy)) throw new Error("Unpinned role/context")

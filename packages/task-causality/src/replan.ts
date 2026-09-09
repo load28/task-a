@@ -2,7 +2,7 @@ import { ControlStore } from "../../task-control/src/store.ts"
 import { digest } from "../../task-control/src/value.ts"
 import type { ReplanLease, VersionRef } from "./model.ts"
 
-export interface ScopedPlanNode { id:string; parent?:string; dependencies:string[]; objective:string; expectedOutcome:unknown; decisionRefs:VersionRef[] }
+export interface ScopedPlanNode { id:string; parent?:string; dependencies:string[]; objective:string; expectedOutcome:unknown; decisionRefs:VersionRef[]; assumptionRefs?:VersionRef[] }
 export interface ReplanPatch {
   revisedTasks:ScopedPlanNode[];newTasks:ScopedPlanNode[];removedTasks:string[]
   newDependencies:Array<{from:string;to:string}>;preservedDecisions:VersionRef[]
@@ -33,6 +33,8 @@ export function validateScopedPatch(lease:ReplanLease,patch:ReplanPatch,current:
     if(node.parent!==prior.parent && (!node.parent||!allowed.has(node.parent))) throw new Error("Reparenting escapes the region")
     const immutable=prior.decisionRefs.filter(r=>lease.immutableDecisions.some(d=>digest(d)===digest(r)))
     if(immutable.some(r=>!node.decisionRefs.some(d=>digest(d)===digest(r))))throw new Error("Patch removes an immutable decision binding")
+    const assumptions=(prior.assumptionRefs??[]).filter(ref=>lease.immutableAssumptions?.some(kept=>digest(kept)===digest(ref)))
+    if(assumptions.some(ref=>!node.assumptionRefs?.some(kept=>digest(kept)===digest(ref))))throw new Error("Patch removes a valid assumption binding")
     if(node.dependencies.some(d=>!prior.dependencies.includes(d)&&!allowed.has(d))) throw new Error("New external read requires region escalation")
   }
   for(const node of patch.newTasks)if(node.dependencies.some(id=>!allowed.has(id)))throw new Error("New external read requires region escalation")
@@ -44,6 +46,10 @@ export function validateScopedPatch(lease:ReplanLease,patch:ReplanPatch,current:
   const refs=(items:VersionRef[])=>items.map(r=>digest(r)).sort()
   if(digest(refs(patch.preservedDecisions))!==digest(refs(lease.immutableDecisions))) throw new Error("Immutable decisions must be preserved exactly")
   if(patch.invalidatedAssumptions.some(r=>!lease.invalidAssumptions.some(a=>digest(a)===digest(r)))) throw new Error("Assumption invalidation lacks lease evidence")
+  if([...nodes.values()].some(node=>node.decisionRefs.some(ref=>lease.invalidDecisions?.some(invalid=>digest(invalid)===digest(ref)))))throw new Error("Patch retains an invalidated decision")
+  if(lease.immutableDecisions.some(ref=>![...nodes.values()].some(node=>node.decisionRefs.some(kept=>digest(kept)===digest(ref)))))throw new Error("Patch erases all consumers of an immutable decision")
+  if(lease.immutableAssumptions?.some(ref=>![...nodes.values()].some(node=>node.assumptionRefs?.some(kept=>digest(kept)===digest(ref)))))throw new Error("Patch erases all consumers of a valid assumption")
+  if([...nodes.values()].some(node=>node.assumptionRefs?.some(ref=>lease.invalidAssumptions.some(invalid=>digest(invalid)===digest(ref)))))throw new Error("Patch retains an invalidated assumption")
   const changedIds=new Set([...patch.revisedTasks,...patch.newTasks].map(n=>n.id))
   if(patch.expectedOutcomes.length!==changedIds.size||new Set(patch.expectedOutcomes.map(e=>e.taskId)).size!==changedIds.size||patch.expectedOutcomes.some(e=>!changedIds.has(e.taskId)))throw new Error("Expected outcomes escape or duplicate the patch")
   for(const node of [...patch.revisedTasks,...patch.newTasks]) {

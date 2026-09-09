@@ -2,6 +2,8 @@ import type { TaskGraphEngine } from "../../task-engine/src/index.ts"
 import type { Observation, PredictionError, TaskExpectation, VersionVector } from "../../task-causality/src/model.ts"
 import type { PredictionPolicy, Stability } from "../../task-causality/src/prediction.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
+import { decisionValid } from "./decisions.ts"
+import { integrationTuple } from "./boundary-validation.ts"
 import { digest } from "./value.ts"
 
 export interface PinnedExpectation extends TaskExpectation { predictionPolicy: PredictionPolicy; observationValidators?:string[] }
@@ -38,9 +40,29 @@ export function pinAttemptExpectation(engine:TaskGraphEngine,taskId:string,attem
 export function controlCompletionMissing(engine:TaskGraphEngine,taskIds:Iterable<string>):string[] {
   const store=engine.store.control,evidence=new EvidenceStore(store),ids=new Set(taskIds),entities=new Set(ids),missing:string[]=[]
   for(const id of ids) {
+    if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='decision_task_consumers'").get())for(const ref of store.db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(id))if(!decisionValid(store,{id:String(ref.id),version:Number(ref.version)}))missing.push(`decision is not validated: ${ref.id}@${ref.version}`)
+    if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='adversarial_reviews'").get())for(const row of store.db.prepare("SELECT state,obligation_id FROM adversarial_reviews WHERE task_id=?").all(id)) {
+      if(row.state!=="satisfied"||!row.obligation_id||!evidence.satisfied(evidence.obligation(String(row.obligation_id))!))missing.push("Independent adversarial review is unresolved")
+    }
+    if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='assumption_task_consumers'").get())for(const row of store.db.prepare("SELECT a.id,a.version,a.state,a.obligation_id FROM assumption_task_consumers c JOIN assumption_validity a ON a.id=c.id AND a.version=c.version WHERE c.task_id=?").all(id)) {
+      if(row.state!=="valid"||!evidence.satisfied(evidence.obligation(String(row.obligation_id))!))missing.push(`assumption is not validated: ${row.id}@${row.version}`)
+    }
     if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='specialist_demands'").get())for(const demand of store.db.prepare("SELECT decision_id FROM specialist_demands WHERE task_id=? AND mandatory=1 AND state<>'satisfied'").all(id))missing.push(`required specialist unresolved: ${demand.decision_id}`)
     for(const row of store.db.prepare("SELECT b.boundary_id FROM planning_boundary_members b JOIN control_heads h ON h.collection='planning_boundaries' AND h.id=b.boundary_id AND h.version=b.version WHERE b.task_id=?").all(id))entities.add(String(row.boundary_id))
     for(const set of engine.store.integrationSetsByParent(id))entities.add(set.id)
+    if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='boundary_validation_state'").get())for(const row of store.db.prepare("SELECT s.boundary_id,s.version,s.tuple_hash,b.payload FROM boundary_validation_state s JOIN planning_boundaries b ON b.id=s.boundary_id AND b.version=s.version JOIN planning_boundary_members m ON m.boundary_id=s.boundary_id AND m.version=s.version WHERE m.task_id=?").all(id)) {
+      const boundary=JSON.parse(String(row.payload)),observations:Observation[]=[]
+      if(boundary.authorization.some((ref:import("../../task-causality/src/model.ts").VersionRef)=>!evidence.valid(ref)))missing.push(`boundary authorization expired: ${boundary.id}`)
+      for(const member of boundary.members as string[]) {
+        const attempt=engine.store.currentAttempt(member),state=attempt&&store.db.prepare("SELECT observation_id,observation_version FROM control_prediction_state WHERE task_id=? AND attempt_id=?").get(member,attempt.id)
+        const observation=state&&store.get<Observation>("task_observations",String(state.observation_id),Number(state.observation_version))
+        if(observation&&engine.signals.matches(member))observations.push(observation)
+      }
+      if(observations.length===boundary.members.length) {
+        const tuple=integrationTuple(boundary,observations)
+        if(row.tuple_hash!==digest(tuple))missing.push(`boundary observations require validation: ${boundary.id}`)
+      }
+    }
     if(!engine.store.executionAllowed(id))missing.push(`execution fenced: ${id}`)
     if(engine.signals.stops().some(stop=>stop.taskId===id&&stop.state==="requested"))missing.push(`worker stop pending: ${id}`)
     const version=store.head("task_expectations",id)

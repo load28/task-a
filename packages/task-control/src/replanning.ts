@@ -5,6 +5,7 @@ import { CausalGraph } from "../../task-causality/src/graph.ts"
 import { ReplanLeases, validateScopedPatch, type ReplanPatch, type ScopedPlanNode } from "../../task-causality/src/replan.ts"
 import type { ReplanLease, VersionVector } from "../../task-causality/src/model.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
+import { decisionValid } from "./decisions.ts"
 import { canonical, digest } from "./value.ts"
 
 interface LeaseBinding { lease:ReplanLease; validators:string[]; nodes:ScopedPlanNode[]; planNodes:PlanNode[]; contextHash:string }
@@ -42,10 +43,27 @@ export class ScopedReplanning {
       if(!input.boundary.length||input.changedNodes.some(id=>!input.boundary.includes(id))||input.invalidatedNodes.some(id=>!input.boundary.includes(id))||input.preservedNodes.some(id=>input.invalidatedNodes.includes(id)))throw new Error("Invalid mutable boundary")
       const prior=this.store.db.prepare("SELECT payload FROM scoped_revision_bindings WHERE plan_id=? AND version=?").get(plan.id,plan.currentRevision)
       const nodes:ScopedPlanNode[]=prior?JSON.parse(String(prior.payload)):planNodes.map(n=>({id:n.nodeId,parent:n.parentNodeId,dependencies:n.dependsOnNodeIds,objective:n.taskSpec.goal||n.outcome,expectedOutcome:n.outcome,decisionRefs:[]}))
+      if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='decision_task_consumers'").get())for(const node of nodes) {
+        const link=this.engine.store.planLinks(plan.id,plan.currentRevision).find(link=>link.nodeId===node.id)
+        if(link)for(const row of this.store.db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(link.taskId)) {
+          const ref={id:String(row.id),version:Number(row.version)}
+          if(!node.decisionRefs.some(existing=>digest(existing)===digest(ref)))node.decisionRefs.push(ref)
+        }
+      }
+      if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='assumption_task_consumers'").get())for(const node of nodes) {
+        const link=this.engine.store.planLinks(plan.id,plan.currentRevision).find(link=>link.nodeId===node.id)
+        if(link)for(const row of this.store.db.prepare("SELECT id,version FROM assumption_task_consumers WHERE task_id=?").all(link.taskId)) {
+          const ref={id:String(row.id),version:Number(row.version)}
+          node.assumptionRefs??=[]
+          if(!node.assumptionRefs.some(existing=>digest(existing)===digest(ref)))node.assumptionRefs.push(ref)
+        }
+      }
+      const immutableAssumptions=[...new Map(nodes.flatMap(node=>node.assumptionRefs??[]).filter(ref=>!input.invalidAssumptions.some(invalid=>digest(invalid)===digest(ref))).map(ref=>[digest(ref),ref])).values()]
       for(const ref of input.immutableDecisions)if(!nodes.some(n=>n.decisionRefs.some(r=>digest(r)===digest(ref))))throw new Error("Unknown immutable decision binding")
       const generation=Number(this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation??0)+1
       const {validators,...fields}=input
-      const lease:ReplanLease={...fields,id:randomUUID(),baseRevision:plan.currentRevision,graphHash:new CausalGraph(this.store).hash(),inputVector:this.inputs(plan.id,plan.currentRevision),generation}
+      const lease:ReplanLease={...fields,immutableAssumptions,id:randomUUID(),baseRevision:plan.currentRevision,graphHash:new CausalGraph(this.store).hash(),inputVector:this.inputs(plan.id,plan.currentRevision),generation}
+      this.assertManagedBindings(lease)
       this.leases.issue(lease)
       this.store.db.prepare("INSERT INTO controlled_plans VALUES(?,?) ON CONFLICT(plan_id) DO UPDATE SET generation=excluded.generation").run(plan.id,generation)
       this.store.db.prepare("UPDATE scoped_replan_stages SET state='fenced' WHERE plan_id=? AND state IN ('lease','staged')").run(plan.id)
@@ -55,6 +73,15 @@ export class ScopedReplanning {
       return lease
     })
   }
+  private assertManagedBindings(lease:ReplanLease):void {
+    for(const ref of lease.immutableAssumptions??[]) {
+      const row=this.store.db.prepare("SELECT state,obligation_id FROM assumption_validity WHERE id=? AND version=?").get(ref.id,ref.version)
+      if(row?.state!=="valid"||!this.evidence.satisfied(this.evidence.obligation(String(row.obligation_id))!))throw new Error("Replanning assumption is not currently validated")
+    }
+    if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='decision_validity'").get())for(const ref of lease.immutableDecisions) {
+      if(this.store.db.prepare("SELECT 1 FROM decision_validity WHERE id=? AND version=?").get(ref.id,ref.version)&&!decisionValid(this.store,ref))throw new Error("Replanning decision is not currently validated")
+    }
+  }
   assertCurrent(leaseId:string):ReplanLease {
     const row=this.store.db.prepare("SELECT state,payload FROM scoped_replan_stages WHERE id=?").get(leaseId)
     if(!row||row.state!=="lease")throw new Error("Lease is unknown, fenced or already staged")
@@ -62,11 +89,14 @@ export class ScopedReplanning {
     const plan=this.engine.store.findWorkPlan(lease.planId)
     if(!plan||plan.currentRevision!==lease.baseRevision||this.engine.store.activePlanVersion(plan.id)!==lease.baseRevision||lease.expiresAt<=Date.now()||this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation!==lease.generation||new CausalGraph(this.store).hash()!==lease.graphHash)throw new Error("Replanning lease is stale or expired")
     if(digest(this.inputs(plan.id,lease.baseRevision))!==digest(lease.inputVector)||digest(this.engine.revisions.context(plan.id,lease.baseRevision))!==binding.contextHash)throw new Error("Replanning inputs changed")
+    this.assertManagedBindings(lease)
     lease.evidence.forEach(ref=>this.evidence.require(ref))
     return lease
   }
   private check(binding:LeaseBinding,patch:ReplanPatch):ScopedPlanNode[] {
-    const lease=binding.lease,plan=this.engine.store.findWorkPlan(lease.planId)!
+    const lease=binding.lease
+    this.assertManagedBindings(lease)
+    const plan=this.engine.store.findWorkPlan(lease.planId)!
     if(digest(this.inputs(plan.id,lease.baseRevision))!==digest(lease.inputVector)||digest(this.engine.revisions.context(plan.id,lease.baseRevision))!==binding.contextHash)throw new Error("Replanning inputs changed")
     return validateScopedPatch(lease,patch,{revision:plan.currentRevision,graphHash:new CausalGraph(this.store).hash(),generation:Number(this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation),nodes:binding.nodes,now:Date.now(),validEvidence:ref=>this.evidence.valid(ref)})
   }

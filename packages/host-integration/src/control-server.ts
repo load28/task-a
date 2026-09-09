@@ -36,7 +36,10 @@ export class ControlServer implements HarnessServer {
   }
   async hasMessage(binding:ServerBinding):Promise<boolean>{return !!this.controller(binding.workspace).get(binding.messageID)}
   async inspect(binding:ServerBinding):Promise<ServerState> {
-    const controller=this.controller(binding.workspace);controller.tick()
+    const controller=this.controller(binding.workspace),before=controller.get(binding.messageID)
+    const program=before?.program&&controller.store.get<import("../../task-control/src/requests.ts").ControllerProgram>("controller_programs",before.program.id,before.program.version)
+    if(before&&!["completed","cancelled","failed"].includes(before.state)&&program?.fileObservation)controller.runtime.files.refreshNative(binding.workspace,program.fileObservation)
+    controller.tick()
     const request=controller.get(binding.messageID)
     if(!request)return {state:"interrupted",text:"제어 이벤트를 찾을 수 없습니다.",questions:[],permissions:[],activity:[]}
     const state:ServerState["state"]=request.state==="cancelled"?"interrupted":["completed","failed","waiting"].includes(request.state)?request.state as ServerState["state"]:"running"

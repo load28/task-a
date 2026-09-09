@@ -53,7 +53,7 @@ export interface PropagationResult {
 export interface ReplanLease {
   id: string; planId: string; baseRevision: number; graphHash: string; inputVector: VersionVector
   changedNodes: string[]; invalidatedNodes: string[]; preservedNodes: string[]
-  boundary: string[]; immutableDecisions: VersionRef[]; invalidAssumptions: VersionRef[]
+  boundary: string[]; immutableDecisions: VersionRef[]; invalidAssumptions: VersionRef[]; invalidDecisions?:VersionRef[]; immutableAssumptions?:VersionRef[]
   predictionErrors: PredictionError[]; violatedInvariants: string[]; evidence: VersionRef[]
   expiresAt: number; generation: number
 }

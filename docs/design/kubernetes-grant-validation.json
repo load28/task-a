@@ -1,7 +1,7 @@
 {
   "passed": true,
   "context": "kind-task-agent-local",
-  "namespace": "grant-validation-2a8d09d4",
+  "namespace": "grant-validation-9497b33f",
   "modelCalls": 0,
   "checks": [
     "actual PVC read-only mount",
@@ -28,30 +28,37 @@
         "timedOut": false,
         "inputVector": [
           {
-            "entityId": "de73236e-b8cc-4751-b731-2648b1c114b6",
+            "entityId": "ee2095d4-84bf-4014-8bd5-d86e831b7587",
             "port": "inputs",
             "view": "legacy-complete-input",
             "version": 1,
             "hash": "5800a4310a7939e4b898ec9c19a1d7f49776fa03746ebc99828f7678040f73c5"
           },
           {
-            "entityId": "de73236e-b8cc-4751-b731-2648b1c114b6",
+            "entityId": "ee2095d4-84bf-4014-8bd5-d86e831b7587",
             "port": "validation-attempt",
             "view": "attempt",
             "version": 1,
-            "hash": "bd8db400f4aa2039ebd61ea79d79292bc510e2d676dd7a486d367cfa3a8a1325"
+            "hash": "2aacd30efa1655f171e8c2b0f90ebd8d0f411855dc770959a835e502915f1db4"
           }
         ],
-        "inputHash": "bd2f57ca73fc8be297a2717618f12ce5553200c68916c0b2bf80fa937cf3e18b",
+        "inputHash": "dee6a335829d3ea44ac8543289a683c2f1540a3876de0678a02700d4916d9d53",
         "commandHash": "f200eea3bf0fae42d06919082de8350da00b8a1b2d4237ed5a7c684063d1c02b",
         "isolation": {
           "kind": "isolated-pod",
           "network": false,
           "workspaceReadOnly": true
         },
-        "startedAt": 1788956225832,
-        "finishedAt": 1788956225866
+        "startedAt": 1788995436127,
+        "finishedAt": 1788995436173
       }
     ]
+  },
+  "build": {
+    "image": "task-agent-control:verification-current",
+    "imageId": "sha256:84a17933bbb5db1016839484b4505e54d401e48cc8fc380a80a8aada6d571416",
+    "sourceHash": "b15c692beb2e8944821e62ee69510a35231892177a1b98673ff0588542ed640b",
+    "algorithm": "sha256(sorted path + NUL + bytes + NUL) for package manifests, apps, packages and scripts",
+    "date": "2026-09-10"
   }
 }

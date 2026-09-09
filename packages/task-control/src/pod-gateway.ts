@@ -25,9 +25,14 @@ export class PodGateway {
     let result:unknown
     if(name==="cognitive_context")result=context
     else if(name==="cognitive_read") {
-      const file=this.path(args.path,grant.readScopes??[],true),stat=lstatSync(file)
-      if(!stat.isFile()||stat.size>authorization.remainingInputTokens)throw new Error("Pod read exceeds the context budget")
-      const content=new TextDecoder("utf-8",{fatal:true}).decode(readFileSync(file));result={path:args.path,content,hash:digest(content)}
+      if(prior?.state==="read-prepared")result=prior.result
+      else {
+        const file=this.path(args.path,grant.readScopes??[],true),stat=lstatSync(file)
+        if(!stat.isFile()||stat.size>authorization.remainingInputTokens)throw new Error("Pod read exceeds the context budget")
+        const content=new TextDecoder("utf-8",{fatal:true}).decode(readFileSync(file));result={path:args.path,content,hash:digest(content)}
+        save("read-prepared",result)
+      }
+      await this.client.request("/observe-read",{sessionId:workerSessionId,callId:authorizationCallId,path:args.path,hash:(result as {hash:string}).hash})
     }else if(name==="cognitive_write") {
       if(grant.executionMode!=="task"||typeof args.content!=="string"||!(args.previousHash===null||typeof args.previousHash==="string"))throw new Error("Invalid Pod write")
       const file=this.path(args.path,grant.writeScopes),stat=lstatSync(file,{throwIfNoEntry:false}),previous=stat?digest(readFileSync(file,"utf8")):null,hash=digest(args.content)

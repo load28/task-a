@@ -114,3 +114,23 @@ test("실제 HostService wake가 durable grant를 전용 executor에 전달한�
     assert.deepEqual(observed!.calls,[grant.id])
   } finally {await service.close();rmSync(directory,{recursive:true,force:true})}
 })
+
+test("더 새로운 입력으로 fence된 실행은 응답 대기 중에도 실제 중지를 확인한다",async()=>{
+  const f=fixture();let finish!:()=>void
+  const pending=new Promise<void>(resolve=>{finish=resolve}),a=adapter(f.r,()=>pending),d=new GrantDispatcher(f.r.control,a.executor,1)
+  try {
+    const grant=f.issue();d.tick()
+    assert.equal(a.calls.length,1)
+    f.r.engine.atomic(()=>f.r.control.admission.fence(grant.taskId))
+    a.executor.stop=async()=>({stopped:false,evidence:"termination still pending"})
+    await d.recover()
+    assert.equal(d.status()[0]!.state,"stopping")
+    d.tick();assert.equal(a.calls.length,1)
+    a.executor.stop=async()=>{finish();return {stopped:true,evidence:"adapter observed termination"}}
+    await d.recover();await d.settle()
+    assert.equal(d.status()[0]!.state,"failed")
+    assert.equal(f.r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(grant.id)!.state,"fenced")
+    assert.equal(f.r.store.db.prepare("SELECT state FROM budget_reservations WHERE id=?").get(grant.id)!.state,"reserved")
+    d.tick();assert.equal(a.calls.length,1)
+  }finally{finish();await d.close();f.r.close()}
+})

@@ -26,11 +26,33 @@ export class EvidenceStore {
   }
   valid(ref:VersionRef, now=Date.now()): boolean {
     const value=this.store.get<Evidence>("evidence_versions",ref.id,ref.version)
-    return !!value && digest(value.content)===value.contentHash && (value.expiresAt===null||value.expiresAt>now)
+    return !!value && !this.store.db.prepare("SELECT 1 FROM evidence_retractions WHERE id=? AND version=?").get(ref.id,ref.version) && digest(value.content)===value.contentHash && (value.expiresAt===null||value.expiresAt>now)
   }
   require(ref:VersionRef,now=Date.now()): Evidence {
     if(!this.valid(ref,now)) throw new Error("Missing or expired evidence")
     return this.store.get<Evidence>("evidence_versions",ref.id,ref.version)!
+  }
+  retract(ref:VersionRef,authorization:VersionRef[],reason:string):void {
+    this.store.atomic(()=>{
+      if(!reason.trim()||!authorization.length)throw new Error("Evidence retraction requires a reason and authorization")
+      if(!this.store.get("evidence_versions",ref.id,ref.version))throw new Error("Unknown evidence")
+      for(const source of authorization)if(!["user","code"].includes(this.require(source).type)||source.id===ref.id&&source.version===ref.version)throw new Error("Evidence cannot authorize its own retraction")
+      const id=`evidence-retracted:${ref.id}:${ref.version}`
+      if(this.store.db.prepare("SELECT 1 FROM evidence_retractions WHERE id=? AND version=?").get(ref.id,ref.version))return
+      this.store.db.prepare("INSERT INTO evidence_retractions VALUES(?,?,?)").run(ref.id,ref.version,id)
+      this.store.event({id,type:"EvidenceRetracted",entityId:ref.id,correlationId:ref.id,schemaVersion:1,timestamp:Date.now(),payload:{evidence:ref,authorization,reason}})
+    })
+  }
+  expire(now=Date.now(),limit=1000):number {
+    if(!Number.isFinite(now)||!Number.isSafeInteger(limit)||limit<1)throw new Error("Invalid evidence timer budget")
+    return this.store.atomic(()=>{
+      const rows=this.store.db.prepare("SELECT id,version,expires_at FROM evidence_expirations WHERE emitted=0 AND expires_at<=? ORDER BY expires_at,id,version LIMIT ?").all(now,limit)
+      for(const row of rows) {
+        this.store.db.prepare("UPDATE evidence_expirations SET emitted=1 WHERE id=? AND version=?").run(String(row.id),Number(row.version))
+        this.store.event({id:`evidence-expired:${row.id}:${row.version}`,type:"EvidenceExpired",entityId:String(row.id),correlationId:String(row.id),schemaVersion:1,timestamp:now,payload:{evidence:{id:String(row.id),version:Number(row.version)},expiredAt:Number(row.expires_at)}})
+      }
+      return rows.length
+    })
   }
   createObligation(input:Omit<Obligation,"id"|"state"|"evidence">): Obligation {
     return this.store.atomic(()=>{
@@ -83,6 +105,18 @@ export class EvidenceStore {
   /** An attempt-scoped observation is replaced only by a mandatory obligation
    * atomically pinned for the current attempt. Historical failures remain stored. */
   applicable(obligation:Obligation):boolean {
+    if(obligation.kind==="role-output"&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='specialist_question_resumptions'").get()) {
+      const resumed=this.store.db.prepare("WITH RECURSIVE chain(decision_id,grant_id) AS (SELECT decision_id,new_grant FROM specialist_question_resumptions WHERE old_obligation=? UNION SELECT r.decision_id,r.new_grant FROM specialist_question_resumptions r JOIN chain c ON r.old_grant=c.grant_id AND r.decision_id=c.decision_id) SELECT 1 FROM chain c JOIN specialist_demands d ON d.decision_id=c.decision_id AND d.grant_id=c.grant_id WHERE d.mandatory=1").get(obligation.id)
+      if(resumed)return false
+    }
+    if(obligation.kind.startsWith("integration:")&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='boundary_validation_state'").get()) {
+      const current=this.store.db.prepare("SELECT version,tuple_hash FROM boundary_validation_state WHERE boundary_id=?").get(obligation.entityId)
+      if(current) {
+        const policy=obligation.tuple.find(input=>input.entityId===obligation.entityId&&input.port==="boundary"&&input.view==="integration-policy")
+        if(policy&&policy.version!==Number(current.version))return false
+        if(current.tuple_hash!=="pending")return current.tuple_hash===digest(obligation.tuple)
+      }
+    }
     if(obligation.kind!=="prediction-state")return true
     const pinned=obligation.tuple.find(v=>v.entityId===obligation.entityId&&v.port==="validation-attempt"&&v.view==="attempt")
     if(!pinned)return true
@@ -95,7 +129,7 @@ export class EvidenceStore {
   }
   /** Satisfaction is a live evidence predicate, not a permanent status bit. */
   satisfied(obligation:Obligation,now=Date.now()):boolean {
-    if(obligation.state!=="satisfied")return false
+    if(obligation.state!=="satisfied"||obligation.reason.some(ref=>!this.valid(ref,now)))return false
     const evidence=obligation.evidence.filter(ref=>this.valid(ref,now)).map(ref=>this.require(ref,now))
     return obligation.validators.every(validator=>evidence.some(e=>
       e.validatorVersion===validator&&["test","runtime"].includes(e.type)&&

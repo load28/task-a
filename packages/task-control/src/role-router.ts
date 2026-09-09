@@ -26,7 +26,10 @@ export class RoleRouter {
     return store.consume("specialist-router/v1","measured-failure/v1",event=>{
       if(event.type==="ValidationSatisfied") {
         const id=(event.payload as {obligationId:string}).obligationId,obligation=runtime.evidence.obligation(id)
-        if(obligation?.kind==="role-output"&&runtime.evidence.satisfied(obligation))store.db.prepare("UPDATE specialist_demands SET state='satisfied' WHERE obligation_id=?").run(id)
+        if(obligation?.kind==="role-output"&&runtime.evidence.satisfied(obligation)) {
+          const result=store.db.prepare("UPDATE specialist_demands SET state='satisfied' WHERE obligation_id=? AND state<>'satisfied'").run(id)
+          if(result.changes)store.event({id:`specialist-validated:${id}`,type:"SpecialistReviewValidated",entityId:obligation.entityId,correlationId:obligation.entityId,schemaVersion:1,timestamp:Date.now(),payload:{obligationId:id}})
+        }
         return
       }
       if(!["ValidatorFailed","PredictionObserved","AgentCompleted"].includes(event.type))return
@@ -74,7 +77,7 @@ export class RoleRouter {
       for(const entry of program.specialists) {
         const role=store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
         const previous=store.db.prepare("SELECT d.payload FROM activation_decisions d JOIN activation_grants g ON g.decision_id=d.id WHERE d.task_id=? AND d.role_id=? ORDER BY d.rowid DESC").all(event.entityId,role.id)
-        const decision=runtime.admission.record(activation({taskId:event.entityId,eventId:event.id,eligible:runtime.engine.store.executionAllowed(event.entityId),role,policy:program.policy,signals,now:event.timestamp,lastInvocation:previous[0]?JSON.parse(String(previous[0].payload)).timestamp:undefined,invocations:previous.length}))
+        const decision=runtime.policyReplay.recordActivation({taskId:event.entityId,eventId:event.id,eligible:runtime.engine.store.executionAllowed(event.entityId),role,policy:program.policy,signals,now:event.timestamp,lastInvocation:previous[0]?JSON.parse(String(previous[0].payload)).timestamp:undefined,invocations:previous.length},request.id,[proofRef])
         if(decision.action==="skip"||decision.action==="defer"&&!decision.hard.length)continue
         const demand={requestId:request.id,entry,proofRef,obligationId:obligation.id,signals,budget:this.budget(program.account)}
         store.db.prepare("INSERT OR IGNORE INTO specialist_demands VALUES(?,?,?,'deferred',NULL,NULL,?)").run(decision.id,event.entityId,Number(decision.hard.length>0),JSON.stringify(demand))
@@ -125,16 +128,16 @@ export class RoleRouter {
       const obligation=runtime.evidence.obligation(demand.obligationId)
       if(!obligation||!runtime.evidence.applicable(obligation)||digest(obligation.tuple)!==digest(observationInputVector(runtime.engine,taskId)))return
       if(authorization.action!=="activate"&&!timer)return
-      const eligibility=activation({...authorization,eventId:timer?String(timer.id):`admission-recheck:${authorization.id}:${budget}`,role,signals:demand.signals,eligible:runtime.engine.store.executionAllowed(taskId),now,lastInvocation,invocations:previous.length})
+      const eligibility=activation({...authorization,eventId:timer?String(timer.id):`admission-recheck:${authorization.id}:${budget}`,role,signals:demand.signals,eligible:runtime.engine.store.executionAllowed(taskId),now,lastInvocation,invocations:previous.length,...(demand.requiredBy?{requiredBy:demand.requiredBy}:{})})
       if(timer||eligibility.action!=="activate") {
-        authorization=runtime.admission.record(eligibility)
+        authorization=runtime.policyReplay.recordActivation({...authorization,eventId:eligibility.eventId,role,signals:demand.signals,eligible:runtime.engine.store.executionAllowed(taskId),now,lastInvocation,invocations:previous.length,...(demand.requiredBy?{requiredBy:demand.requiredBy}:{})},request.id,[demand.proofRef])
         demand.authorizationDecisionId=authorization.id;persist()
         this.cooldown(authorization,lastInvocation,role.activationPolicy.cooldownMs)
       }
       if(eligibility.action!=="activate")return
       try {store.atomic(()=>{
         const proof=runtime.evidence.require(demand.proofRef),snapshot=runtime.engine.signals.capture(taskId),inputVector=[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
-        const context=controlledContext(runtime,taskId,role,program.policy,entry.profile,[{id:proof.id,version:proof.version,kind:"evidence",content:JSON.stringify({failedValidation:proof,expectation:store.get("task_expectations",taskId,store.head("task_expectations",taskId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,taskId],evidence:[demand.proofRef]}])
+        const context=controlledContext(runtime,taskId,role,program.policy,entry.profile,[{id:proof.id,version:proof.version,kind:"evidence",content:JSON.stringify({reviewKind:demand.kind??"measured-failure",reviewInput:proof,expectation:store.get("task_expectations",taskId,store.head("task_expectations",taskId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,taskId],evidence:[demand.proofRef]}])
         store.put("context_manifests",context.id,1,context)
         const grant=runtime.admission.issue({taskId,decisionId:authorization.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:[obligation.id],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
         store.db.prepare("UPDATE specialist_demands SET state='issued',grant_id=? WHERE decision_id=?").run(grant.id,String(row.decision_id))

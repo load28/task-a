@@ -6,9 +6,17 @@ import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { ValidatorRegistry,type RegisteredValidator } from "../../task-evidence/src/registry.ts"
 import { decodeSemanticOutput,aggregateSemanticOutputs } from "../../task-evidence/src/semantic-output.ts"
 import { CognitiveMemory } from "../../task-context/src/memory.ts"
+import { DecisionLedger } from "./decisions.ts"
+import { AssumptionLedger } from "./assumptions.ts"
 import { Admission } from "./admission.ts"
 import { ScopedReplanning } from "./replanning.ts"
 import { RequestController } from "./requests.ts"
+import { PolicyRegression } from "../../task-policy/src/regression.ts"
+import { PolicyReplay } from "../../task-policy/src/replay.ts"
+import { AdversarialReview } from "./adversarial-review.ts"
+import { OutcomeRecorder } from "./outcomes.ts"
+import { BoundaryValidation } from "./boundary-validation.ts"
+import { FileObservations } from "./file-observations.ts"
 import { RoleRouter } from "./role-router.ts"
 import { digest } from "./value.ts"
 import type { SystemEvent } from "./store.ts"
@@ -22,10 +30,18 @@ export class ControlRuntime {
   readonly evidence:EvidenceStore
   readonly memory:CognitiveMemory
   readonly admission:Admission
+  readonly assumptions:AssumptionLedger
+  readonly decisions:DecisionLedger
   readonly validators:ValidatorRegistry
   readonly replanning:ScopedReplanning
   readonly requests:RequestController
   readonly roles:RoleRouter
+  readonly files:FileObservations
+  readonly boundaries:BoundaryValidation
+  readonly adversarial:AdversarialReview
+  readonly outcomes:OutcomeRecorder
+  readonly policyReplay:PolicyReplay
+  readonly policyRegression:PolicyRegression
   private draining=false
   constructor(engine:TaskGraphEngine) {
     this.engine=engine
@@ -37,11 +53,41 @@ export class ControlRuntime {
     this.replanning=new ScopedReplanning(engine)
     this.requests=new RequestController(this)
     this.roles=new RoleRouter(this)
+    this.files=new FileObservations(this.store,(taskId,input,evidence)=>{
+      this.memory.invalidate(input.entityId,input.port,input.view,input.hash,`file-version:${input.entityId}:${input.version}`)
+      this.engine.signals.invalidate(taskId,`Observed file input changed: ${input.entityId}@${input.version}`)
+      this.store.event({id:`file-invalidated:${taskId}:${input.entityId}:${input.version}`,type:"FileInputInvalidated",entityId:taskId,correlationId:taskId,schemaVersion:1,timestamp:Date.now(),payload:{input,evidence}})
+      const owner=this.store.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(taskId)
+      const request=owner&&this.requests.get(String(owner.request_id))
+      if(request&&["executing","waiting","resuming"].includes(request.state)) {
+        const causeId=`input-change:${request.id}:${taskId}:${input.entityId}:${input.version}`
+        this.store.event({id:causeId,type:"InputObservationChanged",entityId:taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{taskIds:[taskId],reason:"observed input change",input,evidence}})
+        this.requests.questions.supersedeForChange(request.id,causeId)
+      }
+    })
+    this.boundaries=new BoundaryValidation(this)
+    this.adversarial=new AdversarialReview(this)
+    this.outcomes=new OutcomeRecorder(this)
+    this.policyReplay=new PolicyReplay(this)
+    this.policyRegression=new PolicyRegression(this)
+    this.assumptions=new AssumptionLedger(this)
+    this.decisions=new DecisionLedger(this)
     engine.store.beforeCommit(()=>{
+      while(this.evidence.expire()===1000){ /* one durable event per actual expiry */ }
       while(this.drain()===1000){ /* drain the finite committed backlog */ }
       while(this.validators.ingest()===1000){ /* schedule L1 jobs without invoking a model */ }
+      while(this.adversarial.ingest()===1000){ /* require L5 reviews before semantic completion can be adopted */ }
       while(this.ingestObservations()===1000){ /* adopt only current exact-input validator observations */ }
+      while(this.boundaries.ingest()===1000){ /* measured tuples require seven independent obligations */ }
+      while(this.files.ingest()===1000){ /* observed file ports bind only accepted role results */ }
       while(this.roles.ingest()===1000){ /* only measured evidence activates optional roles */ }
+      while(this.adversarial.ingest()===1000){ /* L5 requires separate reviewers and a joint independent verdict */ }
+      while(this.outcomes.ingest()===1000){ /* accepted costs retain unknown usefulness labels */ }
+      while(this.policyReplay.ingest()===1000){ /* shadow decisions never authorize production effects */ }
+      while(this.policyRegression.ingest()===1000){ /* only pinned validator verdicts can move a current policy head */ }
+      while(this.assumptions.ingest()===1000){ /* independent proposition validation and source invalidation */ }
+      while(this.decisions.ingest()===1000){ /* validated decisions retain their source and assumption lineage */ }
+      while(this.memory.ingest()===1000){ /* retract only records that consumed the invalidated reference */ }
     })
   }
   get store(){return this.engine.store.control}
@@ -137,14 +183,17 @@ export class ControlRuntime {
         const deadlines=measured.flatMap(item=>item.expiresAt===null?[]:[item.expiresAt])
         const observed=this.evidence.put({id,version:1,type:"runtime",source:"registered semantic validator aggregation",producer:"deterministic-semantic-aggregation",validatorVersion:"semantic-aggregation/v1",timestamp:Math.max(...measured.map(item=>item.timestamp)),content,contentHash:digest(content),inputVector:proof.inputVector,confidence:Math.min(...measured.map(item=>item.confidence)),expiresAt:deadlines.length?Math.min(...deadlines):null})
         this.observe({id,version:1,taskId:event.entityId,expectation:{id:event.entityId,version},state:semantic.state,evidence:[observed],inputVector:proof.inputVector},expectation.predictionPolicy,semantic.criticalViolations)
-        const task=this.engine.requireTask(event.entityId)
-        if(task.status==="implemented"&&!controlCompletionMissing(this.engine,[task.id]).length&&task.acceptanceCriteria.every(criterion=>semantic.state.behavior?.[criterion.id]===true)) {
-          this.engine.completeTask({taskId:task.id,attemptToken:this.engine.store.currentAttempt(task.id)?.token,summary:"Registered semantic validators confirmed the pinned expectations",verification:{passed:true,criteriaSatisfied:task.acceptanceCriteria.map(c=>c.id),evidence:`validator evidence ${input.evidence.id}@${input.evidence.version}`}})
-        }
+        this.completeObserved(event.entityId)
       }catch(error) {
         this.store.event({id:`observation-rejected:${event.id}`,type:"ObservationRejected",entityId:event.entityId,correlationId:event.correlationId,schemaVersion:1,timestamp:Date.now(),payload:{evidence:input.evidence,reason:error instanceof Error?error.message:"Invalid observation"}})
       }
     },1000)
+  }
+  completeObserved(taskId:string):void {
+    const task=this.engine.requireTask(taskId),attempt=this.engine.store.currentAttempt(taskId)
+    const row=attempt&&this.store.db.prepare("SELECT observation_id,observation_version FROM control_prediction_state WHERE task_id=? AND attempt_id=?").get(taskId,attempt.id)
+    const observed=row&&this.store.get<Observation>("task_observations",String(row.observation_id),Number(row.observation_version))
+    if(task.status==="implemented"&&observed&&!controlCompletionMissing(this.engine,[taskId]).length&&task.acceptanceCriteria.every(criterion=>observed.state.behavior?.[criterion.id]===true))this.engine.completeTask({taskId,attemptToken:attempt!.token,summary:"Registered validators confirmed the pinned expectations and integration obligations",verification:{passed:true,criteriaSatisfied:task.acceptanceCriteria.map(c=>c.id),evidence:`validator observation ${observed.id}@${observed.version}`}})
   }
   observe(observation:Observation,policy:PredictionPolicy,violations:string[]):VersionRef {
     return this.store.atomic(()=>{

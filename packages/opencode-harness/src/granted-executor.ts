@@ -4,6 +4,7 @@ import { mkdirSync,existsSync,readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import type { ControlRuntime } from "../../task-control/src/runtime.ts"
 import { AuthorityHttpServer } from "../../task-control/src/authority-http.ts"
+import { CognitiveGateway } from "../../task-control/src/gateway.ts"
 import { GuardAuthority } from "../../task-control/src/guard-authority.ts"
 import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
 import { attemptInputVector } from "../../task-control/src/completion.ts"
@@ -142,6 +143,7 @@ export class GrantedOpenCodeExecutor {
       const output=JSON.parse(response.data.parts.filter(part=>part.type==="text").map(part=>part.text).join("\n")) as AgentOutput
       const usage=store.db.prepare("SELECT input_used,output_used,tool_used FROM grant_sessions WHERE session_id=?").get(session)!
       engine.atomic(()=>{
+        new CognitiveGateway(engine,this.workspace).assertReadsCurrent(grant.id)
         this.runtime.admission.submit(grant.id,session,output,{inputTokens:Number(usage.input_used),outputTokens:Number(usage.output_used),toolCalls:Number(usage.tool_used),elapsedMs:Date.now()-began})
         if(grant.executionMode==="task") {
           engine.completeTask({taskId:grant.taskId,attemptToken:engine.store.currentAttempt(grant.taskId)?.token,summary:`Role output recorded: ${role.name}; deterministic validation remains required`})

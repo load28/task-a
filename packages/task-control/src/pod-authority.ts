@@ -58,8 +58,16 @@ export class PodAuthority {
       })
     }
     if(input.sessionId!==grant.worker||!grant.worker)throw new Error("Foreign Pod session")
-    if(path==="/authorize"&&this.runtime.store.db.prepare("SELECT 1 FROM pod_model_results WHERE grant_id=?").get(grant.id))throw new Error("Pod model phase is sealed for independent validation")
+    if(["/authorize","/observe-read"].includes(path)&&this.runtime.store.db.prepare("SELECT 1 FROM pod_model_results WHERE grant_id=?").get(grant.id))throw new Error("Pod model phase is sealed for independent validation")
     if(path==="/authorize")return this.guard.authorize(grant.worker,input.operation)
+    if(path==="/observe-read") {
+      const {callId,path:file,hash}=input
+      if(typeof file!=="string"||!file||file.startsWith("/")||file.includes("\\")||file.includes("\0")||file.split("/").some(part=>["",".","..",".git",".codex",".agents",".task-agent"].includes(part))||!grant.readScopes?.some(scope=>scope==="."||file===scope||file.startsWith(scope+"/"))||typeof hash!=="string"||! /^[0-9a-f]{64}$/.test(hash)||typeof callId!=="string")throw new Error("Pod read report exceeds file scope")
+      const admitted=this.runtime.store.db.prepare("SELECT c.tool,a.args_hash FROM grant_tool_calls c JOIN grant_tool_arguments a ON a.session_id=c.session_id AND a.call_id=c.call_id WHERE c.session_id=? AND c.call_id=?").get(grant.worker,callId)
+      if(admitted?.tool!=="task_graph_cognitive_read"||admitted.args_hash!==digest({path:file}))throw new Error("Pod read report has no matching admitted tool arguments")
+      // A clone is a distinct input namespace until its source lineage is attested.
+      return this.runtime.files.read(grant,`pod-clone:${grant.id}`,file,hash,callId,"pod")
+    }
     if(path==="/record-model")return this.guard.recordModel(grant.worker,input.messageId,input.usage)
     if(path==="/record-tool")return this.guard.recordTool(grant.worker,input.callId,input.result)
     if(path==="/freeze") {

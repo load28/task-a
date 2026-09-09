@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync, readFileSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
+import { FileObservations } from "./file-observations.ts"
 import { durableReplace } from "./durable-file.ts"
 import type { TaskGraphEngine } from "../../task-engine/src/index.ts"
 import type { ActivationGrant, ContextManifest } from "../../task-cognition/src/model.ts"
@@ -20,8 +21,9 @@ export const cognitiveTools=[
 export class CognitiveGateway {
   private engine:TaskGraphEngine
   private workspace:string
+  private files:FileObservations
   constructor(engine:TaskGraphEngine,workspace:string) {
-    this.engine=engine;this.workspace=realpathSync(workspace)
+    this.engine=engine;this.workspace=realpathSync(workspace);this.files=new FileObservations(engine.store.control)
     engine.store.db.exec(`CREATE TABLE IF NOT EXISTS cognitive_tool_receipts(session_id TEXT NOT NULL,call_id TEXT NOT NULL,signature TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(session_id,call_id));
       CREATE TABLE IF NOT EXISTS execution_reads(grant_id TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(grant_id,path,hash));`)
   }
@@ -74,6 +76,7 @@ export class CognitiveGateway {
         const bytes=readFileSync(path),content=new TextDecoder("utf-8",{fatal:true}).decode(bytes)
         result={path:args.path,content,hash:digest(content)}
         db.prepare("INSERT OR IGNORE INTO execution_reads VALUES(?,?,?)").run(grant.id,String(args.path),digest(content))
+        this.files.read(grant,this.workspace,String(args.path),digest(content),authorizationCallId)
       } else if(name==="cognitive_write") {
         const path=this.path(args.path,grant.writeScopes,true)
         const attempt=this.engine.store.currentAttempt(grant.taskId)
@@ -100,6 +103,23 @@ export class CognitiveGateway {
       db.prepare("INSERT INTO cognitive_tool_receipts VALUES(?,?,?,'completed',?) ON CONFLICT(session_id,call_id) DO UPDATE SET state='completed',payload=excluded.payload").run(workerSessionId,authorizationCallId,signature,canonical(result))
       return result
     })
+  }
+  assertReadsCurrent(grantId:string):void {
+    const db=this.engine.store.db,row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)
+    if(row?.state!=="claimed")throw new Error("Read validation needs a live grant")
+    const grant=JSON.parse(String(row.payload)) as ActivationGrant
+    const seen=new Set<string>()
+    for(const read of db.prepare("SELECT v.payload FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version WHERE r.grant_id=? ORDER BY r.rowid DESC").all(grantId)) {
+      const value=JSON.parse(String(read.payload)) as {workspace:string;path:string;hash:string}
+      if(value.workspace!==this.workspace)throw new Error("Read observation belongs to another workspace")
+      if(seen.has(value.path))continue
+      seen.add(value.path)
+      // A successful own replacement is an explicit output, not a foreign input change.
+      const ownWrite=db.prepare("SELECT r.payload FROM cognitive_tool_receipts r JOIN grant_tool_calls c ON c.session_id=r.session_id AND c.call_id=r.call_id WHERE r.session_id=? AND r.state='completed' AND c.tool='task_graph_cognitive_write' AND json_extract(r.payload,'$.path')=? ORDER BY r.rowid DESC LIMIT 1").get(grant.worker!,value.path)
+      const expected=ownWrite?JSON.parse(String(ownWrite.payload)).hash:value.hash
+      const file=this.path(value.path,grant.readScopes??[],false)
+      if(digest(readFileSync(file,"utf8"))!==expected)throw new Error(`Observed file changed before result acceptance: ${value.path}`)
+    }
   }
   private path(value:unknown,scopes:string[],create:boolean):string {
     if(typeof value!=="string"||!value||value.includes("\\")||value.includes("\0")||value.startsWith("/")||value.split("/").some(p=>["",".","..",".git",".codex",".agents",".task-agent"].includes(p))||!within(value,scopes))throw new Error("File path is outside the grant")
