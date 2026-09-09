@@ -8,6 +8,7 @@ import type { HostConfig } from "../../host-integration/src/config.ts"
 
 export interface ServerBinding {
   control?: string
+  parentMessageID?:string
   sessionID: string
   messageID: string
   endMessageID?: string

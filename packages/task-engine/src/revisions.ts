@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { TaskGraphEngine } from "./index.ts"
 import type { PlanNode, PlanImpactReport, PlanTransition, RevisionContext, Task, PlanTaskLink } from "#task-domain"
+import { assertControlledPlanActivation } from "../../task-control/src/plan-admission.ts"
 
 export const canonical = (value: any): any => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
   ? Object.fromEntries(Object.keys(value).sort().filter(key => value[key] !== undefined).map(key => [key, canonical(value[key])])) : value
@@ -128,6 +129,7 @@ export class RevisionCoordinator {
     if (t.state !== "waiting" || t.stops.some(s => s.state !== "stopped")) return
     const plan = this.store.findWorkPlan(t.planId)!
     if (plan.currentRevision !== t.toVersion || this.store.activePlanVersion(plan.id) !== t.fromVersion) return
+    assertControlledPlanActivation(this.engine,plan.id,t.toVersion)
     const impact = this.analyze(plan.id, t.toVersion, t.fromVersion), context = this.context(plan.id, t.toVersion)
     const priorDescendants = new Set(this.store.planLinks(plan.id, t.fromVersion).flatMap(l => [...this.engine.subtreeIds(l.taskId)]))
     const repair = this.engine.feedback.list().find(i => i.planId === plan.id && i.repairRevision === t.toVersion)
@@ -190,6 +192,10 @@ export class RevisionCoordinator {
       }
       mapped.set(node.nodeId, task.id)
       this.store.insertPlanLink({ planId: plan.id, revision: t.toVersion, nodeId: node.nodeId, taskId: task.id, action: decision.action as PlanTaskLink["action"] })
+      if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='request_plan_admissions'").get()) {
+        const binding=this.store.db.prepare("SELECT request_id FROM request_plan_admissions WHERE plan_id=?").get(plan.id)
+        if(binding)this.store.db.prepare("INSERT OR IGNORE INTO controlled_tasks VALUES(?,?)").run(task.id,String(binding.request_id))
+      }
     }
     // Runtime decomposition is also durable work: preserve its responsibilities and
     // workspace ancestry when replacing a planned group, not just the group label.

@@ -151,7 +151,7 @@ test("그래프 MCP는 Role만 노출하고 별도 Orchestration 도구는 제�
 })
 
 test("graph MCP persists approval-gated plans and keeps plan reads read-only", async (t) => {
-  const runtime = createGraphMcp(":memory:")
+  const runtime = createGraphMcp(":memory:",3,undefined,"controller")
   t.after(() => runtime.store.close())
   const server = runtime.server
   await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" })
@@ -187,7 +187,7 @@ test("graph MCP resumes plan approval after reconnect without duplicate plans or
   const directory = mkdtempSync(join(tmpdir(), "plan-reconnect-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   const database = join(directory, "graph.db")
-  let runtime = createGraphMcp(database)
+  let runtime = createGraphMcp(database,3,undefined,"controller")
   t.after(() => runtime.store.close())
   const connect = async () => {
     await runtime.server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" })
@@ -206,7 +206,7 @@ test("graph MCP resumes plan approval after reconnect without duplicate plans or
   ] }
   const draft = await call("work_plan_create_draft", input)
   runtime.store.close()
-  runtime = createGraphMcp(database)
+  runtime = createGraphMcp(database,3,undefined,"controller")
   await connect()
   assert.deepEqual(await call("work_plan_create_draft", input), draft)
   assert.equal((await call("work_plan_load", { planId: draft.planId })).plan.state, "awaiting_approval")
@@ -221,7 +221,7 @@ test("graph MCP resumes plan approval after reconnect without duplicate plans or
 })
 
 test("조사 근거와 상세 설계가 없는 신규 계획 및 과거 초안은 승인을 차단한다", async (t) => {
-  const runtime = createGraphMcp(":memory:")
+  const runtime = createGraphMcp(":memory:",3,undefined,"controller")
   t.after(() => runtime.store.close())
   await runtime.server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" })
   await runtime.server.handle({ jsonrpc: "2.0", method: "notifications/initialized" })

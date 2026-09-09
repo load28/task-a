@@ -1,0 +1,192 @@
+requirement	text	contract
+A00	1. **Sparse Agent Activation**	AP의 role별 activation decision과 단일 사용 grant로 필요한 역할만 실행한다. A11–A12, T02.
+A00	2. **Event-Driven Execution**	CP의 state/event/outbox transaction과 consumer로 의미 변화에서만 계산을 시작한다. A65–A66, T01.
+A00	3. **Local Context Retrieval**	CM의 role selector·port 관계·budget manifest로 입력을 제한한다. A15–A18, T04.
+A00	4. **Adaptive Reasoning Precision**	AP/EX가 실제 capability를 가진 L0–L5 profile을 선택하고 집행한다. A14, T03.
+A00	5. **Deterministic Validation Before Reasoning**	EV가 해당 변화의 validator를 먼저 실행하고 잔여 질문만 모델에 보낸다. A13, T03.
+A00	6. **Task and Dependency Graph Based Orchestration**	CG가 typed 관계와 실행 DAG를 저장·검증한다. A05/B13–B15, T05.
+A00	7. **Integration-Aware Multi-Task Validation**	공유 boundary의 exact output tuple에 독립 통합 의무를 만든다. A19–A22, T10.
+A00	8. **Evidence-Based Escalation**	위반·미해결 질문·실패 근거를 검증한 router만 추가 grant를 낸다. A38, T03.
+A00	9. **Dormant-by-Default Agents**	등록 역할에 상시 모델 세션을 만들지 않고 waiting도 event 기반으로 둔다. A09, T02.
+A00	10. **Self-Improving Activation Policies**	과거 activate/skip outcome을 후보→shadow→검증→활성 정책으로 반영한다. A28–A31, T11.
+A00	11. **Reusable Intermediate Knowledge**	일곱 인지 종류의 record와 dependency view vector를 저장한다. A03.5/A32–A35, T04.
+A00	12. **Structural Rather Than Case-Specific Error Correction**	파일명/ID 특례를 거절하고 관계·boundary·invariant 기반 DSL을 학습한다. A30/B66, T11.
+A02	No computation	검증된 동일 입력 인지/실행 결과가 있거나 의무가 없으면 L0로 모델 호출 없이 채택/보존한다.
+A02	Deterministic computation	L1 validator가 실제 AST/type/schema/test/constraint evidence를 생성한다.
+A02	Cheap inference	L1 뒤 남은 좁은 분류/판단만 저비용 capability profile L2로 허가한다.
+A02	Normal reasoning	L2로 해소되지 않은 도메인 질문에 L3 grant를 발급한다.
+A02	Deep reasoning	중대한 위험·불확실성 근거가 요구할 때 L4 profile을 선택한다.
+A02	Multi-agent review	L5에서 독립 역할 결과를 구조화하고 충돌을 검증한다. 고정 전 역할 fanout이 아니다.
+A03.2	Code Changed	실제 code snapshot diff event를 만들고 semantic extractor로 넘긴다.
+A03.2	Test Failed	실패 receipt를 evidence화하고 QA hard obligation 및 원인 propagation을 생성한다.
+A03.2	Dependency Changed	변경 edge/input view의 consumer index부터 영향을 계산한다.
+A03.2	Task Completed	결과 채택·예측오차·공유 boundary 검사를 유발한다. 모든 역할 재호출 event가 아니다.
+A03.2	Confidence Dropped	evidence 기반 confidence 갱신에서 필요한 역할만 재평가한다.
+A03.2	Requirement Changed	explicit requirement를 critical source로 등록하고 관련 goal/consumer에 hard 전파한다.
+A03.2	Integration Conflict Detected	exact 조합 conflict에서 causal repair region과 Integration/QA 의무를 만든다.
+A03.5	decision	검증된 DecisionVersion과 assumption/evidence 소비 vector를 캐시한다.
+A03.5	analysis	분석 conclusion/question별 CognitiveRecord와 input view를 캐시한다.
+A03.5	test result	실제 validator/command/environment/input/output hash와 receipt가 같은 결과만 재사용한다.
+A03.5	architecture reasoning	boundary/dependency 의미 view가 유효한 architecture conclusion을 재사용한다.
+A03.5	dependency summary	실제 graphVersion/port view를 요약한 record이며 해당 view 변경 시만 무효화한다.
+A03.5	risk assessment	risk model/policy/evidence version을 고정하고 새로운 실패·가정 evidence에서 갱신한다.
+A03.5	research evidence	출처·관찰시각·내용 hash·만료 조건이 유효한 외부 사실만 재사용한다.
+A05	depends_on	생산자 output/input view 변화가 실제 consumer로 전달되는 인과 관계다.
+A05	blocks	readiness를 차단하는 관계이며 모든 semantic scope로 무조건 전파하지 않는다.
+A05	implements	task가 contract/requirement를 실현하는 관계로 해당 contract/goal 변화에서 검증한다.
+A05	validates	검증 결과가 대상 버전에 의존한다. 대상 변경은 해당 validator obligation을 갱신한다.
+A05	integrates_with	공동 output tuple·boundary를 공유하는 관계로 joint validation을 만든다.
+A05	generated_from	생성 artifact가 원본의 실제 view를 소비한 lineage 관계다.
+A05	supersedes	현행 version 선택과 역사 계보를 나타내며 오래된 결과를 삭제하거나 무조건 재실행하지 않는다.
+A07	Architect	architecture boundary·dependency 방향·invariant 판단 역할로 등록한다.
+A07	QA	미검증 실패·의미 변화·조합 coverage 판단 역할로 등록한다.
+A07	Researcher	필요 외부 사실의 출처·버전·유효성 확보 역할로 등록한다.
+A07	Critic	가정·증거 공백·반례·거짓 확신을 찾는 선택적 역할로 등록한다.
+A07	UX	사용자 경험 관련 요구/신호가 있을 때만 후보가 되는 역할로 등록한다.
+A07	Implementation	허가된 task/spec/input/write scope의 구현 역할로 등록한다.
+A07	Security	security invariant와 위험에 대한 recall 우선 검토 역할로 등록한다.
+A07	Performance	성능 요구·자원/시간 제약의 근거가 있을 때 검토하는 역할로 등록한다.
+A07	Integration	여러 output의 7차원 호환성·emergent risk를 판단하는 역할로 등록한다.
+A13	AST	변경 source의 구문·symbol/export view를 분석하고 결과/도구 version을 evidence로 저장한다.
+A13	Type checker	required type/interface 제약을 실제 검사하고 실패 시 hard 의무를 만든다.
+A13	Schema validator	입력·role output·plan patch·contract schema를 모델 호출 전/채택 전에 검증한다.
+A13	Unit test	영향 slice의 단위 시나리오를 실제 실행하고 exact input/version receipt를 남긴다.
+A13	Integration test	관련 output tuple의 조합 시나리오를 실제 실행하고 캐시 가능 범위를 pin한다.
+A13	Dependency graph	참조 무결성·DAG·실제 소비 관계·누락/충돌을 결정론적으로 검사한다.
+A13	Policy engine	hard/soft trigger·권한·quota·critical 제약을 불변 정책으로 평가한다.
+A13	Constraint solver	선언된 유한 제약의 충족/반례를 계산한다. 일반 프로그램 동등성 solver로 과장하지 않는다.
+A14	L0 = no reasoning	유효 cache나 계산 불필요 근거에서 모델 호출 0으로 채택/보존한다.
+A14	L1 = deterministic	등록된 결정론적 validator만 실행하고 잔여 질문이 없으면 종료한다.
+A14	L2 = cheap inference	저비용 profile의 실제 모델/입출력/시간/tool 상한을 grant에 고정한다.
+A14	L3 = normal reasoning	일반 도메인 profile로 충분한 context를 예산 내 제공한다.
+A14	L4 = deep reasoning	위험·불확실성 근거가 정당화한 심층 profile을 capability 검증 후 실행한다.
+A14	L5 = multi-agent adversarial review	독립 역할별 grant·구조화 결과·counterexample·충돌 검증을 요구한다.
+A16	1. Start at target task	taskSpecVersion과 role.requiredContext를 pin하여 selector traversal의 시작점을 고정한다.
+A16	2. Traverse required dependency edges	role이 소비해야 할 typed relation/port만 깊이 예산 내 따라간다.
+A16	3. Retrieve referenced decisions	참조된 DecisionVersion과 해당 evidence/assumption vector를 가져온다.
+A16	4. Retrieve conflicting assumptions	현재 goal/contract/관찰과 충돌하는 가정의 근거를 우선 포함한다.
+A16	5. Retrieve related validation evidence	관련 validator receipt·실패·boundary proof의 유효 버전만 조회한다.
+A16	6. Stop when context budget reached	네 예산을 측정하고 optional retrieval을 중단한다. 필수 근거 부족이면 summary/증액 판단으로 대기한다.
+A18	Raw source	level 0 원문/코드 bytes와 content hash를 저장한다.
+A18	Artifact summary	level 1 artifact별 요약에 원본 vector·보존 facts·생략 범위를 저장한다.
+A18	Task summary	level 2 task expectation/result/evidence의 요약을 저장한다.
+A18	Subtree summary	level 3 하위 목표 전체의 boundary·검증·미해결 의무 요약을 저장한다.
+A18	Project knowledge	level 4 전역 지식은 compact summary로 제공하고 필요한 하위 원본만 펼친다.
+A22	behavioral compatibility	공동 output의 관찰 행동 제약을 시나리오/증거로 검증한다.
+A22	interface compatibility	required/provided port와 protocol/schema tuple을 비교한다.
+A22	data compatibility	직렬화·field 의미·단위·저장 형식의 조합 제약을 검사한다.
+A22	temporal assumptions	순서·timeout·동시성·유효기간 가정을 실제 시나리오로 검증한다.
+A22	error propagation	한 output의 실패/오류가 consumer에서 어떻게 전파·처리되는지 검사한다.
+A22	resource contention	공유 자원·잠금·capacity 경합을 integration graph의 resource 관계로 검증한다.
+A22	semantic consistency	개별 output의 의미가 상위 목표/공통 가정/결정과 모순되지 않는지 검증한다.
+A26	High confidence but weak evidence	confidence와 supporting evidence 강도의 불일치를 signal로 계산하고 Critic 후보를 만든다.
+A26	High risk	criticality/expected failure evidence가 role threshold를 넘으면 Critic을 평가한다.
+A26	Architectural change	boundary/dependency 방향/infrastructure invariant 변화의 Critic 필요성을 평가한다.
+A26	Irreversible decision	되돌리기 비용/제약의 evidence를 가진 결정에 추가 반례 검토를 요구한다.
+A26	Repeated failure pattern	검증된 반복 구조 실패가 있는 episode에서 Critic과 meta 필요성을 따로 평가한다.
+A26	hidden assumption	누락된 AssumptionVersion 후보와 영향 consumer를 evidence와 함께 출력한다.
+A26	missing evidence	필요 판단을 뒷받침하지 못한 evidence gap을 obligation으로 만든다.
+A26	counterexample	주장/계약을 깨는 구체 입력·결과·근거를 구조화한다.
+A26	integration failure	조합 tuple과 깨진 invariant를 feedback lineage로 연결한다.
+A26	false certainty	자기평가 confidence가 근거 범위를 초과했음을 finding으로 기록한다.
+A27	What can fail?	요구·가정·위험에서 실패 시나리오 후보를 만들고 실제 검증 의무로 연결한다.
+A27	What was not tested?	validator coverage와 필수 제약 차이를 계산해 미검증 영역을 명시한다.
+A27	What changed semantically?	ChangeSignature와 기대/실제 차이를 검토하고 누락된 의미 영향을 제안한다.
+A27	What combinations have not been validated?	Integration Graph의 required output tuple 중 유효 pass가 없는 조합을 찾는다.
+A44	1. User request	user evidence와 goal event를 영속화한다. 필요한 자연어 해석만 bounded planning grant로 보낸다.
+A44	2. Task decomposition	분해 가치와 독립 산출물/검증 가능성을 검사한 후 scoped proposal을 채택한다.
+A44	3. Task graph construction	서버 ID·spec version·계층·실행 DAG를 transaction으로 저장한다.
+A44	4. Dependency identification	declared/observed input ports·가정·환경·관계를 등록하고 completeness를 표시한다.
+A44	5. Initial signal extraction	목표/입력/변화의 신호를 versioned snapshot으로 만든다.
+A44	6. Deterministic checks	관련 validator를 실제 실행하고 receipt/evidence를 생성한다.
+A44	7. Risk estimation	유효 evidence와 독립성/상관 가정에 맞는 risk model로 score를 계산한다.
+A44	8. Agent activation	task eligibility 뒤 role hard/soft policy를 평가하여 허가 또는 skip/wait를 기록한다.
+A44	9. Task execution	native/Pod adapter가 단일 grant·input snapshot·scope·budget으로 실행한다.
+A44	10. Evidence generation	실제 output/read/write/validator receipt를 hash/version/provenance와 함께 저장한다.
+A44	11. Local validation	원문 role schema와 task acceptance/behavior/critical 의무를 검증한다.
+A44	12. Child task completion	현행 input/attempt 결과만 채택하고 자식의 검증·오차·미해결 의무를 집계한다.
+A44	13. Integration detection	여러 output이 같은 boundary를 바꿨는지 exact tuple로 확인한다.
+A44	14. Integration validation	공유/필수 조합의 7차원 compatibility 시나리오와 역할 의무를 수행한다.
+A44	15. Parent aggregation	자식 confidence/risk/error와 integration status를 집계하되 local repair 가능하면 상위 reasoning을 깨우지 않는다.
+A44	16. Final validation	goal/graph/boundary/critical/error/현재 결과/미해결 의무의 conjunction을 검사한다.
+A44	17. Outcome evaluation	실제 유용성·비용·놓친 실패·과잉 재검토를 인과 evidence로 귀속한다.
+A44	18. Activation policy feedback	관측 label을 batch/critical meta 평가에 넣고 검증된 불변 policy version만 다음 실행에 반영한다.
+A49	event routing	CP consumer가 event 종류/영향 entity 인덱스에 따라 처리기를 선택한다.
+A49	graph mutation	서버가 scoped patch·외래키·DAG·version CAS를 검증해 변경한다.
+A49	policy evaluation	AP/CG/CM 정책 평가를 당시 불변 bundle로 재현 가능하게 실행한다.
+A49	resource allocation	검증된 grant에만 scope lock·worker capacity·budget reservation을 부여한다.
+A49	escalation	미해결 근거·local 실패·권한/예산을 검증한 뒤 다음 역할/영역을 허가한다.
+A51	task IDs	proposal-local ID를 서버 stable ID로 치환하며 LLM이 영구 ID를 확정하지 않는다.
+A51	dependency integrity	외래키·실행 cycle·port/schema binding을 graph mutation transaction에서 검사한다.
+A51	state transitions	CP가 상태 전이 precondition과 obligation을 검사한다.
+A51	version numbers	append-only version 생성과 head CAS는 서버가 수행한다.
+A51	cache invalidation	actual read vector·typed change·boundary proof의 역인덱스로 계산한다.
+A51	locking	scheduler가 grant scope·실제 종료 evidence를 기준으로 lock을 관리한다.
+A51	execution status	native/Pod의 실제 receipt와 attempt token으로 상태를 확정한다.
+A54	activation policy	trigger/weight/threshold/cooldown/quota 후보에 replay·shadow·quality gate를 적용한다.
+A54	context selection	selector/relevance/summary/budget allocation 후보의 필수 근거 보존을 검증한다.
+A54	task decomposition	split/chunk 후보의 비용·독립성·검증성·기존 prefix 보존을 평가한다.
+A54	role definitions	purpose/capability/prompt/context/schema/validator 변경을 역할 버전·lifecycle로 평가한다.
+A54	validation rules	coverage gap을 보완하는 validator/시나리오 정책을 검증하며 hard 제약 약화를 금지한다.
+A54	integration rules	공유 boundary 탐지와 joint tuple/scenario 선택을 missed conflict/비용으로 평가한다.
+A54	escalation thresholds	local 복구 실패·risk/evidence 기준의 상위 활성화 임계값을 검증한다.
+A54	cache policy	semantic view 선택·만료·무효화 규칙을 false reuse/불필요 miss의 근거로 평가한다.
+A54	reasoning level selection	실제 capability profile별 품질·비용·실패를 비교하여 L0–L5 선택 정책을 개선한다.
+A60	Event	trace 시작 source event의 id/type/entity/before/after를 기록한다.
+A60	Signals	당시 feature 값·추출 근거·extractor version을 pin한다.
+A60	Activated agents	발급 grant·role version·attempt/worker binding을 기록한다.
+A60	Skipped agents	후보 제외/threshold/cooldown/영향 밖 이유와 policy catalog를 기록한다.
+A60	Context supplied	실제 serialized context manifest와 확장 revision·token 사용을 기록한다.
+A60	Reasoning level	실제 provider/model/profile/capability와 L0–L5 선택 근거를 기록한다.
+A60	Evidence	실제 실행/검증/외부 출처의 exact refs를 기록한다.
+A60	Decision	채택된 conclusion·assumption·confidence와 보존/변경 판단을 기록한다.
+A60	Cost	context/reasoning/validation/coordination별 실측·추정·미관측을 구분한다.
+A60	Latency	queue/wait/execution/validation/coordination 시간을 별도로 측정한다.
+A60	Outcome	실제 유용성·실패·의무 충족·FP/FN/unknown label을 인과 근거로 연결한다.
+B13	depends_on	실제 input/output port 의존으로 producer→consumer 전파한다.
+B13	shares_contract	공통 contract node를 통해 모든 관련 consumer와 통합 tuple을 찾는다.
+B13	shares_resource	공유 자원 상태/제약 변화로 경합하는 task를 연결한다.
+B13	assumes	가정 version을 참조한 task/decision에 invalidation을 전달한다.
+B13	conflicts_with	상충하는 요구/출력/자원을 명시하고 필요한 방향의 영향 arc를 만든다.
+B13	integrates_with	공동 검증 대상 output과 boundary를 연결한다.
+B13	derived_from	원본의 실제 view를 읽은 파생 결과의 lineage를 기록한다.
+B13	constrained_by	required/critical invariant가 소비 task를 제약함을 기록한다.
+B27	security invariant	학습 weight나 threshold와 무관한 hard 전파·검증 의무로 처리한다.
+B27	database schema	required schema 변화는 관련 data/consumer 경계까지 hard로 전달한다.
+B27	public API	required public interface 변화는 actual consumer/통합 의무를 건너뛰지 않는다.
+B27	financial correctness	정확성 invariant를 비용·확률 추정으로 skip할 수 없게 한다.
+B41	INPUT:	입력은 graph/revision/input vector가 고정된 change episode이다.
+B41	changed task x	source task x와 before/after/evidence를 고정한다. 복수 변화는 source 집합으로 확장한다.
+B41	1. Compare expected and actual state	실행 전 ExpectationVersion과 실제 ObservationVersion을 동일 observable port로 투영한다.
+B41	2. Compute semantic prediction error	C/B/D/G 거리와 가중 SPE를 근거·unknown·calculator version과 함께 계산한다.
+B41	3. If below threshold:	critical violation/미해결 unknown이 없고 정책상 안정 조건을 만족하는지 확인한다.
+B41	preserve plan	기존 plan/spec/decision을 그대로 두고 preservation reason과 input vector만 기록한다.
+B41	4. Classify change	8개 scope 중 실제 변화 유형을 근거로 선택하며 복합 scope를 허용한다.
+B41	5. Select relevant edge types	change scope와 relation registry의 propagation matrix를 적용한다.
+B41	6. Traverse causal graph	source→consumer 인덱스를 따라가며 graphVersion·visited·critical path를 기록한다.
+B41	7. Build affected closure	source 자신과 모든 관련 도달 node를 중복 없이 집계한다.
+B41	8. Stop propagation at preserved boundaries	완전한 external projection equality와 read completeness proof가 있는 exit arc만 절단한다.
+B41	9. Calculate impact for affected nodes	noncritical에 max-product delta, critical에 hard reachability를 계산한다.
+B41	10. Preserve nodes below threshold	비필수 speculative replan만 보류한다. required/unknown validation 의무는 보존한다.
+B41	11. Invalidate remaining nodes	증거·scope·version을 고정하여 stale/fence/stop 의무를 생성하고 비영향 worker는 유지한다.
+B41	12. Find lowest common affected planning boundary	LCA를 후보로 추가하고 더 작은 feasible boundary/connected union도 비용 비교한다.
+B41	13. Replan only that subgraph	서버가 발급한 ReplanLease의 영역·immutable set 안에서만 structured patch를 받는다.
+B41	14. Run deterministic validation	patch의 요구 coverage·참조·DAG·scope·expectation·critical constraints를 검증한다.
+B41	15. Run integration validation if boundaries intersect	교차 boundary/resource의 exact output tuple에 joint obligation을 수행한다.
+B41	16. Commit new plan version	검증 evidence·lease generation·base revision CAS가 일치할 때 append-only revision head를 바꾼다.
+B57	type safety	타입 제약 위반은 SPE/관측 전파 확률이 낮아도 hard 의무다.
+B57	security invariant	보안 불변조건은 learned skip과 비용 효율 점수의 적용 대상이 아니다.
+B57	schema validity	필수 데이터 schema의 유효성은 deterministic validator로 확인한다.
+B57	required interface	사용자가 요구한 port/protocol contract는 consumer까지 반드시 전파한다.
+B57	transaction correctness	원자성·일관성 요구는 확률/예산 부족을 이유로 satisfied 처리하지 않는다.
+B57	explicit user requirement	명시 요구는 critical source/obligation으로 저장하고 일반 학습이 완화하지 못한다.
+B67	immutable nodes	검증·실행·비영향 조건을 만족한 node를 patch 금지 집합으로 고정한다.
+B67	affected nodes	typed closure·boundary proof·hard/soft 영향 판단 후 허용할 변경 집합을 결정한다.
+B67	replanning boundary	복구 가능한 최소 후보 영역과 base versions를 ReplanLease에 고정한다.
+B67	invalid assumptions	근거로 깨진 AssumptionVersion refs와 소비 영향을 제공한다.
+B67	available evidence	role·region selector와 context budget을 통과한 유효 증거만 제공한다.
+B70	GoalValid=True	현재 승인 goal/explicit requirement의 의미를 새 계획이 계속 만족하는지 확인한다.
+B70	GraphConsistent=True	외래키·hierarchy·실행 DAG·port binding·현행 version 일관성을 확인한다.
+B70	BoundaryContractsValid=True	모든 required observable boundary와 exact 통합 tuple의 검증 의무를 확인한다.
+B70	CriticalInvariants=True	확률로 생략할 수 없는 hard constraint 의무가 모두 satisfied인지 확인한다.
+B70	PredictionError<\theta	유효한 새 기대치에 대한 재관찰 오차가 안정 threshold 아래인지 확인한다. 기대치 사후 완화로 맞추지 않는다.

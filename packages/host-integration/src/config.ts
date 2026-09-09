@@ -11,11 +11,13 @@ export interface HostConfig {
   workspaces: Array<{ path: string; verifyCommand?: string }>
   opencodeUrl?: string
   graphMcpUrl?: string
-  kubernetes?: { namespace: string; context?: string; image?: string; envSecret?: string; archiveClaim?: string }
+  kubernetes?: { namespace: string; context?: string; image?: string; envSecret?: string; archiveClaim?: string; repository?:{url:string;commit:string}; controlAuthority?:{url:string;host:string;port:number} }
   model?: string
   autoContinue: boolean
   maxWorkers?: number
   maxRuns: number
+  validationBudget?: {maxJobs:number;maxDurationMs:number}
+  controlProgram?: {id:string;version:number}
 }
 export function socketPath(directory: string): string {
   return resolve(
@@ -44,6 +46,12 @@ export function loadConfig(path: string): HostConfig {
   }
   if (!Number.isInteger(c.maxRuns) || c.maxRuns < 1 || c.maxRuns > 1000) throw new Error("Invalid maxRuns")
   if (c.maxWorkers !== undefined && (!Number.isInteger(c.maxWorkers) || c.maxWorkers < 1 || c.maxWorkers > 16)) throw new Error("Invalid maxWorkers")
+  if(c.validationBudget&&(!Number.isSafeInteger(c.validationBudget.maxJobs)||c.validationBudget.maxJobs<1||c.validationBudget.maxJobs>16||!Number.isSafeInteger(c.validationBudget.maxDurationMs)||c.validationBudget.maxDurationMs<1||c.validationBudget.maxDurationMs>60000))throw new Error("Invalid deterministic validation budget")
+  if(c.controlProgram&&(!c.controlProgram.id||!Number.isSafeInteger(c.controlProgram.version)||c.controlProgram.version<1))throw new Error("Invalid controller program reference")
+  if(c.kubernetes?.controlAuthority) {
+    const a=c.kubernetes.controlAuthority,u=new URL(a.url)
+    if(!a.host||!Number.isSafeInteger(a.port)||a.port<1||a.port>65535||u.username||u.password||u.search||u.hash||u.pathname!=="/"||u.protocol!=="https:"&&!(u.protocol==="http:"&&["127.0.0.1","[::1]"].includes(u.hostname)))throw new Error("Invalid Pod control authority configuration")
+  }
   return c
 }
 export function workspaceFor(config: HostConfig, cwd: string): HostConfig["workspaces"][number] | undefined {

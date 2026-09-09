@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { ControlStore } from "../../task-control/src/store.ts"
 import type {
   Artifact,
   ArtifactVersion,
@@ -26,7 +27,16 @@ interface Row { [key: string]: unknown }
 export class TaskGraphStore {
   /** Extensions share this connection so graph updates and delivery receipts commit atomically. */
   readonly db: DatabaseSync
+  readonly control: ControlStore
   private transactionDepth = 0
+  get inTransaction():boolean {return this.transactionDepth>0}
+  private commitObservers = new Set<() => void>()
+
+  /** Synchronous projections commit or roll back with the outer graph transaction. */
+  beforeCommit(observer: () => void): () => void {
+    this.commitObservers.add(observer)
+    return () => this.commitObservers.delete(observer)
+  }
 
   constructor(filename = ":memory:") {
     if (filename !== ":memory:") mkdirSync(dirname(filename), { recursive: true })
@@ -40,6 +50,14 @@ export class TaskGraphStore {
       throw new Error("Legacy Task Agent database: use npm run migrate:legacy -- <source.db> <new.db> <workspace>, then set TASK_AGENT_DB to the new database")
     }
     this.migrate()
+    this.control = new ControlStore(this)
+    this.transaction(() => {
+      for (const row of this.db.prepare("SELECT e.* FROM events e LEFT JOIN event_outbox o ON o.id=e.id WHERE o.id IS NULL ORDER BY e.rowid").all()) {
+        this.control.event({ id: String(row.id), type: String(row.type), entityId: String(row.task_id ?? "graph"),
+          timestamp: Date.parse(String(row.created_at)), correlationId: String(row.task_id ?? row.id), schemaVersion: 1,
+          payload: { refs: row.refs_json ? JSON.parse(String(row.refs_json)) : {}, data: row.payload_json ? JSON.parse(String(row.payload_json)) : {}, provenance: "legacy-event; dependency completeness unknown" } })
+      }
+    })
   }
 
   close(): void {
@@ -54,6 +72,7 @@ export class TaskGraphStore {
       try {
         const result = operation()
         if (result instanceof Promise) throw new Error("Transactions must be synchronous")
+        if (depth === 0) for (const observer of this.commitObservers) observer()
         this.db.exec(depth === 0 ? "COMMIT" : `RELEASE ${savepoint}`)
         return result
       } catch (error) {
@@ -568,8 +587,13 @@ export class TaskGraphStore {
   }
 
   insertEvent(event: TaskGraphEvent): void {
-    this.db.prepare("INSERT INTO events (id, type, task_id, refs_json, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(event.id, event.type, event.taskId ?? null, event.refs ? JSON.stringify(event.refs) : null, event.payload ? JSON.stringify(event.payload) : null, event.createdAt)
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO events (id, type, task_id, refs_json, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(event.id, event.type, event.taskId ?? null, event.refs ? JSON.stringify(event.refs) : null, event.payload ? JSON.stringify(event.payload) : null, event.createdAt)
+      this.control.event({ id: event.id, type: event.type, entityId: event.taskId ?? "graph",
+        timestamp: Date.parse(event.createdAt), schemaVersion: 1, correlationId: event.correlationId ?? event.taskId ?? event.id,
+        causationId: event.causationId, payload: { refs: event.refs ?? {}, data: event.payload ?? {} } })
+    })
   }
 
   eventsFor(taskId: string, limit = 50): TaskGraphEvent[] {

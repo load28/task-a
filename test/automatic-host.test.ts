@@ -338,7 +338,7 @@ test("질문과 승인은 서버에서 전달하고 취소는 해당 세션으�
 
 test("그래프 MCP는 오케스트레이터를 노출하지 않고 변경과 처리 이력을 원자적으로 저장한다", async (t) => {
   const { directory } = setup(t),
-    graph = createGraphMcp(resolve(directory, "graph.db"))
+    graph = createGraphMcp(resolve(directory, "graph.db"),3,undefined,"controller")
   try {
     await ready(graph.server)
     const listing: any = await graph.server.handle({ jsonrpc: "2.0", id: 2, method: "tools/list" })
@@ -514,6 +514,7 @@ test("실제 stdio Graph MCP가 검증 증거와 수락 조건을 확인하며 �
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/graph-mcp.ts"), resolve(directory, "graph.db")],
+    env: {TASK_GRAPH_SURFACE:"controller"},
     stderr: "pipe",
   })
   try {

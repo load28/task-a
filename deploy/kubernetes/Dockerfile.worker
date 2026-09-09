@@ -8,6 +8,8 @@ COPY --from=rust /usr/local/rustup /opt/rustup
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/data/home/.cargo
 ENV PATH=/opt/cargo/bin:$PATH
 COPY scripts/instance-model-stage.ts /app/scripts/instance-model-stage.ts
+COPY packages/task-evidence/native/no-network.c /tmp/no-network.c
+RUN cc -O2 -Wall -Wextra -Werror /tmp/no-network.c -o /usr/local/bin/task-validator-no-network && rm /tmp/no-network.c
 RUN python3 -m venv /opt/python && /opt/python/bin/pip install --no-cache-dir pytest uv
 ENV PATH=/opt/python/bin:$PATH
 RUN node --version && npm --version && python --version && pytest --version && uv --version && java -version && mvn --version && cargo --version

@@ -16,7 +16,7 @@ export class KubernetesApi implements ClusterApi {
     const prefix = resource === "taskinstances" ? `/apis/${GROUP}/${VERSION}` : "/api/v1"
     return `${prefix}/namespaces/${encodeURIComponent(this.namespace)}/${resource}${name ? `/${encodeURIComponent(name)}` : ""}`
   }
-  private async send(method: string, path: string, body?: unknown): Promise<any> {
+  private async send(method: string, path: string, body?: unknown, raw=false): Promise<any> {
     const token = readFileSync(`${this.credentialDirectory}/token`, "utf8").trim()
     const ca = readFileSync(`${this.credentialDirectory}/ca.crt`)
     return new Promise((resolve, reject) => {
@@ -26,7 +26,7 @@ export class KubernetesApi implements ClusterApi {
         let text = ""
         res.setEncoding("utf8").on("data", chunk => { text += chunk }).on("end", () => {
           if ((res.statusCode ?? 500) >= 400) return reject(new ApiError(res.statusCode!, text.slice(0, 2000)))
-          try { resolve(text ? JSON.parse(text) : {}) } catch (error) { reject(error) }
+          try { resolve(raw?text:text ? JSON.parse(text) : {}) } catch (error) { reject(error) }
         })
       })
       req.setTimeout(15000, () => req.destroy(new Error("Kubernetes request timed out")))
@@ -37,6 +37,10 @@ export class KubernetesApi implements ClusterApi {
   async get(resource: string, name: string) {
     try { return await this.send("GET", this.path(resource, name)) as Resource }
     catch (error) { if (error instanceof ApiError && error.code === 404) return; throw error }
+  }
+  async logs(pod:string,container:string,maxBytes:number):Promise<string> {
+    if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>1048576)throw new Error("Invalid Pod log budget")
+    return this.send("GET",`${this.path("pods",pod)}/log?container=${encodeURIComponent(container)}&limitBytes=${maxBytes}`,undefined,true)
   }
   async list(resource: string) { return (await this.send("GET", this.path(resource))).items as Resource[] }
   async create(resource: string, value: Resource) { return this.send("POST", this.path(resource), value) }

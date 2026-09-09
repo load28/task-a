@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { controlCompletionMissing } from "../../task-control/src/completion.ts"
 import { fingerprint } from "./revisions.ts"
 import type { TaskGraphEngine, CompleteTaskInput } from "./index.ts"
 import type { ArtifactVersionRef } from "#task-domain"
@@ -63,7 +64,7 @@ export class SignalCoordinator {
     seen.add(taskId)
     return this.dependencies(taskId).every(id => {
       const t = this.engine.requireTask(id)
-      return this.store.executionAllowed(id) && !this.dirty(id) && ["verified", "integrating", "integrated"].includes(t.status) && this.settled(id, new Set(seen))
+      return this.store.executionAllowed(id) && !this.dirty(id) && ["verified", "integrating", "integrated"].includes(t.status) && controlCompletionMissing(this.engine,[id]).length===0 && this.settled(id, new Set(seen))
     })
   }
   capture(taskId: string): InputSnapshot {

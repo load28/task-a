@@ -2,7 +2,8 @@ import { createServer, request, type Server } from "node:http"
 import { chmodSync, existsSync, unlinkSync } from "node:fs"
 import { resolve } from "node:path"
 import { createHash, randomBytes } from "node:crypto"
-import { OpenCodeServer, type HarnessServer } from "../../opencode-harness/src/server.ts"
+import { type HarnessServer } from "../../opencode-harness/src/server.ts"
+import { ControlServer } from "./control-server.ts"
 import { RelayStore, type RelayRequest } from "./relay-store.ts"
 import type { HostEvent } from "./store.ts"
 import { workspaceFor, type HostConfig } from "./config.ts"
@@ -12,6 +13,9 @@ import { requestCancellation, advanceCancellation } from "../../task-instances/s
 import { InstanceManager } from "../../task-instances/src/manager.ts"
 import { KubectlApi } from "../../task-instances/src/kubectl.ts"
 import { KubernetesApi } from "../../task-instances/src/api.ts"
+import { GrantDispatcher,type GrantedExecutor } from "../../task-control/src/dispatch.ts"
+import { GrantedOpenCodeExecutor } from "../../opencode-harness/src/granted-executor.ts"
+import { GrantedPodExecutor } from "../../task-control/src/pod-dispatch.ts"
 
 export function workspaceDatabase(config: HostConfig, workspace: string): string {
   if (config.workspaces[0]?.path === workspace) return config.database
@@ -27,12 +31,24 @@ export class HostService {
   private closed = false
   private draining?: Promise<void>
   private graphs = new Map<string, ReturnType<typeof createGraphRuntime>>()
+  private dispatchers = new Map<string, GrantDispatcher>()
+  private validationRuns = new Map<string,Promise<unknown>>()
   private timer?: NodeJS.Timeout
   config: HostConfig
-  constructor(config: HostConfig, harness?: HarnessServer) {
+  private grantedExecutorFactory?: (graph:ReturnType<typeof createGraphRuntime>,workspace:string)=>GrantedExecutor
+  constructor(config: HostConfig, harness?: HarnessServer,grantedExecutorFactory?:(graph:ReturnType<typeof createGraphRuntime>,workspace:string)=>GrantedExecutor) {
+    this.grantedExecutorFactory=grantedExecutorFactory
     this.config = structuredClone(config)
     this.store = new RelayStore(resolve(config.directory, "relay.db"))
-    this.harness = harness ?? new OpenCodeServer(config)
+    this.harness = harness ?? new ControlServer(this.config,(workspace,database)=>{
+      let graph=this.graphs.get(workspace)
+      if(!graph){graph=createGraphRuntime(database??workspaceDatabase(this.config,workspace));this.graphs.set(workspace,graph)}
+      return graph.control
+    },(workspace,session)=>this.stopNative(workspace,session),async(workspace,id)=>{
+      const graph=this.graphs.get(workspace)!
+      const executor=this.dispatcher(workspace,graph).executor
+      return executor.stopGrant?executor.stopGrant(id):{stopped:true,evidence:"No unbound physical executor"}
+    })
   }
   enqueueWorkspaceCancellation(workspacePath: string): RelayRequest {
     const workspace = resolve(String(workspacePath ?? ""))
@@ -80,7 +96,7 @@ export class HostService {
             JSON.stringify({
               ok: true,
               pid: process.pid,
-              architecture: "opencode-server",
+              architecture: this.harness instanceof ControlServer ? "event-driven-control" : "injected-harness",
               projects: this.store.projects(),
               ...this.store.summary(),
             }),
@@ -361,6 +377,22 @@ export class HostService {
       })
     return this.draining
   }
+  private dispatcher(workspace:string,graph:ReturnType<typeof createGraphRuntime>):GrantDispatcher {
+    let dispatcher=this.dispatchers.get(workspace)
+    if(!dispatcher) {
+      const k=this.config.kubernetes
+      const executor=this.grantedExecutorFactory?.(graph,workspace)??(k?new GrantedPodExecutor(graph.control,k.context?new KubectlApi(k.context,k.namespace):new KubernetesApi(k.namespace),{...k,authority:k.controlAuthority,validationBudget:this.config.validationBudget},this.config.maxWorkers??3):new GrantedOpenCodeExecutor({runtime:graph.control,workspace,database:workspaceDatabase(this.config,workspace),stateDirectory:resolve(this.config.directory,"controlled",createHash("sha256").update(workspace).digest("hex")),maxWorkers:this.config.maxWorkers??3}))
+      dispatcher=new GrantDispatcher(graph.control,executor,this.config.maxWorkers??3)
+      this.dispatchers.set(workspace,dispatcher)
+    }
+    return dispatcher
+  }
+  private async stopNative(workspace:string,sessionId:string) {
+    const graph=this.graphs.get(workspace)
+    if(graph&&graph.store.db.prepare("SELECT 1 FROM activation_grants WHERE json_extract(payload,'$.worker')=?").get(sessionId))return this.dispatcher(workspace,graph).executor.stop(sessionId)
+    if(!this.harness.stopWorker)return {stopped:false,evidence:"Native stop observer is unavailable"}
+    return this.harness.stopWorker(workspace,sessionId)
+  }
   private async drain(): Promise<void> {
     for (const workspace of this.store.projects()) {
       const database = workspaceDatabase(this.config, workspace)
@@ -368,14 +400,30 @@ export class HostService {
       let graph = this.graphs.get(workspace)
       if (!graph) { graph = createGraphRuntime(database); this.graphs.set(workspace, graph) }
       const k = this.config.kubernetes
+      if(!this.store.active().some(r=>r.workspace===workspace&&r.phase==="cancelling"))graph.control.requests.tick()
+      // Issued grants are durable controller decisions. Do not infer them from
+      // runnable tasks or fall back from a Kubernetes configuration to native.
+      let dispatcher:GrantDispatcher|undefined
+      if(graph.store.db.prepare("SELECT 1 FROM activation_grants LIMIT 1").get()) {
+        dispatcher=this.dispatcher(workspace,graph)
+        await dispatcher.recover()
+      }
       const instances = k ? new InstanceManager(k.context ? new KubectlApi(k.context, k.namespace) : new KubernetesApi(k.namespace), k.namespace) : undefined
       await advanceInputSignals(graph.engine, instances, this.harness.stopWorker ? {
-        stopAndInspect: sessionId => this.harness.stopWorker!(workspace, sessionId),
+        stopAndInspect: sessionId => this.stopNative(workspace, sessionId),
       } : undefined)
       for (const t of graph.engine.revisions.transitions().filter(t => t.state === "waiting")) {
         await advanceTransition(graph.engine, t.id, instances, this.harness.stopWorker ? {
-          stopAndInspect: sessionId => this.harness.stopWorker!(workspace, sessionId),
+          stopAndInspect: sessionId => this.stopNative(workspace, sessionId),
         } : undefined)
+      }
+      if(!this.store.active().some(r=>r.workspace===workspace&&r.phase==="cancelling"))dispatcher?.tick()
+      if(this.config.validationBudget&&!this.validationRuns.has(workspace)&&!this.store.active().some(r=>r.workspace===workspace&&r.phase==="cancelling")) {
+        const runtime=graph
+        const work=runtime.control.validators.run(workspace,this.config.validationBudget).catch(error=>{
+          runtime.store.control.event({id:`validation-error:${randomBytes(16).toString("hex")}`,type:"ValidationDispatchFailed",entityId:workspace,correlationId:workspace,schemaVersion:1,timestamp:Date.now(),payload:{message:error instanceof Error?error.message:"Validator dispatch failed"}})
+        }).finally(()=>this.validationRuns.delete(workspace))
+        this.validationRuns.set(workspace,work)
       }
     }
     const workspaces = new Set<string>()
@@ -393,6 +441,11 @@ export class HostService {
             if (!this.harness.stopWorkspace) throw new Error("프로젝트 전체 실행 종료 관찰기를 사용할 수 없습니다.")
             try { workspaceStopped = await this.harness.stopWorkspace(record.workspace) }
             catch (error) { workspaceStopped = { stopped: false, evidence: String(error) } }
+            const controlled=this.dispatchers.get(record.workspace)
+            if(controlled) {
+              const stopped=await controlled.stopAll()
+              workspaceStopped={stopped:workspaceStopped.stopped&&stopped.stopped,evidence:`${workspaceStopped.evidence}\n${stopped.evidence}`}
+            }
           } else if (record.sessionID) await this.harness.cancel(record)
           if (graph) {
             requestCancellation(graph.engine, record.workspaceCancellation
@@ -401,7 +454,7 @@ export class HostService {
             const k = this.config.kubernetes
             const instances = k ? new InstanceManager(k.context ? new KubectlApi(k.context, k.namespace) : new KubernetesApi(k.namespace), k.namespace) : undefined
             const rows = await advanceCancellation(graph.engine, instances, this.harness.stopWorker ? {
-              stopAndInspect: sessionId => this.harness.stopWorker!(record.workspace, sessionId),
+              stopAndInspect: sessionId => this.stopNative(record.workspace, sessionId),
             } : undefined, workspaceStopped)
             const blocked = rows.filter(r => r.state === "requested")
             if (blocked.length) throw new Error(blocked.map(r => `${r.taskId}: ${r.error}`).join("\n"))
@@ -448,7 +501,7 @@ export class HostService {
           this.store.registerTurn(record)
           this.store.save(record)
           await this.harness.submit(
-            record,
+            {...record,...(record.control==="steer"&&record.targetId?{parentMessageID:this.store.get(record.targetId)?.messageID}:{})},
             record.event.prompt ?? record.event.text,
             record.event.permissionMode === "plan",
             this.config.workspaces.find((w) => w.path === record.workspace)?.verifyCommand,
@@ -510,6 +563,9 @@ export class HostService {
     this.closed = true
     clearInterval(this.timer)
     await this.draining
+    for(const dispatcher of this.dispatchers.values())await dispatcher.close()
+    this.dispatchers.clear()
+    await Promise.all(this.validationRuns.values())
     await this.harness.close()
     await new Promise<void>((ok) => (this.server ? this.server.close(() => ok()) : ok()))
     if (this.ownsSocket && existsSync(this.config.socket)) unlinkSync(this.config.socket)

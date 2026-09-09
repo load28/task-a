@@ -1,4 +1,5 @@
 import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
+import { CognitiveGateway, cognitiveTools } from "../../task-control/src/gateway.ts"
 import { Ajv } from "ajv"
 import { snapshotCode, type CodeSnapshot } from "../../task-snapshots/src/index.ts"
 import { createHash, randomUUID } from "node:crypto"
@@ -11,38 +12,31 @@ import { instanceName } from "../../task-instances/src/manager.ts"
 import { validateSpec } from "../../task-instances/src/types.ts"
 import { advanceTransition, advanceInputSignals } from "../../task-instances/src/transitions.ts"
 
-export const GRAPH_INSTRUCTIONS = `You are using a deterministic task graph, not an execution harness.
-OpenCode owns all planning, task extraction, decomposition, task selection, implementation, verification, integration, retries and reflection.
-Use task_search to resume existing work. Claim runnable leaves with task_start before modifying files.
-Declare writeScopes when creating/decomposing tasks: literal project-relative files/directories, [] for read-only, . for exclusive work (installs, shared config, full build). Missing scopes default to exclusive.
-Use task_schedule to see active reservations and ready tasks. The task_start claim atomically enforces conflicts and worker capacity. Start independent native workers concurrently, but never modify a task's files before claiming it. Respect dependencies.
-Expand reservations with task_expand_scope BEFORE writing more files. On conflict pause that work; do not bypass the reservation. Complete only after ALL writes and tests stop. Failed/interrupted tasks keep reservations: confirm their native workers have stopped before task_release_scope, then reopen as needed. Never release merely due to elapsed time.
-Code reuse is based on actual workspace hashes, never artifact summaries. Input changes fence outdated attempts immediately. Use task_signal_status/task_signal_reconcile to observe stops; claim only after upstream work settles and a slot is free. A task_instance_create after invalidation creates a new physical execution and restores the previous workspace. Read TASK_INPUT_SOURCES for hash-verified source workspaces and integrate the pinned inputs. Submitted results may stay implemented while upstream is unsettled; do not rerun them merely because adoption is deferred.
-Use graph tools for durable state; OpenCode todos are only a display aid, never the source of truth.
-Use a unique operationId for each mutation, reusing that ID and identical arguments when retrying delivery.
-For any failure in any task, use task_issue_report with observed versions, diagnose the causal producer through input lineage, and task_issue_route to send the repair to that responsibility. Never solve an upstream defect only in a downstream workspace. Unknown causes remain reported until diagnosed. Follow transitionId through work_plan_reconcile; restore prior work, apply current dependency versions, rerun affected verification/integration, then task_issue_resolve. Check task_issue_list when resuming; unresolved findings prevent root completion.
-Plan changes may be proposed regardless of task state. Approve the new revision, then observe work_plan_transition_status and work_plan_reconcile. Continue unaffected workers. Before claiming a replacement leaf, call task_reuse to adopt an exactly matching verified result without model execution. Do not reopen changed historical tasks: revision activation creates new specifications and exposes reusable prior work in task_get_context. Include the attemptToken from task_start/task_load in task_complete, task_fail and artifact_publish; stale reports cannot complete the current revision. Pass the actual native worker sessionId when claiming work so selective termination can be observed.
-Completion requires actual test evidence and satisfied acceptance criterion IDs from task_load.
-Each implementation worker must publish its output artifacts BEFORE or WITH task_complete. Integration members are artifact names or exact artifact references, never filenames or task IDs. Complete producer tasks with local verification first. A producer's acceptance criteria must NOT require the integration run that consumes its own artifacts; put cross-task integration requirements on the parent. A separate QA task may record observed tests, complete its own evidence artifact, then the manager records integration over verified producers. Query role_list instead of guessing role names.
-Integration tools record proposals and results; they never execute tests. Execute tests with OpenCode tools.
-Never call a second orchestrator or spawn Claude/Codex to perform the work.`
+export const GRAPH_INSTRUCTIONS = `Operator-only graph administration and migration surface. The event-driven controller owns request interpretation, admission, task selection, scoped revision commitment and completion. Model sessions use only the cognitive surface under a live grant. These raw mutation tools must not be attached to a model session. Existing graph invariants, attempt identities, validation obligations and execution fences also apply to operator calls.`
 
-export function createGraphMcp(database: string, maxWorkers = 3, instances: InstanceManager | undefined = configuredInstances()) {
+export function createGraphMcp(database: string, maxWorkers = 3, instances?: InstanceManager, surface:"controller"|"cognitive"="cognitive") {
+  if(surface==="controller")instances??=configuredInstances()
+  else instances=undefined
   const runtime = createGraphRuntime(database)
   const { engine: e, integration: i, store } = runtime
   const scheduler = new TaskScheduler(e, maxWorkers, process.env.TASK_AGENT_WORKSPACE)
+  const gateway = new CognitiveGateway(e, process.env.TASK_AGENT_WORKSPACE ?? process.cwd())
   const readOnly = new Set([...READ_ONLY_TOOLS, "task_schedule"])
   readOnly.add("task_instance_status")
+  readOnly.add("task_control_status")
   const schedulingTools = [
+    { name: "task_control_status", description: "Inspect durable cognitive decisions, grants, observations and unresolved validation obligations without invoking a model.", inputSchema: { type: "object", properties: { taskId: { type: "string" } } } },
     { name: "task_schedule", description: "Inspect active workers, write scopes and runnable tasks with conflict/capacity blockers. Claim tasks atomically with task_start; do not assume this snapshot is a reservation.", inputSchema: { type: "object", properties: { rootId: { type: "string" } } } },
     { name: "task_expand_scope", description: "Atomically reserve additional files/directories BEFORE writing outside the original scope. On conflict wait without modifying the files.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, writeScopes: { type: "array", items: { type: "string" } } }, required: ["taskId", "writeScopes"] } },
     { name: "task_release_scope", description: "Release a failed/interrupted task reservation only AFTER the native worker is confirmed stopped. Never use timeout alone as proof. Complete or fail the task first.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, workerStopped: { type: "boolean", const: true } }, required: ["taskId", "workerStopped"] } },
   ]
-  const schemas = [...tools, ...schedulingTools, ...(instances ? instanceTools : [])]
+  const cognitiveNames = new Set(cognitiveTools.map(tool=>tool.name))
+  const schemas = [...tools, ...schedulingTools, ...cognitiveTools, ...(instances ? instanceTools : [])]
+    .filter(t=>surface!=="cognitive"||cognitiveNames.has(t.name))
     .filter((t) => t.name !== "orchestrate_run")
     .map((t) => ({
       ...t,
-      inputSchema: readOnly.has(t.name)
+      inputSchema: readOnly.has(t.name) || cognitiveNames.has(t.name)
         ? t.inputSchema
         : {
             ...t.inputSchema,
@@ -50,9 +44,11 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
             required: [...(t.inputSchema.required ?? []), "operationId"],
           },
     }))
-  const nativeStart = schemas.find(t => t.name === "task_start")!.inputSchema as any
-  nativeStart.properties = { ...nativeStart.properties, sessionId: { type: "string", minLength: 1, pattern: "\\S" } }
-  nativeStart.required = [...nativeStart.required, "sessionId"]
+  const nativeStart = schemas.find(t => t.name === "task_start")?.inputSchema as any
+  if(nativeStart) {
+    nativeStart.properties = { ...nativeStart.properties, sessionId: { type: "string", minLength: 1, pattern: "\\S" } }
+    nativeStart.required = [...nativeStart.required, "sessionId"]
+  }
   const ajv = new Ajv({ strict: false, allErrors: true })
   const validators = new Map(schemas.map((t) => [t.name, ajv.compile(t.inputSchema)]))
   store.db.exec(
@@ -67,6 +63,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
   const physicalId = (taskId: string) => boundSpec(taskId)?.taskId ?? taskId
   function apply(name: string, a: any): unknown {
     switch (name) {
+      case "task_control_status": return runtime.control.status(a.taskId)
       case "task_signal_status": return { signals: e.signals.list(), stops: e.signals.stops() }
       case "task_issue_report": return e.feedback.report(a)
       case "task_issue_route": return e.feedback.route(a)
@@ -154,10 +151,11 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
   const instanceCalls = new Map<string, { signature: string; result: Promise<unknown> }>()
   const server = new TaskAgentMcpServer(runtime.agent, {
     tools: schemas,
-    instructions: GRAPH_INSTRUCTIONS + (instances ? `\n${INSTANCE_INSTRUCTIONS}` : ""),
+    instructions: surface==="cognitive"?"Execute only the role and context pinned by the controller. Tools require adapter-injected activation identities. Return structured findings and proposals. The controller owns task selection, grants, validation and revision commits.":GRAPH_INSTRUCTIONS + (instances ? `\n${INSTANCE_INSTRUCTIONS}` : ""),
     async dispatch(name, args) {
       const validate = validators.get(name)
       if (!validate || !validate(args)) throw new Error(ajv.errorsText(validate?.errors))
+      if (cognitiveNames.has(name)) return gateway.execute(name,args)
       if (name === "task_signal_reconcile") return advanceInputSignals(e, instances)
       if (instances && ["task_instance_create", "task_get_runnable", "task_schedule"].includes(name)) await advanceInputSignals(e, instances)
       if (name === "work_plan_reconcile") return advanceTransition(e, String(args.transitionId), instances)

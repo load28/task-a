@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
+import { requireControlCompletion } from "../../task-control/src/completion.ts"
+import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import type {
   ArtifactVersionRef,
   ContractVersionRef,
@@ -198,6 +200,8 @@ export class IntegrationEngine {
       const now = new Date().toISOString()
       const cached = store.passedRunByKey(integrationKey)
       if (cached) {
+        requireControlCompletion(this.engine, resolved.map(ref=>this.engine.requireArtifactVersion(ref).producerTaskId))
+        this.requireIntegrationObligations(set)
         if (set.status !== "passed") {
           store.updateIntegrationSet({ ...set, memberRefs: resolved, status: "passed", updatedAt: now })
         }
@@ -265,6 +269,8 @@ export class IntegrationEngine {
 
   private finishPassed(run: IntegrationRun, set: IntegrationSet, scenarios: IntegrationScenario[], now: string): ReportRunResult {
     const store = this.engine.store
+    requireControlCompletion(this.engine, run.memberRefs.map(ref=>this.engine.requireArtifactVersion(ref).producerTaskId))
+    this.requireIntegrationObligations(set)
     run.status = "passed"
     run.finishedAt = now
     store.updateIntegrationRun(run)
@@ -319,6 +325,12 @@ export class IntegrationEngine {
     }
     if (set.parentTaskId) this.engine.refreshAncestors(set.parentTaskId)
     return { run, set: store.findIntegrationSet(set.id)!, bundle }
+  }
+
+  private requireIntegrationObligations(set:IntegrationSet):void {
+    const evidence=new EvidenceStore(this.engine.store.control)
+    const obligations=[...evidence.unresolved(set.id),...(set.parentTaskId?evidence.unresolved(set.parentTaskId):[])]
+    if(obligations.length)throw new Error(`Integration validation obligations unresolved: ${obligations.map(o=>o.id).join(", ")}`)
   }
 
   private finishFailed(

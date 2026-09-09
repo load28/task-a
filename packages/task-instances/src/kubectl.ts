@@ -26,6 +26,16 @@ export class KubectlApi implements ClusterApi {
     const result = await this.command(["get", resource, name, "--ignore-not-found", "-o", "json"])
     return result.metadata ? result as Resource : undefined
   }
+  async logs(pod:string,container:string,maxBytes:number):Promise<string> {
+    if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>1048576)throw new Error("Invalid Pod log budget")
+    return new Promise((done,fail)=>{
+      const child=spawn("kubectl",["--context",this.context,"--namespace",this.namespace,"logs",pod,"--container",container,`--limit-bytes=${maxBytes}`],{stdio:["ignore","pipe","pipe"]})
+      let out="",err="",size=0
+      child.stdout.on("data",chunk=>{size+=chunk.length;if(size>maxBytes){child.kill();fail(new Error("Pod log budget exceeded"))}else out+=chunk})
+      child.stderr.on("data",chunk=>{err=(err+chunk).slice(-2000)})
+      child.on("error",fail);child.on("exit",code=>code===0?done(out):fail(new Error(err||"Pod log observation failed")))
+    })
+  }
   async list(resource: string) { return (await this.command(["get", resource, "-o", "json"])).items as Resource[] }
   async create(_resource: string, value: Resource) { return this.command(["create", "-f", "-", "-o", "json"], value) }
   async replace(_resource: string, value: Resource) { return this.command(["replace", "-f", "-", "-o", "json"], value) }

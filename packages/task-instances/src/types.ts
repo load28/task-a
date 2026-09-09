@@ -2,6 +2,7 @@ export const GROUP = "tasks.task-agent.dev"
 export const VERSION = "v1alpha1"
 export const FINALIZER = `${GROUP}/stop-before-delete`
 export interface InstanceSpec {
+  activation?: {grantId:string;taskId:string;generation:number;authoritySecret:string;expiresAt:number}
   inputSnapshot?: { digest: string; inputRefs: Array<{ artifactId: string; version: number }>; sources?: Array<{ taskId: string; hash: string }> }
   taskId: string
   image: string
@@ -31,6 +32,7 @@ export interface Resource {
 }
 export interface TaskInstance extends Resource { spec: InstanceSpec }
 export interface ClusterApi {
+  logs?(pod:string,container:string,maxBytes:number):Promise<string>
   get(resource: string, name: string): Promise<Resource | undefined>
   list(resource: string): Promise<Resource[]>
   create(resource: string, value: Resource): Promise<Resource>
@@ -39,6 +41,11 @@ export interface ClusterApi {
   remove(resource: string, value: Resource): Promise<void>
 }
 export function validateSpec(spec: InstanceSpec) {
+  if(spec.activation) {
+    const a=spec.activation
+    if(!a.grantId||!a.taskId||!Number.isSafeInteger(a.generation)||a.generation<1||!Number.isFinite(a.expiresAt)||!Number.isInteger(a.expiresAt)||!/^[a-z0-9][a-z0-9-]{0,62}$/.test(a.authoritySecret))throw new Error("Invalid Pod activation contract")
+    if(spec.stages?.length!==1||JSON.stringify(spec.stages[0]?.command)!==JSON.stringify(["node","/app/scripts/granted-instance-stage.ts"])||spec.stages[0]?.outputs?.length)throw new Error("A granted Pod can run only the fixed bounded adapter")
+  }
   if (spec.inputSnapshot && (!/^[a-f0-9]{64}$/.test(spec.inputSnapshot.digest) || !Array.isArray(spec.inputSnapshot.inputRefs))) throw new Error("Invalid pinned input snapshot")
   if (spec.inputSnapshot?.sources?.some(s => !s.taskId || !/^[a-f0-9]{64}$/.test(s.hash))) throw new Error("Invalid source snapshot")
   if (spec.recoveryInstructions !== undefined && (typeof spec.recoveryInstructions !== "string" || spec.recoveryInstructions.length > 8000)) throw new Error("Invalid recovery instructions")

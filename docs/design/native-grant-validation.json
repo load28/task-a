@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-09",
+  "adapter": "OpenCode",
+  "provider": "openai",
+  "model": "gpt-5.6-terra",
+  "request": "One user-authorized synthetic request; no source file content; fixed JSON acknowledgement; no tools",
+  "limits": {"maxInputTokens": 32000, "maxOutputTokens": 1000, "timeoutMs": 60000},
+  "result": "blocked: provider rejected the required output-token limit",
+  "providerError": "Unsupported parameter: max_output_tokens",
+  "httpStatus": 400,
+  "recordedUsage": {"inputTokens": 0, "outputTokens": 0},
+  "verified": ["Actual OpenCode process loaded the authority plugin", "The model request carried max_output_tokens"],
+  "notVerified": ["Successful bounded model execution", "Provider enforcement of the output bound", "Full native architecture acceptance"],
+  "disposition": "User chose to retain current authentication and leave successful real-model validation incomplete. Do not remove the limit, change authentication, or retry the external call under the exhausted single-call approval."
+}

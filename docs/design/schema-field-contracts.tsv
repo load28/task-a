@@ -1,0 +1,132 @@
+field	contract
+Task.id	서버가 할당하는 stable task identity이며 spec/attempt/version과 구분한다.
+Task.title	표시용 제목이다. 제목 변경만으로 semantic cache나 downstream을 무효화하지 않는다.
+Task.objective	승인 목표의 의미를 TaskSpecVersion에 고정하고 변경은 goal/subgoal signature를 생성한다.
+Task.status	기존 상태와 의미 대응한다. review는 implemented 이후 검증 의무 상태이며 completed는 전체 완료 conjunction을 통과해야 한다.
+Task.parent	계층 부모 참조이다. 외래키와 hierarchy cycle을 검사하며 인과 의존성과 구분한다.
+Task.children	정규화 parent 관계로 조회한다. 별도 배열을 이중 갱신하여 불일치를 만들지 않는다.
+Task.dependencies	typed CausalEdgeVersion의 실행 의존 view이다. source→consumer 방향과 버전을 고정한다.
+Task.artifacts	actual artifact/version refs이다. 문자열 요약이 아니라 실제 output hash·계보로 검증한다.
+Task.assumptions	버전 가정 참조를 저장하고 invalidation 시 assumes consumer index로 전파한다.
+Task.decisions	DecisionVersion 참조이다. validated/executed/비영향 결정은 immutable로 보호한다.
+Task.evidence	EvidenceVersion exact refs를 저장하고 출처·hash·유효기간을 검증한다.
+Task.risk	현재 RiskState의 version ref로 저장하고 독립 확률/보수 score를 구분한다.
+Task.confidence	[0,1] 범위 및 evidence 근거를 검증하고 중요 dependency min으로 집계한다.
+Task.version	specVersion/runtime generation/attempt token을 분리하여 각 변경 의미를 보존한다.
+Role.id	role identity이며 실제 worker/run ID와 다르다.
+Role.name	표시용 이름이다. 이름 문자열이 activation condition이 되지 않는다.
+Role.purpose	역할의 책임을 불변 RoleVersion에 저장하고 다른 역할과 중복 평가에 사용한다.
+Role.capabilities	도메인 능력 집합으로 전문 역할 필요성과 기존 역할 부족을 평가한다.
+Role.activationPolicy	불변 정책 버전 참조이다. grant 발급에서 hard/soft/quota를 서버가 평가한다.
+Role.requiredContext	relation/port/evidence selector 집합이다. prompt 요청이 아닌 context gateway의 강제 필터다.
+Role.outputSchema	structured result schema의 불변 ref이다. 파싱과 의미·근거 검증 전 결과를 채택하지 않는다.
+Role.validators	필요 deterministic/role 검증자 version refs이다. 누락된 mandatory validator는 완료를 막는다.
+SignalSet.changedFiles	실제 before/after code snapshot diff의 파일 참조이다. 파일명 규칙 대신 의미 추출 입력으로 사용한다.
+SignalSet.changedSymbols	AST/symbol analyzer의 변경 symbol과 provenance이다. 분석 불가를 빈 집합으로 위조하지 않는다.
+SignalSet.changedInterfaces	실제 public port/contract 변경 참조이다. shared boundary·consumer 검토에 연결한다.
+SignalSet.failingTests	실행 receipt에 연결된 실패 test refs이다. QA hard trigger 근거가 된다.
+SignalSet.affectedDependencies	graphVersion에 고정된 영향 dependency refs이며 단순 파일 수로 대체하지 않는다.
+SignalSet.uncertainty	미해결 질문·unknown 판정의 정규화 score와 근거를 저장한다.
+SignalSet.risk	일반 위험 score/model version이다. 값만 제출한 agent 자기평가로 확정하지 않는다.
+SignalSet.integrationRisk	공유 경계·미검증 tuple·cross-task 충돌의 별도 위험 score이다.
+SignalSet.externalKnowledgeRequired	현재 유효 evidence로 충족되지 않은 외부 사실 요구이다. Research hard trigger에 연결한다.
+SignalSet.semanticChange	기계적 diff와 구분되는 의미 변화 여부이다. unknown 판정을 보존하도록 내부 tri-state를 확장한다.
+ActivationPolicy.hardTriggers	근거가 일치하면 mandatory obligation을 만든다. cooldown/budget 때문에 satisfied로 바꾸지 않는다.
+ActivationPolicy.softSignals	정규화 feature와 weight의 불변 집합이다. 계산 내역을 decision에 기록한다.
+ActivationPolicy.threshold	role별 score 비교값이다. 허용 범위·경계값 규칙·calibration version을 검증한다.
+ActivationPolicy.cooldown	동일 episode/role 반복을 억제하는 시간 정책이다. expiry event는 재평가만 유발하며 자동 모델 호출이 아니다.
+ActivationPolicy.maxInvocationsPerTask	task/role/policy 범위의 허용 호출 수이다. hard 의무와 충돌하면 wait/escalation한다.
+ContextBudget.maxTokens	실제 serialized system/role/tool/schema/context와 출력 예약을 포함하는 상한이다.
+ContextBudget.maxDependencyDepth	selector traversal의 최대 깊이다. 필수 dependency 누락이 발생하면 요약/예산 판단으로 처리한다.
+ContextBudget.maxEvidenceItems	전달 evidence item 수 상한이다. 필수 invariant 근거를 임의로 버릴 수 없다.
+ContextBudget.maxHistoricalDecisions	과거 결정 전달 수 상한이다. immutable 현재 결정과 역사 참고자료를 구분한다.
+IntegrationResult.compatible	검증 범위 내 호환성 결과이다. 일반 행동 동등성 또는 BoundaryProof.preserved와 동일시하지 않는다.
+IntegrationResult.conflicts	서로 충돌하는 exact output/contract refs와 근거를 저장한다.
+IntegrationResult.emergentRisks	개별 실행에 없던 조합 위험을 evidence·dimension과 함께 기록한다.
+IntegrationResult.requiredRework	원인 lineage와 scope가 있는 TaskProposal로 변환한다. 즉시 임의 task를 만들지 않는다.
+Evidence.id	서버 evidence identity이다. content/producer/version을 별도로 고정한다.
+Evidence.type	test/code/document/runtime/research/user/agent의 provenance 종류이다. 종류별 검증 신뢰 수준을 적용한다.
+Evidence.source	실제 도구 receipt/파일/version/외부 출처를 가리킨다. 사람이 읽는 요약만으로 대체하지 않는다.
+Evidence.confidence	근거와 calibration을 가진 [0,1] 값이다. agent claim을 실제 test pass로 승격하지 않는다.
+Evidence.timestamp	관찰시각과 저장시각을 구분하고 external evidence expiry 판정에 사용한다.
+Evidence.contentHash	canonical content 또는 실제 blob 해시이며 읽을 때 무결성을 확인한다.
+Decision.conclusion	판단 명제이며 supporting evidence와 적용 범위를 함께 저장한다.
+Decision.evidence	불변 EvidenceVersion refs를 사용한다. 해당 증거 무효화는 소비 결정에 전파한다.
+Decision.confidence	근거 강도와 불확실성을 기록하며 높은 확신·약한 근거는 Critic signal이다.
+Decision.assumptions	판단이 의존한 AssumptionVersion refs이며 깨지면 해당 conclusion만 무효화한다.
+ReasoningState.assumptions	현재 reasoning slice의 가정과 유효성 버전을 유지한다.
+ReasoningState.conclusions	각 DecisionVersion과 소비 vector를 저장하여 부분 재계산한다.
+ReasoningState.unresolvedQuestions	미해결 질문을 보존하고 유효한 확정 결론으로 cache hit하지 않는다.
+ReasoningState.evidenceIndex	reasoning이 읽은 증거의 역참조와 버전이다.
+ReasoningState.dependencyVersion	entity/port/semanticView/version/hash vector를 pin한다.
+AgentOutput.taskId	grant의 task/region 대상과 일치해야 하며 다른 task 결과 제출을 거절한다.
+AgentOutput.findings	새 발견의 근거·novelty·적용 범위를 저장하고 중복 finding으로 reward를 부풀리지 않는다.
+AgentOutput.decisions	검증된 conclusion/evidence/assumption 구조를 요구한다.
+AgentOutput.risks	위험 차원·evidence·추정 불확실성을 포함하고 parent/integration aggregate에 연결한다.
+AgentOutput.unresolvedQuestions	미해결 사항을 obligation 또는 escalation 후보로 변환한다.
+AgentOutput.evidence	실제 접근한 유효 evidence refs인지 검증하고 provenance를 보존한다.
+AgentOutput.proposedTasks	scope가 있는 제안이다. 서버 검증 후에만 ID를 할당한다.
+AgentOutput.confidence	[0,1] 자기평가와 evidence 기반 calibrated 값의 구분을 보존한다.
+AgentOutput.requiresEscalation	추가 판단 요청 표시이다. 근거 검증과 router 허가 없이 상위 실행을 만들지 않는다.
+PolicyProposal.target	A56의 6예시를 A54의 9대상과 B propagation/boundary/expectation/routine까지 확장한다.
+PolicyProposal.observedPattern	실제 사례·episode refs에 연결된 반복 구조이다.
+PolicyProposal.rootCause	검증 근거와 대안 가설을 가진 원인 귀속이다. 마지막 agent를 자동 지목하지 않는다.
+PolicyProposal.proposedInvariant	사례 이름이 아닌 일반 구조 제약이다. critical correctness를 일반 학습으로 약화하지 않는다.
+PolicyProposal.proposedRule	허용된 구조 DSL AST이며 ID/파일명 특례와 숨은 mutation을 거절한다.
+PolicyProposal.expectedBenefit	정규화 utility의 추정값과 불확실성이다. 실측 효과와 구분한다.
+PolicyProposal.regressionRisk	holdout/shadow 실패와 영향 범위를 평가하며 승격·rollback gate에 사용한다.
+AgentSystemEvent.id	서버가 생성하는 event identity이며 소비자 멱등 처리 키에 사용한다.
+AgentSystemEvent.type	schema registry에 등록된 의미 변화 종류이다.
+AgentSystemEvent.entityId	영향 entity를 가리키고 graph consumer index의 시작점이 된다.
+AgentSystemEvent.timestamp	관찰/기록시각을 보존하되 처리 순서는 durable sequence로 확정한다.
+AgentSystemEvent.payload	종류별 schemaVersion으로 검증한 불변 payload이며 참조 버전을 고정한다.
+AgentSystemEvent.causationId	직접 원인 event ID이다. 연쇄 실패·repair의 이유를 추적한다.
+AgentSystemEvent.correlationId	같은 사용자 목표/변경 episode의 상관 ID이다. causation과 혼용하지 않는다.
+TaskExpectation.expectedArtifacts	종류/port/schema/수량/조건을 실행 전에 pin하고 실제 output receipt와 비교한다.
+TaskExpectation.expectedInterface	required contract version과 observable 제약이다. 단순 타입 이름으로 축약하지 않는다.
+TaskExpectation.expectedBehavior	검증 가능한 행동 제약·시나리오와 validator를 저장한다.
+TaskExpectation.expectedDependencies	실제 input ports·가정·환경·tool/f 버전의 예상 binding이다.
+TaskExpectation.expectedRisk	실행 전 위험 예상값이다. 관찰 risk residual은 SPE의 C/B/D/G와 별도로 저장한다.
+ChangeSignature.scope	8가지 원문 scope를 보존하며 복합 변경은 scope 집합으로 내부 확장한다.
+ChangeSignature.magnitude	의미 변화 크기의 정규화 값이다. 줄 수만으로 결정하지 않는다.
+ChangeSignature.confidence	scope/magnitude 판단 근거의 신뢰도이다. 낮은 값은 불변 proof가 아니다.
+PlanNode.taskId	stable task와 해당 taskSpecVersion의 참조이다.
+PlanNode.objective	현행 plan node의 승인 목표이며 expectation의 기준이다.
+PlanNode.expectedOutcome	실행 전 ExpectationVersion ref이다. actual로 사후 덮어쓸 수 없다.
+PlanNode.actualOutcome	실행·검증 ObservationVersion ref이다. 실행 전에는 부재를 unknown과 구분한다.
+PlanNode.dependencies	graphVersion에 고정된 typed edge refs이다.
+PlanNode.assumptions	버전 가정 refs와 consumer index를 연결한다.
+PlanNode.boundaryContract	PlanningBoundaryVersion의 observable contract ref이다. 미정이면 보존 proof를 발급하지 않는다.
+PlanNode.status	계획 유효/실행/검증 상태를 기존 task 상태와 혼동하지 않게 분리한다.
+PlanNode.predictionError	C/B/D/G·SPE·evidence를 가진 PredictionErrorVersion ref로 구체화한다.
+PlanNode.invalidationReason	재계획을 정당화하는 exact EvidenceVersion refs이다. 일반 이유 문자열로 대체하지 않는다.
+PlanNode.planVersion	append-only revision reference이며 base version CAS에 사용한다.
+PlanChangeEvent.sourceTask	변경 source task이다. 환경/contract source는 공통 event entity로 추가 표현한다.
+PlanChangeEvent.before	이전 SemanticState의 불변 ref와 input vector이다.
+PlanChangeEvent.after	관찰된 새 SemanticState의 불변 ref이다.
+PlanChangeEvent.changeSignature	여러 scope·크기·confidence·근거가 고정된 signature ref이다.
+PlanChangeEvent.evidence	before/after 차이와 분류를 뒷받침하는 exact evidence이다.
+PlanChangeEvent.timestamp	변경 관찰시각이며 causation/sequence와 함께 episode를 정의한다.
+PredictiveEdge.from	생산자 source entity/port ref로 확장한다.
+PredictiveEdge.to	영향받는 consumer entity/port ref로 확장한다.
+PredictiveEdge.relation	typed relation registry의 값이며 scope별 전파 의미가 필수다.
+PredictiveEdge.impactWeight	[0,1] noncritical 영향 가중치이다. critical은 항상 hard/1이다.
+PredictiveEdge.changeTypes	해당 edge를 통과하는 ChangeScope 집합이다.
+PredictiveEdge.observedPropagationRate	성공/시도/미관측 구분·추정값·모델 버전으로 확장한다. 재실행 수를 semantic 영향 수로 세지 않는다.
+ReplanningContext.goal	승인 goal ref이며 region 밖 objective를 수정할 권한이 아니다.
+ReplanningContext.boundary	control plane이 계산한 허용 GraphRegion과 lease이다.
+ReplanningContext.changedNodes	관찰 변화의 source 집합과 before/after refs이다.
+ReplanningContext.invalidatedNodes	증거·typed closure·경계 검증 후 실제 재검토가 필요한 집합이다.
+ReplanningContext.preservedNodes	유효성을 확인해 보존하는 node 집합이며 patch 대상에서 제외한다.
+ReplanningContext.immutableDecisions	validated/executed/비영향 결정 refs로서 변경 불가능하다.
+ReplanningContext.predictionErrors	현재 lease snapshot의 기대/관찰 오차·근거이다.
+ReplanningContext.violatedInvariants	지역 복구가 반드시 해소해야 할 제약이다.
+ReplanningContext.evidence	region과 role selector에 적합한 근거만 예산 내 제공한다.
+ReplanningResult.revisedTasks	lease 안의 기존 node patch이며 base revision·이유·evidence를 검증한다.
+ReplanningResult.newTasks	proposal-local ID의 새 task이다. 서버가 canonical ID/version을 할당한다.
+ReplanningResult.removedTasks	현행 plan membership 제외이다. 역사 task/artifact를 삭제하지 않는다.
+ReplanningResult.newDependencies	새 typed edge 제안이다. 외부 영향·cycle·complete read binding을 검증한다.
+ReplanningResult.preservedDecisions	입력 immutable set과 일치해야 한다. 생략하여 결정 보존을 우회할 수 없다.
+ReplanningResult.invalidatedAssumptions	근거 있는 가정 무효화 요청이며 실제 consumer로 전파한다.
+ReplanningResult.expectedOutcomes	새 task/spec의 목표·contract에 맞는 실행 전 기대치이다. 실패를 숨기려고 제약을 약화하지 않는다.
+ReplanningResult.confidence	계획 제안의 [0,1] 신뢰도이다. deterministic consistency·completion 검증을 대체하지 않는다.

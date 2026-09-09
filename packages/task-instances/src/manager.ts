@@ -29,7 +29,7 @@ export class InstanceManager {
     await this.preflight(spec)
     const existing = await this.api.get("taskinstances", instanceName(spec.taskId)) as TaskInstance | undefined
     if (existing) {
-      for (const key of ["inputSnapshot", "taskId", "image", "storage", "repository", "stages", "reuseSources", "restoreFromTaskId"] as const)
+      for (const key of ["activation", "inputSnapshot", "taskId", "image", "storage", "repository", "stages", "reuseSources", "restoreFromTaskId"] as const)
         if (!isDeepStrictEqual(existing.spec[key], spec[key])) throw new Error("Task already has a different execution environment")
       if (existing.spec.archive?.claimName !== spec.archive?.claimName) throw new Error("Task archive store is immutable")
       return existing
@@ -44,6 +44,7 @@ export class InstanceManager {
   }
   async resume(taskId: string, run: number, recoveryInstructions?: string) {
     const instance = await this.load(taskId)
+    if(instance.spec.activation&&run!==instance.spec.run)throw new Error("A consumed Pod activation cannot resume; issue a new grant after confirmed stop")
     validateSpec({ ...instance.spec, recoveryInstructions })
     await this.preflight(instance.spec)
     // Explicit generation makes retries safe even after the requested run has already finished.

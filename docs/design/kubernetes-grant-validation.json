@@ -1,0 +1,57 @@
+{
+  "passed": true,
+  "context": "kind-task-agent-local",
+  "namespace": "grant-validation-2a8d09d4",
+  "modelCalls": 0,
+  "checks": [
+    "actual PVC read-only mount",
+    "no model or Kubernetes credentials",
+    "inherited kernel network denial",
+    "same image identity",
+    "stable workspace snapshot",
+    "actual semantic validator receipt",
+    "controller adoption from sealed synthetic model result to verified task"
+  ],
+  "result": {
+    "snapshotHash": "e450bd45be8bbca1ca77c99a8fdb74c2e8610d370aaba8293fb8756642dbc9e2",
+    "receipts": [
+      {
+        "validator": {
+          "id": "isolated",
+          "version": 1
+        },
+        "exitCode": 0,
+        "signal": null,
+        "stdout": "{\"state\":{\"artifacts\":{\"result.txt\":\"done\"},\"contract\":{},\"behavior\":{\"correct\":true},\"dependencies\":{},\"goals\":{},\"risk\":0},\"criticalViolations\":[]}\n",
+        "stderr": "",
+        "truncated": false,
+        "timedOut": false,
+        "inputVector": [
+          {
+            "entityId": "de73236e-b8cc-4751-b731-2648b1c114b6",
+            "port": "inputs",
+            "view": "legacy-complete-input",
+            "version": 1,
+            "hash": "5800a4310a7939e4b898ec9c19a1d7f49776fa03746ebc99828f7678040f73c5"
+          },
+          {
+            "entityId": "de73236e-b8cc-4751-b731-2648b1c114b6",
+            "port": "validation-attempt",
+            "view": "attempt",
+            "version": 1,
+            "hash": "bd8db400f4aa2039ebd61ea79d79292bc510e2d676dd7a486d367cfa3a8a1325"
+          }
+        ],
+        "inputHash": "bd2f57ca73fc8be297a2717618f12ce5553200c68916c0b2bf80fa937cf3e18b",
+        "commandHash": "f200eea3bf0fae42d06919082de8350da00b8a1b2d4237ed5a7c684063d1c02b",
+        "isolation": {
+          "kind": "isolated-pod",
+          "network": false,
+          "workspaceReadOnly": true
+        },
+        "startedAt": 1788956225832,
+        "finishedAt": 1788956225866
+      }
+    ]
+  }
+}

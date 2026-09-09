@@ -1,4 +1,5 @@
 import { resolve } from "node:path"
+import { ControlRuntime } from "../../../packages/task-control/src/runtime.ts"
 import { TaskGraphStore } from "#task-store"
 import { TaskGraphEngine } from "#task-engine"
 import { IntegrationEngine } from "#integration-engine"
@@ -12,5 +13,7 @@ export function createGraphRuntime(database = process.env.TASK_AGENT_DB ?? "data
   const integration = new IntegrationEngine(engine)
   const agent = new TaskAgentService(engine, integration)
   seedDefaultRoles(store)
-  return { store, engine, integration, agent, close: () => store.close() }
+  const control = new ControlRuntime(engine)
+  control.drain()
+  return { store, engine, integration, agent, control, close: () => store.close() }
 }

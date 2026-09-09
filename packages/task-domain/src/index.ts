@@ -409,6 +409,8 @@ export type EventType =
   | "REFLECTION_CREATED"
 
 export interface TaskGraphEvent {
+  causationId?: string
+  correlationId?: string
   id: string
   type: EventType
   taskId?: string

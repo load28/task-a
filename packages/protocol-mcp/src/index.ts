@@ -8,12 +8,7 @@ export interface JsonRpcRequest {
   params?: Record<string, any>
 }
 
-export const AGENT_INSTRUCTIONS = `Task Graph is a deterministic state and context service for the OpenCode server harness.
-OpenCode owns request interpretation, decomposition, task selection, implementation, verification, integration planning, retries and reflection.
-Use task_search/task_load to resume, task_propose_decomposition for validated changes, and task_start before execution.
-Publish actual artifacts and verification evidence with task_complete. The engine validates state transitions and acceptance criteria.
-Integration tools pin versions and record results; OpenCode must execute the tests. Learning tools store and retrieve durable lessons.
-This MCP never runs a model, shell command or orchestration loop. Roles are durable metadata for OpenCode workers.`
+export const AGENT_INSTRUCTIONS = `Deterministic graph administration surface for the trusted controller/operator. Models do not own task state or plan commitment. Attach only the cognitive surface to model sessions, with a controller-issued activation grant. Raw operations still enforce graph constraints, current attempts, scoped-plan guards and validation obligations.`
 
 export class TaskAgentMcpServer {
   private agent: TaskAgent

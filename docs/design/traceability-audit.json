@@ -1,0 +1,45 @@
+{
+  "sourceLines": 4997,
+  "requirements": 158,
+  "semanticLineContracts": 191,
+  "fieldOccurrences": 131,
+  "enumOccurrences": 42,
+  "formulaBlocks": 168,
+  "missingLines": 0,
+  "duplicateLines": 0,
+  "unmappedFields": 0,
+  "kindCounts": {
+    "제목": 201,
+    "빈 줄": 1615,
+    "구분선": 167,
+    "설명·요구": 765,
+    "수식 시작": 168,
+    "수식 본문": 497,
+    "수식 끝": 168,
+    "코드 시작": 144,
+    "예시·흐름": 900,
+    "코드 끝": 144,
+    "타입 선언": 21,
+    "데이터 필드": 131,
+    "열거값": 42,
+    "타입 구문": 19,
+    "표 구조": 2,
+    "대응표 행": 13
+  },
+  "sources": {
+    "A": {
+      "path": "energy-efficient-graph-agent.md",
+      "sha256": "20c947170157ccd4c2fbfb3b30d7633d1c2cc76c47b94abd7e0a8994f52a9cc7",
+      "logicalLines": 2479,
+      "bytes": 38668,
+      "terminalNewline": false
+    },
+    "B": {
+      "path": "adaptive-task-replanning.md",
+      "sha256": "98fe8c1ffd153cdb41082968ad93de8e903ca27fe6e712e7de015b4b8517fd6f",
+      "logicalLines": 2518,
+      "bytes": 40362,
+      "terminalNewline": false
+    }
+  }
+}

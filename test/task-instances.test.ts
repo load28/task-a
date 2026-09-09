@@ -114,7 +114,7 @@ test("Kubernetes manager dispatch cannot also start a native task worker", () =>
 })
 test("Graph MCP exposes durable instances for existing leaves and across new MCP sessions", async () => {
   const api = new MemoryCluster(), manager = new InstanceManager(api, "test")
-  const graph = createGraphMcp(":memory:", 3, manager)
+  const graph = createGraphMcp(":memory:", 3, manager, "controller")
   try {
     const task = graph.engine.createTask({ title: "Kubernetes task", goal: "Preserve execution" })
     const server = graph.server
@@ -181,7 +181,7 @@ test("Kubernetes profiles fill worker defaults and reject native claims without 
   const oldImage = process.env.TASK_INSTANCE_IMAGE, oldSecret = process.env.TASK_INSTANCE_ENV_SECRET
   process.env.TASK_INSTANCE_IMAGE = "configured-worker:local"
   process.env.TASK_INSTANCE_ENV_SECRET = "configured-auth"
-  const api = new MemoryCluster(), manager = new InstanceManager(api, "test"), graph = createGraphMcp(":memory:", 3, manager)
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test"), graph = createGraphMcp(":memory:", 3, manager, "controller")
   try {
     const task = graph.engine.createTask({ title: "Profile task", goal: "Run in the configured Pod" })
     await graph.server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
@@ -371,7 +371,7 @@ test("scheduling and image failures remain observable and clear on startup", asy
 test("model cannot choose archive storage and missing configured storage leaves graph unclaimed", async () => {
   const prior = process.env.TASK_INSTANCE_ARCHIVE_CLAIM
   process.env.TASK_INSTANCE_ARCHIVE_CLAIM = "missing"
-  const api = new MemoryCluster(), manager = new InstanceManager(api, "test"), graph = createGraphMcp(":memory:", 3, manager)
+  const api = new MemoryCluster(), manager = new InstanceManager(api, "test"), graph = createGraphMcp(":memory:", 3, manager, "controller")
   try {
     const task = graph.engine.createTask({ title: "Admission", goal: "Validate before claiming" })
     await graph.server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })

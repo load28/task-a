@@ -1,0 +1,2486 @@
+[
+  {
+    "requirement": "A00",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 전체 실행 trace에 12원칙의 결정·증거·학습 결과가 모두 존재해야 한다."
+  },
+  {
+    "requirement": "A01",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T02,T13: 두 fixture의 활성 역할·컨텍스트·통합 의무 차이를 확인한다."
+  },
+  {
+    "requirement": "A02",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02,T03,T04,T11: L0에서 시작하며 Foo라는 이름을 바꿔도 구조가 같으면 같은 정책 판단이다."
+  },
+  {
+    "requirement": "A03",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T13: 절감 효과는 측정값으로 평가하고 생물학적 유사성으로 대체하지 않는다."
+  },
+  {
+    "requirement": "A03.1",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T02: 9개 등록 역할 중 필요한 2개만 run을 만들고 나머지는 비활성 근거를 재구성한다."
+  },
+  {
+    "requirement": "A03.2",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T01: idle polling·동일 이벤트 재전달에 추가 모델 호출이 없다."
+  },
+  {
+    "requirement": "A03.3",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 독립 subtree의 비참조 문서가 prompt에 포함되지 않는다."
+  },
+  {
+    "requirement": "A03.4",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T03: 정적 분류가 충분하면 classifier 모델조차 호출하지 않는다."
+  },
+  {
+    "requirement": "A03.5",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 일곱 종류 각각 hit/miss/부분 무효화/만료 시나리오를 갖는다."
+  },
+  {
+    "requirement": "A04",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 앞단 신호부터 마지막 policy feedback까지 끊긴 구간 없이 trace된다."
+  },
+  {
+    "requirement": "A05",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T05: 교차 의존과 각 relation의 전파·비전파 의미 및 cycle 처리가 검증된다."
+  },
+  {
+    "requirement": "A06",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T05,T10: 직렬화·조회 roundtrip에 모든 필드 의미가 남고 verified를 전체 완료로 오인하지 않는다."
+  },
+  {
+    "requirement": "A07",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02,T12: 동일 역할 두 run은 독립 상태이며 새 역할 등록만으로 실행하지 않는다."
+  },
+  {
+    "requirement": "A08",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T02,T04: 필수 필드나 validator가 없는 role은 grant 발급이 거절된다."
+  },
+  {
+    "requirement": "A09",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02: 실행 완료·실패·대기·재시작 뒤 상태 전이가 중복 세션을 만들지 않는다."
+  },
+  {
+    "requirement": "A10",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T05,T07: 같은 파일 수라도 API 변경·단순 편집에 다른 signal이 나오고 판정 불가는 unknown이다."
+  },
+  {
+    "requirement": "A11",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02: 동일 snapshot/policy의 score·판정이 재시작 전후 같고 경계값을 검사한다."
+  },
+  {
+    "requirement": "A12",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02: test failure·invariant violation·external fact 세 hard trigger와 각각의 soft 조합을 검사한다."
+  },
+  {
+    "requirement": "A13",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T03: 모든 필수 검사 통과·잔여 질문 없음이면 모델 0회, 실패 receipt는 해당 역할만 깨운다."
+  },
+  {
+    "requirement": "A14",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/guard-authority.ts"
+    ],
+    "requiredAcceptance": "T03,T14: 실제 실행 profile을 확인하고 지원하지 않는 수준을 구현됐다고 표시하지 않는다."
+  },
+  {
+    "requirement": "A15",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 입력마다 T/D/K/E 분류와 관계 근거가 있고 비관련 subtree는 제외된다."
+  },
+  {
+    "requirement": "A16",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 충돌 가정이 일반 history보다 먼저 포함되며 필수 item을 절단하지 않는다."
+  },
+  {
+    "requirement": "A17",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/guard-authority.ts"
+    ],
+    "requiredAcceptance": "T04: 네 cap 각각 초과 시 동작과 필수 정보 초과시 grant 보류를 검증한다."
+  },
+  {
+    "requirement": "A18",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 상위 요약에서 원본으로 확장해도 추적성과 예산이 유지된다."
+  },
+  {
+    "requirement": "A19",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/completion.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T10: local tests 모두 pass지만 contract mismatch로 부모 완료가 차단된다.",
+    "runtimeConnection": "태스크·부모 완료와 integration 보고/캐시/번들 승격에 등록된 필수 의무 검사를 연결했다. 공유 변경에서 의무를 자동 생성하는 경로는 미완료다.",
+    "validation": [
+      "test/control-runtime-integration.test.ts"
+    ]
+  },
+  {
+    "requirement": "A20",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T10: 변경 포트를 소비하지 않는 integration edge는 깨우지 않는다."
+  },
+  {
+    "requirement": "A21",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T09,T10: 2개·3개 변경의 중복 event는 같은 tuple에 의무 1개만 만든다."
+  },
+  {
+    "requirement": "A22",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T10: 일곱 dimension의 실패 fixture가 각각 원인 evidence와 repair proposal을 만든다."
+  },
+  {
+    "requirement": "A23",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/completion.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T04,T10: stale/조작 hash/출처 없는 test claim은 검증 완료 근거로 채택되지 않는다.",
+    "runtimeConnection": "완료와 후속 실행에서 증거의 만료·validator·exact tuple을 다시 검사한다. 모든 증거 생산자의 provenance attestation은 미완료다.",
+    "validation": [
+      "test/control-runtime-integration.test.ts"
+    ]
+  },
+  {
+    "requirement": "A24",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T10: 자식 하나의 낮은 confidence가 다수 높은 값으로 소거되지 않는다."
+  },
+  {
+    "requirement": "A25",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T10: 독립/동일 원인 중복 위험 fixture에서 확률 오표현·중복 누적을 막는다."
+  },
+  {
+    "requirement": "A26",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T02,T10: 일반 작업에는 Critic run이 없고 각 trigger에는 근거 포함 검토가 생성된다."
+  },
+  {
+    "requirement": "A27",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T03,T10: test pass만으로 QA가 필요한 조합 위험을 완료 처리하지 않는다."
+  },
+  {
+    "requirement": "A28",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 낭비·필수 QA 무발견·실제 skip 후 실패·관측 불충분 네 사례를 구분한다."
+  },
+  {
+    "requirement": "A29",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11,T13: 호출 최소화만으로 모든 역할을 skip하는 후보가 승격되지 않는다."
+  },
+  {
+    "requirement": "A30",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: auth.ts 규칙은 거절하고 같은 authentication boundary를 다른 이름으로 옮겨도 규칙이 작동한다."
+  },
+  {
+    "requirement": "A31",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: candidate/shadow가 production routing을 바꾸지 않고 validated도 승인 gate 전엔 active가 아니다."
+  },
+  {
+    "requirement": "A32",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 독립 evidence 변화는 무관한 reasoning record를 무효화하지 않는다."
+  },
+  {
+    "requirement": "A33",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04,T06: 안전한 local rename은 architecture cache 유지, export/reflection rename은 검증 없이 유지하지 않는다."
+  },
+  {
+    "requirement": "A34",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04: 독립 conclusion은 유지하고 영향을 받은 unresolved question만 새 grant context에 포함한다."
+  },
+  {
+    "requirement": "A35",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T04: 연구 R만 갱신하면 R을 읽은 인지 결과만 stale이다."
+  },
+  {
+    "requirement": "A36",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/guard-authority.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02,T04: 직접 전달한 미검증 주장으로 다음 task를 완료시키지 못한다."
+  },
+  {
+    "requirement": "A37",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T02,T10: 누락 필드·다른 task·stale evidence·범위 밖 proposal이 거절된다."
+  },
+  {
+    "requirement": "A38",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T03: requiresEscalation 플래그만 있고 근거가 없으면 추가 모델 호출이 없다."
+  },
+  {
+    "requirement": "A39",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 테스트 비용 증가가 추론 감소 뒤에 숨지 않고 전체 합계에 반영된다."
+  },
+  {
+    "requirement": "A40",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 동일 finding 중복 제출로 효율을 올리지 못하고 단위 변경에 score가 임의 변하지 않는다."
+  },
+  {
+    "requirement": "A41",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 빈 출력·중복 finding·유효 assurance가 정의대로 분류되고 분모 0은 미정이다."
+  },
+  {
+    "requirement": "A42",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 모두 호출/모두 skip 후보가 각각 precision/recall tradeoff를 드러낸다."
+  },
+  {
+    "requirement": "A43",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: security missed failure를 낮은 토큰 비용으로 상쇄해 승격하지 못한다."
+  },
+  {
+    "requirement": "A44",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 18단계마다 수행 또는 근거 있는 비수행 기록을 확인한다."
+  },
+  {
+    "requirement": "A45",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 단순 작업 과분해는 거절되고 독립 위험 격리는 비용 근거와 함께 승인된다."
+  },
+  {
+    "requirement": "A46",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T09,T12: running task 분할이 늦은 결과와 충돌하지 않고 비영향 sibling은 유지된다."
+  },
+  {
+    "requirement": "A47",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 일회성 Kafka 이름만으로 persistent 전문 역할을 만들지 못한다."
+  },
+  {
+    "requirement": "A48",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 각 전이 조건과 미검증 역할의 영구 승격 거절을 검사한다."
+  },
+  {
+    "requirement": "A49",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/guard-authority.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02,T15: manager 없이 deterministic 완료가 가능하고 manager가 임의 task를 dispatch하지 못한다."
+  },
+  {
+    "requirement": "A50",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/guard-authority.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02: intelligence result가 검증 없는 control state 직접 변경을 수행하지 못한다."
+  },
+  {
+    "requirement": "A51",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/completion.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02,T08: 모델이 ID/version/status 또는 preserved node를 위조해 제출하면 거절한다.",
+    "runtimeConnection": "task 입력 변경·실패·plan visibility fence가 발급된 grant와 agent_run을 같은 트랜잭션에서 차단한다. 모든 writer의 grant/lease 의무화는 미완료다.",
+    "validation": [
+      "test/control-runtime-integration.test.ts"
+    ]
+  },
+  {
+    "requirement": "A52",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 부족한 context 사례를 reasoning failure로 자동 확정하지 않는다."
+  },
+  {
+    "requirement": "A53",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 9종 fixture가 각각 저장·조회·후보 policy target 연결을 갖는다."
+  },
+  {
+    "requirement": "A54",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 모든 target에서 candidate가 검증 후만 runtime head를 바꾸며 rollback된다."
+  },
+  {
+    "requirement": "A55",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11,T13: 매 task마다 meta가 실행되지 않고 같은 batch의 중복 event도 실행 1회다."
+  },
+  {
+    "requirement": "A56",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 근거·일반 invariant 없는 proposal과 추정 benefit을 실측처럼 표기한 제안은 승격되지 않는다."
+  },
+  {
+    "requirement": "A57",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T11: 승인 필요·사전 승인·승인 불필요 세 정책 경로를 각각 검증한다."
+  },
+  {
+    "requirement": "A58",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: SQL/API 경로의 head 변경도 event 없이 성공하지 못한다."
+  },
+  {
+    "requirement": "A59",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11,T14: 진행 run의 정책은 조용히 바뀌지 않고 새 run은 되돌린 버전을 사용한다."
+  },
+  {
+    "requirement": "A60",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T13,T15: 실행 1건을 재구성할 때 빠진 control decision이 없어야 한다."
+  },
+  {
+    "requirement": "A61",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 뒤늦은 실패에서 Architect가 왜 skip됐는지 당시 값으로 설명할 수 있다."
+  },
+  {
+    "requirement": "A62",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 3/7은 고정 절감 약속이 아니라 fixture 관찰값이며 이름을 바꿔도 같은 구조 결과다."
+  },
+  {
+    "requirement": "A63",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T14: 영역 간 참조 integrity와 backup/restore가 함께 검증된다."
+  },
+  {
+    "requirement": "A64",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T05,T14: graph DB 없이 인과 조회·무결성·재시작 재현을 만족한다."
+  },
+  {
+    "requirement": "A65",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T01: mutation 후 crash해도 event가 사라지거나 외부 run이 중복 채택되지 않는다."
+  },
+  {
+    "requirement": "A66",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T01,T13: 연쇄 실패·repair·policy event를 하나의 correlation과 정확한 causation으로 추적한다."
+  },
+  {
+    "requirement": "A67",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T13: 과거 시점에 없던 증거가 replay 입력으로 누출되지 않는다."
+  },
+  {
+    "requirement": "A68",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 호출 예측만으로 실패를 막았다는 reward를 확정하지 않는다."
+  },
+  {
+    "requirement": "A69",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: shadow 활성화가 실제 worker·context·cache head를 바꾸지 않는다."
+  },
+  {
+    "requirement": "A70",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 한 episode의 검증된 학습이 다음 episode에만 versioned 방식으로 반영된다."
+  },
+  {
+    "requirement": "A71",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 품질을 떨어뜨린 후보는 efficiency가 높아 보여도 수용되지 않는다."
+  },
+  {
+    "requirement": "A72",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T02,T15: 전 역할 fanout이 기본 실행 경로에 존재하지 않는다."
+  },
+  {
+    "requirement": "A73",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 모든 run에서 네 질문의 근거를 조회할 수 있다."
+  },
+  {
+    "requirement": "A74",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 12개 원칙별 evidence gate가 모두 만족해야 한다."
+  },
+  {
+    "requirement": "A75",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T14,T15: 하나라도 advisory-only 또는 미연결이면 미완성이다."
+  },
+  {
+    "requirement": "B00",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 변경 task만 고치거나 항상 전체 계획을 다시 만드는 두 극단을 피한다."
+  },
+  {
+    "requirement": "B01",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T15: B/C의 task/spec/decision/run이 그대로이고 A2와 통합 의무만 생긴다."
+  },
+  {
+    "requirement": "B02",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 다른 상위 목표에서 동일한 유효 routine을 재사용할 수 있다."
+  },
+  {
+    "requirement": "B03",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T07: 기대치와 관찰이 같으면 계획을 다시 만들지 않고 불일치 근거를 기록한다."
+  },
+  {
+    "requirement": "B04",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/completion.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T07: 다섯 expected field 각각의 불일치·unknown과 사후 기대치 변조를 검사한다.",
+    "runtimeConnection": "typed expectation과 prediction policy를 실행 전에 고정하고 startTask에서 attempt/spec/input vector에 결합한다. 모든 legacy task의 typed expectation 전환은 미완료다.",
+    "validation": [
+      "test/control-runtime-integration.test.ts"
+    ]
+  },
+  {
+    "requirement": "B05",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T07: 큰 문서 포맷 변화보다 작은 required return type 변화가 강한 의무를 만들 수 있다."
+  },
+  {
+    "requirement": "B06",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T07: threshold 이하라도 critical violation은 반드시 처리되고 equality 규칙이 결정적이다."
+  },
+  {
+    "requirement": "B07",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T05: A1 변경이 A2/A3로 가고 역방향 A1의 predecessor를 불필요하게 무효화하지 않는다."
+  },
+  {
+    "requirement": "B08",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05: source 포함·독립 component 제외·다중 경로 중복 제거를 oracle과 대조한다."
+  },
+  {
+    "requirement": "B09",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/guard-authority.ts"
+    ],
+    "requiredAcceptance": "T05: 숨은 외부 입력이나 f 변경이 있는 반례는 안전 보존 판정을 받지 못한다."
+  },
+  {
+    "requirement": "B10",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05: 생성 DAG의 full evaluation과 local evaluation이 동일하고 전제 위반 시 proof가 거절된다."
+  },
+  {
+    "requirement": "B11",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 국소/전역 변경 각각의 비용을 보고하며 절감률을 사전 고정하지 않는다."
+  },
+  {
+    "requirement": "B12",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02: 역할 정책이 높게 평가해도 비영향 task는 임의 재실행되지 않는다."
+  },
+  {
+    "requirement": "B13",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T05: 단순 task dependency가 없어도 공유 자원·가정 변경이 관련 consumer를 찾는다."
+  },
+  {
+    "requirement": "B14",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05: 같은 두 node라도 relation과 scope에 따라 서로 다른 전파 결과를 낸다."
+  },
+  {
+    "requirement": "B15",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05: 세 change class 각각의 통과/차단 edge fixture를 갖는다."
+  },
+  {
+    "requirement": "B16",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T07: 하나의 변경이 contract+assumption이면 두 경로 모두 반영된다."
+  },
+  {
+    "requirement": "B17",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T07: 작은 반복 변화가 parent planner를 계속 깨우지 않는다."
+  },
+  {
+    "requirement": "B18",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T06: backend 내부 변경이 검증된 public projection을 유지하면 frontend run 0이다."
+  },
+  {
+    "requirement": "B19",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T06: invariant 이름만 같고 값이 바뀌면 preserved로 판정하지 않는다."
+  },
+  {
+    "requirement": "B20",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T06: 타입이 같아도 외부 직접 read나 다른 error semantics가 있으면 차단 proof가 실패한다."
+  },
+  {
+    "requirement": "B21",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T06,T09: boundary 보존과 별개 외부 입력 변화가 있으면 해당 외부 task는 재검토된다."
+  },
+  {
+    "requirement": "B22",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 경계 도입 전후 동일 변화의 비용과 정확성을 비교한다."
+  },
+  {
+    "requirement": "B23",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05,T07: 다섯 유형 각각의 보존/영향 집합을 fixture로 명시한다."
+  },
+  {
+    "requirement": "B24",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T05: 고공유 implementation이 작은 subgoal보다 넓은 반례도 올바르게 처리한다."
+  },
+  {
+    "requirement": "B25",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05: 여러 경로의 max·0/1 weight·cycle 수렴을 숫자 oracle과 대조한다."
+  },
+  {
+    "requirement": "B26",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05,T10: 낮은 delta가 필수 검증 의무를 삭제하지 못한다."
+  },
+  {
+    "requirement": "B27",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T05: 매우 긴 critical path와 낮은 학습 확률에서도 의무가 끝까지 전파된다."
+  },
+  {
+    "requirement": "B28",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T07: 이미 진행한 작업이 큰 경우 작은 기대 개선만으로 교체하지 않는다."
+  },
+  {
+    "requirement": "B29",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T07: 두 임계값 사이 진동은 상태를 계속 전환하지 않는다."
+  },
+  {
+    "requirement": "B30",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T07: 비용 우위라도 critical requirement 위반 계획을 keep하지 않는다."
+  },
+  {
+    "requirement": "B31",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T07: 이득=전환비용 경계값과 불확실 추정 처리 규칙을 검증한다."
+  },
+  {
+    "requirement": "B32",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T08: local repair 성공 시 parent 역할을 깨우지 않는다."
+  },
+  {
+    "requirement": "B33",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T08: 작은 그래프 전수 oracle과 일치하며 미증명 최소를 최소라고 보고하지 않는다."
+  },
+  {
+    "requirement": "B34",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T08: 실패 증거 없는 goal-level replan 요청을 거절한다."
+  },
+  {
+    "requirement": "B35",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T08: 우회 경로 생성 후 과거 artifact/decision/spec version은 그대로다."
+  },
+  {
+    "requirement": "B36",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T08: 완료했지만 새 assumption evidence에 영향받은 node는 무조건 Pc로 분류하지 않는다."
+  },
+  {
+    "requirement": "B37",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T08: 미래 변경만으로 과거 완료 task를 reopen하는 patch는 거절된다."
+  },
+  {
+    "requirement": "B38",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T08: 이유 문자열만으로 immutable decision을 바꿀 수 없다."
+  },
+  {
+    "requirement": "B39",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T07,T14: 재시작 후 과거 기대·실제·무효화 이유·계획 버전을 정확히 재구성한다."
+  },
+  {
+    "requirement": "B40",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T01,T07: 재전달·재생 시 동일 before/after와 signature를 사용한다."
+  },
+  {
+    "requirement": "B41",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 16단계에서 임의 전체 revise·검증 전 완료 우회를 시도하면 거절한다."
+  },
+  {
+    "requirement": "B42",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T08: A1/A2 상호작용은 A 후보를 만들지만 자동 채택하지 않는다."
+  },
+  {
+    "requirement": "B43",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T08: LCA보다 작은 유효 region을 선택하고 외부 invariant 깨진 작은 후보는 거절한다."
+  },
+  {
+    "requirement": "B44",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T09: 3개 change가 간접 overlap하면 한 연결 성분으로 병합된다."
+  },
+  {
+    "requirement": "B45",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T09: 파일 경로가 달라도 공유 contract overlap은 공동 계획이며 독립이면 병렬이다."
+  },
+  {
+    "requirement": "B46",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T09,T10: 별개 branch에서 만든 정상 결과의 조합 불일치를 검출한다."
+  },
+  {
+    "requirement": "B47",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T07: 작은 자식 오류와 중요한 큰 오류의 집계 결과·모델 버전이 재현된다."
+  },
+  {
+    "requirement": "B48",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T08: 높은 error라도 local repair 성공이면 parent replan run이 없다."
+  },
+  {
+    "requirement": "B49",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02,T08: 작은 변화 처리 중 상위 역할은 dormant를 유지한다."
+  },
+  {
+    "requirement": "B50",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 불안정/안정 두 workload에서 서로 다른 후보가 생성된다."
+  },
+  {
+    "requirement": "B51",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 한 번 실패를 높은 빈도로 과장하지 않고 비용이 큰 무의미 분할은 거절한다."
+  },
+  {
+    "requirement": "B52",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 내부 단계를 복구할 수 있고 외부 dependency가 합치기 전후 동일하다."
+  },
+  {
+    "requirement": "B53",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 각 변환 후 causal completeness·boundary proof·기존 artifact lineage를 다시 검증한다."
+  },
+  {
+    "requirement": "B54",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-store/src/index.ts"
+    ],
+    "requiredAcceptance": "T05,T12: edge view roundtrip과 정책 변경 전후 통계 provenance가 유지된다."
+  },
+  {
+    "requirement": "B55",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T12: 단지 실행했다는 이유로 propagation 성공 label이 되지 않는다."
+  },
+  {
+    "requirement": "B56",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T05,T12: 낮은 경로 확률이 필수 interface 검증을 차단하지 않는다."
+  },
+  {
+    "requirement": "B57",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T05,T10: 여섯 constraint 각각 낮은 확률·예산 부족에서도 미해결 상태를 유지한다."
+  },
+  {
+    "requirement": "B58",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 현재 지식을 과거 입력에 섞지 않고 재생할 수 있다."
+  },
+  {
+    "requirement": "B59",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 같은 priority의 tie-break와 factor unknown 처리까지 결정적으로 재현한다."
+  },
+  {
+    "requirement": "B60",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 작은 집합은 전수 최적해와 같고 critical 비용이 B 초과면 조용히 skip하지 않는다."
+  },
+  {
+    "requirement": "B61",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 세 분기와 prediction update까지 하나의 episode trace로 확인한다."
+  },
+  {
+    "requirement": "B62",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02: 100 task/9 role fixture에서 영향 task와 그 필요 role만 실행된다."
+  },
+  {
+    "requirement": "B63",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T02,T04: 어떤 축이든 우회하면 grant 또는 result 채택이 거절된다."
+  },
+  {
+    "requirement": "B64",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: 15개 재검토 중 2개 영향과 누락 task7 실패를 서로 다른 구조 후보로 귀속한다."
+  },
+  {
+    "requirement": "B65",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: cheap narrow propagation이 critical missed impact를 늘리면 승격되지 않는다."
+  },
+  {
+    "requirement": "B66",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T11: auth.ts/UserPage literal rule은 거절하고 구조 동형 그래프에서 일반화된다."
+  },
+  {
+    "requirement": "B67",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/grant-hooks.ts",
+      "packages/opencode-harness/src/graph-mcp.ts",
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/gateway.ts",
+      "packages/task-control/src/guard-authority.ts",
+      "packages/task-control/src/replanning.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-engine/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T08,T14: prompt를 무시하는 planner도 실제 권한 밖 계획을 바꾸지 못한다.",
+    "runtimeConnection": "ControlRuntime.replanning → pinned lease → cognitive_replan_stage → validation obligation → TaskGraphEngine.reviseWorkPlan atomic scoped commit. Scoped-enrolled plans reject raw revisions; default host migration and complete semantic validation remain unfinished.",
+    "runtimeTests": [
+      "test/scoped-replanning-runtime.test.ts"
+    ]
+  },
+  {
+    "requirement": "B68",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts"
+    ],
+    "requiredAcceptance": "T04,T08: 모든 필드가 해당 lease snapshot과 일치하며 전역 history가 포함되지 않는다."
+  },
+  {
+    "requirement": "B69",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/opencode-harness/src/graph-mcp.ts",
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/gateway.ts",
+      "packages/task-control/src/replanning.ts",
+      "packages/task-engine/src/index.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts"
+    ],
+    "requiredAcceptance": "T08: 각 output 유형의 정상·범위 위반·stale base·참조 무결성 실패를 검사한다.",
+    "runtimeConnection": "ControlRuntime.replanning → pinned lease → cognitive_replan_stage → validation obligation → TaskGraphEngine.reviseWorkPlan atomic scoped commit. Scoped-enrolled plans reject raw revisions; default host migration and complete semantic validation remain unfinished.",
+    "runtimeTests": [
+      "test/scoped-replanning-runtime.test.ts"
+    ]
+  },
+  {
+    "requirement": "B70",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/completion.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T10: 각 조건 하나만 실패하는 독립 fixture 모두 완료가 차단된다.",
+    "runtimeConnection": "등록된 필수 의무, typed prediction의 unknown/critical/stability와 stop 상태를 실제 완료 경로에 연결했다. 모든 변경의 자동 의무 생성과 전체 conjunction 수용 검증은 미완료다.",
+    "validation": [
+      "test/control-runtime-integration.test.ts"
+    ]
+  },
+  {
+    "requirement": "B71",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts"
+    ],
+    "requiredAcceptance": "T02,T15: 호출 순서와 grant 참조로 두 단계의 선후를 검증한다."
+  },
+  {
+    "requirement": "B72",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T13: 실패를 늘려 얻은 비용 절감을 개선으로 보고하지 않는다."
+  },
+  {
+    "requirement": "B73",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts"
+    ],
+    "requiredAcceptance": "T05,T06: 우회 경로·다중 경계·unknown proof 반례에서 필요한 node를 누락하지 않는다."
+  },
+  {
+    "requirement": "B74",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-policy/src/index.ts"
+    ],
+    "requiredAcceptance": "T15: 13개 대응에 실제 데이터·결정 기록이 존재해야 한다."
+  },
+  {
+    "requirement": "B75",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T15: 두 번 연속 변화 episode에서 이전 유효 계획을 재사용하며 필요한 부분만 갱신한다."
+  },
+  {
+    "requirement": "B76",
+    "endToEndVerified": false,
+    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "relatedModules": [
+      "packages/task-causality/src/boundary.ts",
+      "packages/task-causality/src/granularity.ts",
+      "packages/task-causality/src/graph.ts",
+      "packages/task-causality/src/prediction.ts",
+      "packages/task-causality/src/propagation.ts",
+      "packages/task-causality/src/replan.ts",
+      "packages/task-cognition/src/activation.ts",
+      "packages/task-cognition/src/precision.ts",
+      "packages/task-cognition/src/roles.ts",
+      "packages/task-context/src/budget.ts",
+      "packages/task-context/src/memory.ts",
+      "packages/task-control/src/admission.ts",
+      "packages/task-control/src/runtime.ts",
+      "packages/task-control/src/store.ts",
+      "packages/task-evidence/src/index.ts",
+      "packages/task-evidence/src/integration.ts",
+      "packages/task-evidence/src/validators.ts",
+      "packages/task-policy/src/index.ts",
+      "packages/task-control/src/requests.ts",
+      "packages/task-control/src/local-repairs.ts",
+      "packages/task-control/src/regional-repairs.ts",
+      "packages/task-control/src/role-router.ts",
+      "packages/task-control/src/plan-admission.ts"
+    ],
+    "requiredAcceptance": "T14,T15: 두 문서의 모든 요구 ID가 구현·검증 evidence에 연결되어야 최종 수용한다."
+  }
+]

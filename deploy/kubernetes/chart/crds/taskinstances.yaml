@@ -37,6 +37,10 @@ spec:
               type: object
               required: [taskId, image, desiredState, run, storage, stages, deletionPolicy]
               x-kubernetes-validations:
+                - rule: has(self.activation) == has(oldSelf.activation) && (!has(self.activation) || self.activation == oldSelf.activation)
+                  message: Activation identity is immutable
+                - rule: '!has(self.activation) || self.run == oldSelf.run'
+                  message: A consumed activation cannot resume in another generation
                 - rule: self.run >= oldSelf.run
                   message: Execution generation cannot decrease
                 - rule: self.taskId == oldSelf.taskId && self.image == oldSelf.image && self.stages == oldSelf.stages && self.storage == oldSelf.storage
@@ -52,6 +56,15 @@ spec:
                 - rule: "has(self.inputSnapshot) == has(oldSelf.inputSnapshot) && (!has(self.inputSnapshot) || self.inputSnapshot == oldSelf.inputSnapshot)"
                   message: Input snapshot is immutable; create a new execution for changed inputs
               properties:
+                activation:
+                  type: object
+                  required: [grantId, taskId, generation, authoritySecret, expiresAt]
+                  properties:
+                    grantId: {type: string, minLength: 1, maxLength: 256}
+                    taskId: {type: string, minLength: 1, maxLength: 256}
+                    generation: {type: integer, minimum: 1}
+                    authoritySecret: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+                    expiresAt: {type: integer, format: int64, minimum: 1}
                 restoreFromTaskId: {type: string, minLength: 1, maxLength: 256}
                 archive:
                   type: object

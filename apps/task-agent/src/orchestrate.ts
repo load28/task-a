@@ -7,7 +7,7 @@ import { callService } from "../../../packages/host-integration/src/service.ts"
 
 const text = process.argv.slice(2).join(" ")
 if (!text || text === "--help") {
-  console.log('Usage: npm run orchestrate -- "request to the OpenCode server"')
+  console.log('Usage: npm run orchestrate -- "request to the event-driven controller"')
 } else {
   const path = resolve(homedir(), ".task-agent/host.json")
   const config = loadConfig(path)
@@ -24,5 +24,5 @@ if (!text || text === "--help") {
     prompt: text,
   })
   console.log(JSON.stringify(result, null, 2))
-  console.log("OpenCode 서버에 전달했습니다. 호스트 MCP의 opencode_status에서 requestId로 결과를 조회할 수 있습니다.")
+  console.log("제어 이벤트를 제출했습니다. 호스트 MCP의 opencode_status에서 requestId로 결과를 조회할 수 있습니다.")
 }

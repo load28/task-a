@@ -26,6 +26,7 @@ export function atomicJson(path: string, value: unknown) {
 /** Checkpoints are stage boundaries, never a claim to restore process memory. */
 export async function runInstance(spec: InstanceSpec, directory: string, instanceId: string, sourceDirectories: string[] = []): Promise<number> {
   validateSpec(spec)
+  if(spec.activation&&spec.activation.expiresAt<=Date.now())throw new Error("Pod activation expired before execution or restore")
   const restore: WorkspaceArchive | undefined = process.env.TASK_WORKSPACE_ARCHIVE ? JSON.parse(process.env.TASK_WORKSPACE_ARCHIVE) : undefined
   const archiveRoot = process.env.TASK_ARCHIVE_ROOT ?? "/archive"
   if (restore && !existsSync(resolve(directory, "restored.json"))) {
@@ -57,7 +58,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
   mkdirSync(resolve(directory, "home"), { recursive: true })
   const workspace = resolve(directory, "workspace")
   const checkpointPath = resolve(directory, "checkpoint.json")
-  const identity = createHash("sha256").update(JSON.stringify([instanceId, spec.taskId, spec.image, spec.repository, spec.stages, spec.inputSnapshot])).digest("hex")
+  const identity = createHash("sha256").update(JSON.stringify([instanceId, spec.taskId, spec.image, spec.repository, spec.stages, spec.inputSnapshot,...(spec.activation?[spec.activation]:[])])).digest("hex")
   const checkpoint: Checkpoint = existsSync(checkpointPath) ? JSON.parse(readFileSync(checkpointPath, "utf8")) :
     { version: 1, identity, completed: [], state: "Starting", attempts: {}, updated: "" }
   if (checkpoint.identity !== identity) throw new Error("Saved workspace does not match immutable task execution specification")

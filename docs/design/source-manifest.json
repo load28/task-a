@@ -1,0 +1,16 @@
+{
+  "A": {
+    "path": "energy-efficient-graph-agent.md",
+    "sha256": "20c947170157ccd4c2fbfb3b30d7633d1c2cc76c47b94abd7e0a8994f52a9cc7",
+    "logicalLines": 2479,
+    "bytes": 38668,
+    "terminalNewline": false
+  },
+  "B": {
+    "path": "adaptive-task-replanning.md",
+    "sha256": "98fe8c1ffd153cdb41082968ad93de8e903ca27fe6e712e7de015b4b8517fd6f",
+    "logicalLines": 2518,
+    "bytes": 40362,
+    "terminalNewline": false
+  }
+}

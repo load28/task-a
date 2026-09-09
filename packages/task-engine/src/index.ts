@@ -1,4 +1,8 @@
 import { normalizeScopes } from "./scheduling.ts"
+import { assertScopedRevision } from "../../task-control/src/replanning.ts"
+import { assertRequestPlanApproval } from "../../task-control/src/requests.ts"
+import { assertTaskAdmission, assertTaskResult, assertTaskInvalidation } from "../../task-control/src/task-admission.ts"
+import { controlCompletionMissing, pinAttemptExpectation, requireControlCompletion } from "../../task-control/src/completion.ts"
 import { randomUUID } from "node:crypto"
 import { SignalCoordinator } from "./signals.ts"
 import { FeedbackCoordinator } from "./feedback.ts"
@@ -358,6 +362,7 @@ export class TaskGraphEngine {
 
   reviseWorkPlan(input: ReviseWorkPlanInput): { revision: PlanRevision; impact: PlanImpactReport; userView: UserPlanView } {
     return this.atomic(() => {
+      assertScopedRevision(this,input)
       const plan = this.requireWorkPlan(input.planId)
       if (plan.currentRevision !== input.baseVersion) throw new Error("Plan revision is stale")
       const priorNodes = this.store.planNodes(plan.id, this.store.activePlanVersion(plan.id))
@@ -390,6 +395,7 @@ export class TaskGraphEngine {
 
   approveWorkPlan(input: { planId: string; version: number; approvalSource: string }): { plan: WorkPlan; rootTaskId: string; createdTaskIds: string[]; userView: UserPlanView; transition?: PlanTransition } {
     return this.atomic(() => {
+      assertRequestPlanApproval(this,input.planId,input.version)
       const plan = this.requireWorkPlan(input.planId)
       const revision = this.requirePlanRevision(plan.id, input.version)
       requireText(input.approvalSource, "approval source")
@@ -456,6 +462,7 @@ export class TaskGraphEngine {
 
   startTask(taskId: string, worker?: { agent?: string; sessionId?: string; role?: string; instanceTaskId?: string }): Task {
     return this.atomic(() => {
+      assertTaskAdmission(this,taskId,worker?.sessionId)
       let task = this.requireTask(taskId)
       if (!this.store.executionAllowed(taskId)) throw new Error("Task execution is fenced by a plan transition")
       if (!isAtomic(task)) throw new Error("Only atomic tasks can be started; decompose or pick a runnable leaf")
@@ -478,12 +485,14 @@ export class TaskGraphEngine {
       const attempt = this.store.currentAttempt(taskId)!
       const pinned = this.signals.pin(taskId, attempt.id)
       this.store.saveAttempt({ ...attempt, inputRefs: pinned.inputRefs })
+      pinAttemptExpectation(this, taskId, attempt.id)
       return this.requireTask(taskId)
     })
   }
 
   completeTask(input: CompleteTaskInput): Task {
     return this.atomic(() => {
+      assertTaskResult(this,input.taskId)
       requireText(input.summary, "summary")
       let task = this.requireTask(input.taskId)
       const attempt = this.store.currentAttempt(task.id)
@@ -511,6 +520,7 @@ export class TaskGraphEngine {
       task = this.requireTask(input.taskId)
       const verification = input.verification
       if (verification?.passed) {
+        requireControlCompletion(this, [task.id])
         const satisfied = new Set(verification.criteriaSatisfied ?? [])
         const unmet = task.acceptanceCriteria.filter((criterion) => !satisfied.has(criterion.id))
         if (unmet.length > 0) throw new Error(`Acceptance criteria not reported as satisfied: ${unmet.map((criterion) => criterion.id).join(", ")}`)
@@ -548,6 +558,7 @@ export class TaskGraphEngine {
 
   reopenTask(taskId: string, reason: string): Task {
     return this.atomic(() => {
+      assertTaskInvalidation(this,taskId)
       if (!this.store.executionAllowed(taskId)) throw new Error("Historical or fenced specifications cannot be reopened; use the current plan revision")
       requireText(reason, "reason")
       const task = this.requireTask(taskId)
@@ -824,7 +835,7 @@ export class TaskGraphEngine {
 
   evaluateCompletion(taskId: string): CompletionEvaluation {
     const task = this.requireTask(taskId)
-    const missing: string[] = []
+    const missing: string[] = controlCompletionMissing(this, this.subtreeIds(taskId))
     if (!this.signals.settled(taskId) || [...this.subtreeIds(taskId)].some(id => this.signals.dirty(id))) missing.push("input changes are pending")
     for (const issue of this.feedback.list(taskId).filter(i => i.state !== "resolved")) missing.push(`unresolved issue: ${issue.id}`)
     const children = this.store.childTasks(taskId)
@@ -1004,6 +1015,7 @@ export class TaskGraphEngine {
   markTaskIntegrated(taskId: string): void {
     const task = this.requireTask(taskId)
     if (["verified", "integrating"].includes(task.status)) {
+      requireControlCompletion(this, [taskId])
       this.setStatus(task, "integrated")
       this.afterTaskSettled(taskId)
     }
