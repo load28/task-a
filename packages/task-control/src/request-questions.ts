@@ -5,7 +5,7 @@ import { canonical, digest } from "./value.ts"
 
 export interface RequestQuestion {
   id:string;requestId:string;sessionId:string;grantId:string;questions:string[]
-  target?:{kind:"regional";repairId:string}
+  target?:{kind:"regional";repairId:string}|{kind:"worker";taskId:string;attemptId:string;expectationVersion:number}
   state:"pending"|"answered"|"cancelled";source:VersionRef;answers?:string[][];evidence?:VersionRef
 }
 
@@ -27,7 +27,7 @@ export class RequestQuestions {
   pending(requestId:string):RequestQuestion[] {
     return this.controller.store.db.prepare("SELECT payload FROM request_questions WHERE request_id=? AND state='pending' ORDER BY rowid").all(requestId).map(row=>JSON.parse(String(row.payload)))
   }
-  ask(request:ControlledRequest,program:ControllerProgram,output:AgentOutput,continuation?:{grantId:string;repairId:string}):RequestQuestion {
+  ask(request:ControlledRequest,program:ControllerProgram,output:AgentOutput,continuation?:{grantId:string;target:NonNullable<RequestQuestion["target"]>}):RequestQuestion {
     const controller=this.controller,store=controller.store,grantId=continuation?.grantId??request.plannerGrant!
     if(output.requiresEscalation)throw new Error("Escalation requires independent scoped policy review, not a clarification reply")
     const count=Number(store.db.prepare("SELECT count(*) n FROM request_questions WHERE request_id=?").get(request.id)!.n)
@@ -41,7 +41,7 @@ export class RequestQuestions {
     const grant=JSON.parse(String(store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grantId)!.payload)) as ActivationGrant
     const content={requestId:request.id,grantId,output},id=`question:${digest({requestId:request.id,grantId})}`
     const source=controller.runtime.evidence.put({id,version:1,type:"agent",source:grantId,producer:grant.role.id,validatorVersion:"user-question/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:grant.inputVector,confidence:output.confidence,expiresAt:null})
-    const question:RequestQuestion={id,requestId:request.id,sessionId:request.sessionId,grantId,questions,state:"pending",source,...(continuation?{target:{kind:"regional" as const,repairId:continuation.repairId}}:{})}
+    const question:RequestQuestion={id,requestId:request.id,sessionId:request.sessionId,grantId,questions,state:"pending",source,...(continuation?{target:continuation.target}:{})}
     this.save(question)
     store.event({id,type:"RequestQuestionRaised",entityId:request.taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{questionId:id,evidence:source}})
     return question
@@ -69,7 +69,8 @@ export class RequestQuestions {
   assertCurrent(request:ControlledRequest,id:string):ActivationGrant {
     const question=this.get(id),controller=this.controller
     if(!question||question.requestId!==request.id)throw new Error("Question refers to stale planning inputs")
-    if(question.target)controller.regional.assertQuestion(request,question)
+    if(question.target?.kind==="worker")return controller.workerQuestions.assertQuestion(request,question)
+    if(question.target?.kind==="regional")controller.regional.assertQuestion(request,question)
     else if(question.grantId!==request.plannerGrant)throw new Error("Question refers to stale planning inputs")
     const row=controller.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(question.grantId)
     const grant=row&&JSON.parse(String(row.payload)) as ActivationGrant|undefined

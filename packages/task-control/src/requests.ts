@@ -12,6 +12,7 @@ import { canonical, digest } from "./value.ts"
 import { controlCompletionMissing } from "./completion.ts"
 import { LocalRepairs } from "./local-repairs.ts"
 import { AdmissionBudgetUnavailableError } from "./admission.ts"
+import { WorkerQuestions } from "./worker-questions.ts"
 import { RequestQuestions } from "./request-questions.ts"
 import { RegionalRepairs } from "./regional-repairs.ts"
 import { assertControlledPlanActivation } from "./plan-admission.ts"
@@ -46,6 +47,7 @@ export class RequestController {
   readonly repairs:LocalRepairs
   readonly regional:RegionalRepairs
   readonly questions:RequestQuestions
+  readonly workerQuestions:WorkerQuestions
   constructor(runtime:ControlRuntime) {
     this.runtime=runtime
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS control_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,task_id TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL);
@@ -53,6 +55,7 @@ export class RequestController {
       CREATE TABLE IF NOT EXISTS control_request_tasks(request_id TEXT NOT NULL,task_id TEXT NOT NULL,node_id TEXT NOT NULL,PRIMARY KEY(request_id,task_id));`)
     this.store.db.exec("CREATE TABLE IF NOT EXISTS request_plan_admissions(plan_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,state TEXT NOT NULL)")
     this.questions=new RequestQuestions(this)
+    this.workerQuestions=new WorkerQuestions(this)
     this.repairs=new LocalRepairs(this)
     this.regional=new RegionalRepairs(this)
   }
@@ -153,7 +156,8 @@ export class RequestController {
         if(this.deliveryPending(request))return
         const question=this.questions.get(request.clarifications!.at(-1)!.questionId)!
         if(question.target) {
-          this.regional.resume(request,program,question)
+          if(question.target.kind==="regional")this.regional.resume(request,program,question)
+          else if(!this.workerQuestions.resume(request,program,question))return
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
@@ -208,14 +212,15 @@ export class RequestController {
       for(const id of this.tasks(request.id)) {
         const task=engine.requireTask(id)
         if(engine.store.childTasks(id).length)continue
+        if(this.workerQuestions.advance(request,program,id))return
+        for(const run of this.store.db.prepare("SELECT r.payload FROM agent_runs r JOIN activation_grants g ON g.id=r.grant_id WHERE r.task_id=? AND r.state='completed' AND json_extract(g.payload,'$.executionMode')='cognition'").all(id)) {
+          const output=JSON.parse(String(run.payload)).output as AgentOutput
+          if(output.requiresEscalation||output.unresolvedQuestions.length)throw new Error("Specialist left unresolved questions; scoped escalation evidence is required")
+        }
         if(this.repairs.advance(request,program,id))continue
         const existing=this.store.db.prepare("SELECT state FROM activation_grants WHERE task_id=?").all(id)
         if(existing.some(row=>row.state==="fenced"))throw new Error("Worker grant was fenced; scoped recovery is required")
-        for(const run of this.store.db.prepare("SELECT payload FROM agent_runs WHERE task_id=? AND state='completed'").all(id)) {
-          const output=JSON.parse(String(run.payload)).output as AgentOutput
-          if(output.requiresEscalation||output.unresolvedQuestions.length)throw new Error("Worker left unresolved questions; scoped escalation evidence is required")
-        }
-        if(task.status==="ready"&&!existing.length)this.issue(request,program,id,"worker",{request:request.text,task:engine.requireTask(id),expectation:this.store.get("task_expectations",id,this.store.head("task_expectations",id))})
+        if(task.status==="ready"&&!existing.length)this.issue(request,program,id,"worker",{request:request.text,questionContract:"For missing user information return unresolvedQuestions as {kind: user, question: string} and requiresEscalation=false; do not claim completion.",task:engine.requireTask(id),expectation:this.store.get("task_expectations",id,this.store.head("task_expectations",id))})
       }
       const ids=this.tasks(request.id)
       if(ids.length&&ids.every(id=>["verified","integrated"].includes(engine.requireTask(id).status))&&!controlCompletionMissing(engine,ids).length&&!this.runtime.evidence.unresolved(request.taskId).length&&!this.deliveryPending(request)) {
@@ -264,7 +269,7 @@ export class RequestController {
     this.store.put("context_manifests",context.id,1,context)
     // The primary role discharges explicit user work; no artificial risk/failure
     // signal is manufactured to cross an optional specialist threshold.
-    const decision=this.runtime.admission.record({id:randomUUID(),eventId:causeId??`${request.id}:${taskId}:${kind}`,taskId,role:entry.role,policy:program.policy,signals:{...Object.fromEntries(FEATURES.map(feature=>[feature,null])),...(causeId&&kind==="worker"?{failure:1}:{})} as Signals,score:0,hard:[],action:"activate",reasons:[override?"evidence-bound scoped planning":causeId?"measured leaf failure under unchanged validated goal":kind==="planner"?"explicit request interpretation":"validated request plan leaf"],timestamp:Date.now()})
+    const decision=this.runtime.admission.record({id:randomUUID(),eventId:causeId??`${request.id}:${taskId}:${kind}`,taskId,role:entry.role,policy:program.policy,signals:{...Object.fromEntries(FEATURES.map(feature=>[feature,null])),...(causeId&&kind==="worker"&&!causeId.startsWith("answer:")?{failure:1}:{})} as Signals,score:0,hard:[],action:"activate",reasons:[causeId?.startsWith("answer:")?"explicit user clarification under unchanged validated scope":override?"evidence-bound scoped planning":causeId?"measured leaf failure under unchanged validated goal":kind==="planner"?"explicit request interpretation":"validated request plan leaf"],timestamp:Date.now()})
     const generation=Number(this.store.db.prepare("SELECT coalesce(max(json_extract(payload,'$.generation')),0)+1 n FROM activation_grants WHERE task_id=?").get(taskId)!.n)
     return this.runtime.admission.issue({taskId,decisionId:decision.id,specHash:snapshot.specHash,inputVector:vector,graphHash:this.runtime.graph.hash(),role:entry.role,policy:program.policy,context:{id:context.id,version:1},contextHash:context.hash,profile:entry.profile,writeScopes:kind==="worker"?(this.runtime.engine.requireTask(taskId).writeScopes??[]):[],readScopes:program.readScopes,allowedTools:role.allowedTools.filter(tool=>kind==="worker"||tool!=="task_graph_cognitive_write"),obligations:request.obligationId?[request.obligationId]:[],expiresAt:Math.min(deadline,Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs)),generation,executionMode:kind==="worker"?"task":"cognition"},program.account,program.tokenLimit)
   }

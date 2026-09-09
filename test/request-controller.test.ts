@@ -170,7 +170,7 @@ for(const questionMode of ["none","resume","budget","budget-stale","stale","expi
       r.control.requests.tick()
       assert.equal(r.control.requests.get("regional")!.state,"waiting")
       const question=r.control.requests.questions.pending("regional")[0]!
-      assert.equal(question.target!.repairId,repair.id)
+      assert.ok(question.target?.kind==="regional");assert.equal(question.target.repairId,repair.id)
       for(let i=0;i<3;i++)r.control.requests.tick()
       r.close();r=createGraphRuntime(database)
       assert.equal(r.control.requests.questions.pending("regional")[0]!.id,question.id)
@@ -404,4 +404,69 @@ for(const mode of ["resume","budget","budget-stale","cancel","stale","quota","un
     assert.equal(r.control.requests.get("request")!.state,"completed",r.control.requests.get("request")!.reason)
     assert.equal(r.control.requests.get("request")!.text,"Write done")
   }finally{await transport.close();r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+
+for(const mode of ["resume","budget","stale","cancel","quota"] as const)test(`worker 질문의 기대치 보존 재개: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"worker-question-")),database=join(dir,"graph.db")
+  let r=createGraphRuntime(database)
+  try {
+    const program={...install(r),version:2,maxClarifications:1,tokenLimit:mode==="budget"?33010:100000}
+    r.control.requests.register(program)
+    r.control.requests.submit({id:"request",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
+    r.control.requests.tick();accept(r,r.control.requests.get("request")!.plannerGrant!,proposal);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    const taskId=r.control.requests.tasks("request")[0]!,initial=String(r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=?").get(taskId)!.id)
+    const expected=r.store.control.get("task_expectations",taskId,1),plan=r.control.requests.get("request")!.planId!
+    const output={findings:["질문 이전 작업 상태"],unresolvedQuestions:[{kind:"user",question:"저장할 문자열을 확인해 주세요."}]}
+    writeFileSync(join(dir,"result.txt"),"done");accept(r,initial,[],output)
+    const priorAttempt=r.store.currentAttempt(taskId)!.id
+    // Even passing semantic checks must not hide an unanswered worker question.
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})
+    assert.equal(r.engine.requireTask(taskId).status,"implemented")
+    r.control.requests.tick()
+    assert.equal(r.control.requests.get("request")!.state,"waiting")
+    const question=r.control.requests.questions.pending("request")[0]!
+    assert.equal(question.target?.kind,"worker")
+    r.close();r=createGraphRuntime(database)
+    assert.equal(r.control.requests.questions.pending("request")[0]!.id,question.id)
+    const answer=()=>r.control.requests.questions.answer("request","user",question.id,[["done으로 유지해 주세요"]])
+    if(mode==="stale") {
+      r.engine.atomic(()=>r.store.updateTask({...r.engine.requireTask(taskId),goal:"Changed worker goal"}))
+      assert.throws(answer,/stale execution/);return
+    }
+    if(mode==="cancel") {r.control.requests.cancel("request");assert.throws(answer,/no longer pending/);return}
+    if(mode==="budget") {
+      r.control.requests.submit({id:"holder",sessionId:"other",text:"Write done",planOnly:true,program:{id:program.id,version:2}});r.control.requests.tick()
+    }
+    answer();answer();r.control.requests.tick()
+    if(mode==="budget") {
+      assert.equal(r.control.requests.get("request")!.state,"resuming")
+      assert.equal(r.engine.requireTask(taskId).status,"implemented")
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM worker_question_resumptions").get()!.n,0)
+      r.close();r=createGraphRuntime(database);r.control.requests.cancel("holder");r.control.requests.tick()
+    }
+    const resumed=String(r.store.db.prepare("SELECT grant_id FROM worker_question_resumptions WHERE question_id=?").get(question.id)!.grant_id)
+    assert.notEqual(resumed,initial)
+    assert.deepEqual(r.store.control.get("task_expectations",taskId,1),expected)
+    assert.equal(r.store.findWorkPlan(plan)!.currentRevision,1)
+    for(let i=0;i<3;i++)r.control.requests.tick()
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM worker_question_resumptions").get()!.n,1)
+    const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(resumed)!.payload)) as ActivationGrant
+    assert.deepEqual(grant.writeScopes,["result.txt"])
+    const decision=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_decisions WHERE id=?").get(grant.decisionId)!.payload))
+    assert.equal(decision.signals.failure,null)
+    assert.match(decision.reasons[0],/explicit user clarification/)
+    assert.ok(JSON.stringify(r.store.control.get("context_manifests",grant.context.id,grant.context.version)).includes("질문 이전 작업 상태"))
+    accept(r,resumed,[],mode==="quota"?output:{})
+    assert.notEqual(r.store.currentAttempt(taskId)!.id,priorAttempt)
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    if(mode==="quota") {
+      assert.equal(r.control.requests.get("request")!.state,"waiting")
+      assert.match(r.control.requests.get("request")!.reason!,/quota exhausted/)
+      assert.equal(r.engine.requireTask(taskId).status,"implemented");return
+    }
+    assert.equal(r.control.requests.get("request")!.state,"completed",r.control.requests.get("request")!.reason)
+    assert.equal(r.store.control.head("task_expectations",taskId),1)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })

@@ -62,7 +62,7 @@ export class RegionalRepairs {
     return true
   }
   assertQuestion(request:ControlledRequest,question:RequestQuestion):Repair {
-    const row=this.controller.store.db.prepare("SELECT payload FROM request_region_repairs WHERE id=? AND request_id=?").get(question.target!.repairId,request.id)
+    const row=this.controller.store.db.prepare("SELECT payload FROM request_region_repairs WHERE id=? AND request_id=?").get(question.target?.kind==="regional"?question.target.repairId:"",request.id)
     const repair=row&&JSON.parse(String(row.payload)) as Repair|undefined
     if(!repair||repair.state!=="waiting"||repair.questionId!==question.id||repair.grantId!==question.grantId||repair.lease.planId!==request.planId)throw new Error("Regional question is no longer current")
     this.controller.runtime.replanning.assertCurrent(repair.lease.id)
@@ -85,7 +85,7 @@ export class RegionalRepairs {
       const output=JSON.parse(String(db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(repair.grantId)!.payload)).output as AgentOutput
       if(output.unresolvedQuestions.length) {
         runtime.replanning.assertCurrent(repair.lease.id)
-        const question=this.controller.questions.ask(request,program,output,{grantId:repair.grantId,repairId:repair.id})
+        const question=this.controller.questions.ask(request,program,output,{grantId:repair.grantId,target:{kind:"regional",repairId:repair.id}})
         repair.questionId=question.id;repair.state="waiting";this.save(repair)
         request.state="waiting";request.reason="재계획에 필요한 사용자 답변을 기다리고 있습니다."
         db.prepare("UPDATE control_requests SET state=?,payload=? WHERE id=?").run(request.state,canonical(request),request.id)

@@ -47,6 +47,11 @@ export function controlCompletionMissing(engine:TaskGraphEngine,taskIds:Iterable
     if(!version)continue
     const expectation=store.get<PinnedExpectation>("task_expectations",id,version)!
     const attempt=engine.store.currentAttempt(id)
+    if(attempt?.worker?.sessionId) {
+      const run=store.db.prepare("SELECT r.payload FROM agent_runs r JOIN activation_grants g ON g.id=r.grant_id WHERE r.task_id=? AND r.state='completed' AND json_extract(g.payload,'$.worker')=? AND json_extract(g.payload,'$.executionMode')='task'").get(id,attempt.worker.sessionId)
+      const output=run&&JSON.parse(String(run.payload)).output
+      if(output&&(output.requiresEscalation||output.unresolvedQuestions.length))missing.push(`worker reasoning unresolved: ${id}`)
+    }
     const binding=attempt&&store.db.prepare("SELECT * FROM control_attempt_expectations WHERE attempt_id=?").get(attempt.id)
     if(!binding||Number(binding.expectation_version)!==version||expectation.specHash!==engine.signals.capture(id).specHash) {
       missing.push(`expectation is not bound to the current attempt: ${id}`);continue

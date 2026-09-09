@@ -24,9 +24,9 @@
 
 현재 자동 region 선택은 read/process completeness가 입증되지 않아 보수적인 포함 영역을 사용하고 minimumProven=false를 기록한다. 전체 프로그램의 최소 영역이나 현행 후보 집합의 비용 최적성을 입증했다고 표시하지 않는다. 후보 생성·정규화된 비용·feasibility·branch-and-bound와 실제 경계 보존 증거를 이용하는 최적 영역 선택은 아직 전체 연결이 필요하다. 오류가 높다는 이유만으로 이를 최소 국소 재계획으로 포장하지 않는다.
 
-방향 수정은 원래 목표·기존 plan·이미 제출된 변경을 보존하고 새 사용자 evidence를 추가한다. 기존 요청을 중단한 뒤 같은 계획의 scoped replanner에 전달한다. 최초 계획 전 수정도 원래 목표와 변경 지시를 함께 전달한다. 최초 계획과 regional replanner의 질문은 아래 내구 reply 경로로 처리한다. 실행 중 worker 질문과 권한 변경의 대기·재개 상태 머신은 아직 별도 연결이 필요하다.
+방향 수정은 원래 목표·기존 plan·이미 제출된 변경을 보존하고 새 사용자 evidence를 추가한다. 기존 요청을 중단한 뒤 같은 계획의 scoped replanner에 전달한다. 최초 계획 전 수정도 원래 목표와 변경 지시를 함께 전달한다. 최초 계획·regional replanner·leaf worker의 질문은 아래 내구 reply 경로로 처리한다. specialist 질문과 권한 변경의 대기·재개 상태 머신은 아직 별도 연결이 필요하다.
 
-## 최초 계획과 재계획의 사용자 질문과 재개
+## 계획·재계획·worker의 사용자 질문과 재개
 
 `RequestQuestions`는 명시적인 `{kind:"user",question}` 출력만 질문으로 받는다. 등록 프로그램의 `maxClarifications`가 허용한 횟수 안에서 최대 세 질문을 내구 상태로 기록한다. 정책이 없거나 소진되면 미해결 상태를 유지한다. `requiresEscalation` 출력과 비구조 질문을 사용자 승인으로 바꾸지 않는다. 기본 `ControlServer.inspect/reply`에 질문 표시와 응답 채택을 연결했다.
 
@@ -34,9 +34,13 @@
 
 원래 목표, 질문 전 전체 구조화 출력, 질문·답변과 근거를 새 context에 보존한다. 필수 context가 상한을 넘으면 잘라내지 않고 대기한다. 답변이 기존 역할·도구·쓰기 범위를 늘리지 않는다. 새 제안은 원래 목표와 답변 evidence를 함께 전달받은 실제 계획 validator를 거쳐야 실행된다. 방향 수정과 후속 regional metadata에도 답변 이력을 유지한다. 이 경로는 명세 4절의 사용자 evidence/event, 8절의 제한된 활성화, 12절의 structured output 계약에 해당한다. 최초 계획의 정보 확인을 권한 변경이나 worker 재실행의 일반 해법으로 취급하지 않는다.
 
-재계획 질문은 `request_questions.target`으로 해당 repair에 고정하며 최초 planner grant와 혼동하지 않는다. 답변 전과 새 허가 발급 전에 원래 lease의 base revision·활성 revision·generation·graph hash·입력 vector·context hash·evidence 유효기간을 확인한다. 기존 boundary·preserved nodes·immutable decisions·invariant와 실패 근거를 유지한다. 새 grant의 기한은 기존 lease를 넘지 않는다. 질문에 답했다는 이유로 lease를 갱신하거나 repair 횟수 제한을 초기화하지 않는다. 질문 횟수는 최초 계획과 재계획에서 요청 단위로 공유한다.
+재계획 질문은 `request_questions.target`으로 해당 repair에 고정하며 최초 planner grant와 혼동하지 않는다. 답변 전과 새 허가 발급 전에 원래 lease의 base revision·활성 revision·generation·graph hash·입력 vector·context hash·evidence 유효기간을 확인한다. 기존 boundary·preserved nodes·immutable decisions·invariant와 실패 근거를 유지한다. 새 grant의 기한은 기존 lease를 넘지 않는다. 질문에 답했다는 이유로 lease를 갱신하거나 repair 횟수 제한을 초기화하지 않는다. 질문 횟수는 최초 계획·재계획·worker에서 요청 단위로 공유한다.
 
 재계획 답변과 질문 전 구조화 출력은 새 context 및 scoped validator metadata에 전달한다. 실제 독립 검증→revision commit→새 기대치 고정→대체 worker→실제 의미 검증의 기존 경로를 그대로 통과해야 완료된다. 질문 및 예산 대기 중 재시작을 복구하며, 그 사이 입력·generation이 바뀌거나 lease가 만료되면 재개를 거절한다. 이는 명세 7.2절의 stale lease 차단과 7.4절의 scoped replanner 계약을 유지하는 질문 처리다.
+
+`WorkerQuestions`는 질문을 task·완료된 worker grant·현재 attempt·기대치 버전에 고정한다. 실제 semantic validator가 통과해도 현재 worker 출력에 미해결 질문이나 escalation이 있으면 task·상위 통합 완료를 차단한다. 답변 후에는 원래 목표·검증된 기대치·쓰기 범위를 유지하고, 질문 및 user evidence로 명시적인 invalidation을 기록한 뒤 새 attempt를 위한 허가를 발급한다. 이것을 측정된 실패로 꾸미거나 local repair 횟수에 섞지 않는다. 새 worker도 독립 검증을 다시 통과해야 한다.
+
+예산 부족 시 reopen·새 허가·재개 이력은 함께 rollback되고 답변은 내구 대기 상태로 남는다. 재시작 후에도 응답을 재전송하지 않으며, 취소·변경된 입력·기대치·만료 근거로는 재개하지 않는다. 다른 활성 역할이나 미확정 delivery가 있으면 재개를 기다린다. 완료한 이전 질문은 새 attempt를 영구 차단하지 않지만, 미해결 specialist 출력은 계속 대기로 남긴다.
 
 ## Native와 Pod의 공통 허가 계약
 
@@ -50,8 +54,9 @@ native 검증은 macOS seatbelt 안에서 실행한다. 작업 공간과 명시�
 
 ## 검증 근거
 
-- `npm run check`: TypeScript 검사와 전체 256개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
+- `npm run check`: TypeScript 검사와 전체 261개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
 - `scripts/smoke-granted-validation.ts`: 실제 로컬 `kind-task-agent-local`에서 별도 namespace/PVC/Pod를 생성해 검증했다. 읽기 전용 결과·인증 제외·상속되는 네트워크 차단·같은 image ID·snapshot 유지·실제 semantic receipt를 확인했다. 봉인된 합성 모델 결과와 실제 Pod 검증 영수증을 합쳐 controller의 verified 전이까지 통과했다. 외부 모델 호출 0회이며 임시 namespace 정리도 확인했다. 결과는 `kubernetes-grant-validation.json`에 보존한다.
+- `test/request-controller.test.ts`의 worker 질문 수용 테스트 5개: 질문이 있는 실제 의미 검증 pass의 완료 차단, 재시작·예산 대기 후 같은 기대치로 새 attempt 실행 및 재검증 완료, 변경된 입력·취소·quota 소진 거절을 확인했다. 재개 activation은 failure signal을 만들지 않는다.
 - `test/request-controller.test.ts`의 재계획 수용 테스트 7개: 기존 복구 경로와 질문 응답 후 실제 scoped validator→revision→대체 실행→완료, 질문/예산 대기 중 재시작, 입력 변경, lease 만료, generation 교체 거절을 확인했다. 새 grant의 lease 기한 상한과 동일 repair/lease 보존도 확인했다.
 - `test/request-controller.test.ts`의 최초 계획 질문 수용 테스트 9개: 실제 답변→새 grant→계획 validator→worker→파일 검증→완료, 질문/예산 대기 중 재시작, 중복 응답, 입력 변경, 취소, quota, 비구조 질문, escalation 및 권한 확장 거절을 확인했다. 모델 단계는 합성 executor이며 validator는 실제 격리 프로세스다.
 - `test/request-controller.test.ts`의 cooldown 수용 테스트: 종료 전 호출 0, 재시작 후 종료 이벤트 1회, 새 결정에 따른 허가 발급, 반복 tick 중복 방지, quota 소진 유지, 변경된 입력의 오래된 근거 거절을 확인했다. 구현 명세 4절의 durable timer와 8절의 호출 한도에 대응한다.
@@ -66,6 +71,6 @@ native 검증은 macOS seatbelt 안에서 실행한다. 작업 공간과 명시�
 1. 실제 코드·파일·도구·환경 관찰을 포트별 의존성 및 완전성 증거에 연결하고 legacy 전체 snapshot/스캔을 대체해야 한다. 실제 boundary 보존 및 모든 변경의 7차원 통합 검증 의무도 자동 생성해야 한다.
 2. finite region 후보의 실제 feasibility·비용·최적성 gap·switching cost를 적용해야 한다. 독립 region의 병렬 복구, 더 새로운 변화의 episode 병합·lease 교체, immutable decision/assumption의 증거 기반 자동 무효화도 전체 연결이 필요하다.
 3. 모든 13개 정책 target의 실행 적용, 실제 outcome attribution·holdout/shadow replay·회귀 rollback, 적응형 L0–L5 선택, memory/routine의 실제 graph mutation과 역할 lifecycle 학습은 아직 전체 실행 루프에 연결되지 않았다.
-4. 기존 운영 데이터/worker의 전면 이관, worker 질문 및 권한 reply 재개, quota 증액의 정책 변경 경로, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
+4. 기존 운영 데이터/worker의 전면 이관, specialist 질문 및 권한 변경 reply 재개, quota 증액의 정책 변경 경로, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
 
 `implementation-status.json`의 endToEndVerified는 위 전체 수용 조건을 기준으로 유지한다. 단위 함수나 새 경로 일부의 테스트 통과만으로 원문 요구 전체를 완료 처리하지 않는다.
