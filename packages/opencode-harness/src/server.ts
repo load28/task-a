@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url"
 import type { OpencodeClient, PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2"
 import { OpenCodeConnection } from "./index.ts"
 import { agentConfig } from "./agents.ts"
+import { requestMessages } from "./request-messages.ts"
 import { executionProgress } from "../../host-integration/src/presentation.ts"
 import type { HostConfig } from "../../host-integration/src/config.ts"
 
@@ -9,6 +10,7 @@ export interface ServerBinding {
   control?: string
   sessionID: string
   messageID: string
+  endMessageID?: string
   workspace: string
 }
 export interface ServerState {
@@ -31,6 +33,7 @@ export interface HarnessServer {
     input: { requestID: string; kind: "question" | "permission"; answers?: string[][]; reply?: "once" | "reject" },
   ): Promise<void>
   cancel(binding: ServerBinding): Promise<void>
+  stopWorkspace?(workspace: string): Promise<{ stopped: boolean; evidence: string }>
   stopWorker?(workspace: string, sessionId: string): Promise<{ stopped: boolean; evidence: string }>
   readiness(): Promise<unknown>
   close(): void | Promise<void>
@@ -171,12 +174,12 @@ export class OpenCodeServer implements HarnessServer {
       client.permission.list({ directory }),
       this.sessions(binding),
     ])
-    const answers = (messages.data ?? []).filter(
-      (m) => m.info.role === "assistant" && m.info.parentID === binding.messageID,
-    )
-    const pendingQuestions = (questions.data ?? []).filter((q) => ids.has(q.sessionID))
-    const pendingPermissions = (permissions.data ?? []).filter((p) => ids.has(p.sessionID))
-    const active = [...ids].some((id) => status.data?.[id] && status.data[id]!.type !== "idle")
+    const answers = requestMessages(messages.data ?? [], binding.messageID, binding.endMessageID)
+    // Runtime liveness/questions belong to the current transport turn, never an older one.
+    const current = !binding.endMessageID
+    const pendingQuestions = current ? (questions.data ?? []).filter((q) => ids.has(q.sessionID)) : []
+    const pendingPermissions = current ? (permissions.data ?? []).filter((p) => ids.has(p.sessionID)) : []
+    const active = current && [...ids].some((id) => status.data?.[id] && status.data[id]!.type !== "idle")
     const last = answers.at(-1)
     const info = last?.info.role === "assistant" ? last.info : undefined
     // Idle is not success: a tool-only response or missing terminal assistant message is interrupted.
@@ -191,7 +194,7 @@ export class OpenCodeServer implements HarnessServer {
             : terminal
               ? "completed"
               : "interrupted"
-    const workers = await Promise.all([...ids].filter((id) => id !== binding.sessionID && status.data?.[id]?.type !== undefined && status.data[id]!.type !== "idle").map(async (id) => {
+    const workers = await Promise.all([...ids].filter((id) => current && id !== binding.sessionID && status.data?.[id]?.type !== undefined && status.data[id]!.type !== "idle").map(async (id) => {
       const workerMessages = (await client.session.messages({ directory, sessionID: id })).data
       const parts = Array.isArray(workerMessages) ? workerMessages.flatMap((m) => m.parts) : []
       return executionProgress(parts)
@@ -244,27 +247,47 @@ export class OpenCodeServer implements HarnessServer {
     }
   }
   async cancel(binding: ServerBinding): Promise<void> {
+    const result = await this.stopWorker(binding.workspace, binding.sessionID)
+    if (!result.stopped) throw new Error(result.evidence)
+  }
+  async stopWorkspace(workspace: string) {
     const client = await this.connection.client()
-    const ids = await this.sessions(binding)
-    await Promise.all(
-      [...ids].reverse().map((sessionID) => client.session.abort({ directory: binding.workspace, sessionID })),
-    )
+    const list = await client.session.list({ directory: workspace, limit: 10000 })
+    if (!list.data || list.error || list.data.length >= 10000)
+      return { stopped: false, evidence: "프로젝트 세션 전체 목록을 확인할 수 없습니다." }
+    const sessions = list.data.filter(s => s.directory === workspace)
+    for (const session of sessions) {
+      const result = await this.stopWorker(workspace, session.id)
+      if (!result.stopped) return result
+    }
+    const after = await client.session.list({ directory: workspace, limit: 10000 })
+    if (!after.data || after.error || after.data.length >= 10000 || after.data.some(s => s.directory === workspace && !sessions.some(prior => prior.id === s.id)))
+      return { stopped: false, evidence: "종료 중 새 세션이 발견됐습니다. 종료 확인을 재시도합니다." }
+    return { stopped: true, evidence: `프로젝트의 모든 OpenCode 세션 종료 확인: ${sessions.map(s => s.id).join(", ")}` }
   }
   async stopWorker(workspace: string, sessionId: string) {
     const client = await this.connection.client()
     const session = await client.session.get({ directory: workspace, sessionID: sessionId })
     if (!session.data) return { stopped: false, evidence: "Native session cannot be located" }
     const ids = await this.sessions({ workspace, sessionID: sessionId, messageID: "" })
-    for (const id of [...ids].reverse()) await client.session.abort({ directory: workspace, sessionID: id })
-    const states = (await client.session.status({ directory: workspace })).data ?? {}
+    for (const id of [...ids].reverse()) {
+      const result = await client.session.abort({ directory: workspace, sessionID: id })
+      if (result.data !== true) return { stopped: false, evidence: `Native abort was not acknowledged: ${id}` }
+    }
+    const response = await client.session.status({ directory: workspace })
+    if (!response.data) return { stopped: false, evidence: "Native runtime status unavailable" }
+    const states = response.data
     for (const id of ids) {
       if (states[id] && states[id]!.type !== "idle") return { stopped: false, evidence: "Native worker is still stopping" }
-      const messages = (await client.session.messages({ directory: workspace, sessionID: id })).data ?? []
-      if (messages.at(-1)?.parts.some(p => p.type === "tool" && ["running", "pending"].includes(p.state.status)))
-        return { stopped: false, evidence: "Native tools have not confirmed termination" }
     }
-    return { stopped: true, evidence: `OpenCode confirmed idle sessions and no running tools: ${[...ids].join(", ")}` }
+    // Message/tool parts are historical records, not runtime liveness. After restart
+    // they may remain unfinished. Require acknowledged aborts and authoritative idle
+    // status for the entire descendant tree, independent of tool names or elapsed time.
+    const after = await this.sessions({ workspace, sessionID: sessionId, messageID: "" })
+    if ([...after].some(id => !ids.has(id))) return { stopped: false, evidence: "New native child detected during cancellation" }
+    return { stopped: true, evidence: `OpenCode acknowledged abort and confirmed idle for all sessions: ${[...ids].join(", ")}` }
   }
+
   async readiness(): Promise<unknown> {
     const base = await this.connection.readiness()
     const workspaces = []

@@ -79,7 +79,7 @@ test("별도 MCP 작업자 프로세스가 동시에 같은 파일을 점유하�
   const clients = [new Client({ name: "a", version: "1" }), new Client({ name: "b", version: "1" })]
   try {
     for (const client of clients) await client.connect(new StdioClientTransport({ command: process.execPath, args: [resolve("scripts/graph-mcp.ts"), path], stderr: "pipe" }))
-    const results = await Promise.allSettled(clients.map((client, index) => client.callTool({ name: "task_start", arguments: { taskId: [a.id, b.id][index], operationId: `claim-${index}` } })))
+    const results = await Promise.allSettled(clients.map((client, index) => client.callTool({ name: "task_start", arguments: { taskId: [a.id, b.id][index], operationId: `claim-${index}`, sessionId: `ses_${index}` } })))
     const successes = results.filter((r) => r.status === "fulfilled" && !r.value.isError)
     assert.equal(successes.length, 1)
     const persisted = createGraphRuntime(path)

@@ -61,6 +61,35 @@ class NativeServer implements HarnessServer {
   }
   close() {}
 }
+
+test("압축 후 중단으로 잘못 저장된 요청을 재시작 뒤 다시 관찰하며 재전송하지 않는다", async (t) => {
+  const { directory } = setup(t), native = new NativeServer(), c = config(directory)
+  let service = new HostService(c, native)
+  const record = service.store.enqueue(event(directory))
+  record.sessionID = "ses_native"; record.phase = "interrupted"
+  record.result = { state: "interrupted", text: "", questions: [], permissions: [], activity: [], progress: { currentAction: "sleep 180", milestones: [] } }
+  service.store.registerTurn(record); service.store.save(record)
+  const next = service.store.enqueue(event(directory, "next"))
+  next.sessionID = record.sessionID; next.phase = "completed"
+  service.store.registerTurn(next); service.store.save(next)
+  await service.close()
+  service = new HostService(c, native)
+  let observed: ServerBinding | undefined
+  native.inspect = async binding => {
+    observed = binding
+    return { state: "failed", text: "압축 이후 검증 실패", questions: [], permissions: [], activity: [], executionTaskIds: ["repair-task"], progress: { currentAction: "corpus-build 오류", milestones: [] } }
+  }
+  await service.start()
+  try {
+    const status = await callService(c.socket, "/status", { requestId: record.id })
+    assert.equal(observed?.endMessageID, next.messageID)
+    assert.equal(status.phase, "failed")
+    assert.equal(status.progress.currentAction, "corpus-build 오류")
+    assert.deepEqual(service.store.get(record.id)!.executionTaskIds, ["repair-task"])
+    assert.equal(native.submitted.length, 0)
+    assert.equal(native.cancelled.length, 0)
+  } finally { await service.close() }
+})
 function config(directory: string): HostConfig {
   return {
     version: 1,
@@ -88,6 +117,23 @@ async function ready(server: { handle(input: any): Promise<any> }) {
 }
 const rpc = (server: any, name: string, args: any) =>
   server.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })
+
+test("프로젝트 비활성 표시는 명시 등록과 자동 탐색 및 하위 경로에 우선한다", (t) => {
+  const { directory } = setup(t)
+  const child = resolve(directory, "src")
+  mkdirSync(child)
+  const registered = config(directory)
+  const automatic = { ...registered, workspaces: [], autoDiscover: true }
+  assert.equal(workspaceFor(registered, child)?.path, directory)
+  assert.ok(workspaceFor(automatic, directory))
+  writeFileSync(resolve(directory, ".task-agent-disabled"), "")
+  for (const settings of [registered, automatic]) {
+    assert.equal(workspaceFor(settings, directory), undefined)
+    assert.equal(workspaceFor(settings, child), undefined)
+  }
+  rmSync(resolve(directory, ".task-agent-disabled"))
+  assert.equal(workspaceFor(registered, child)?.path, directory)
+})
 
 test("설치 반복은 훅을 중복하지 않고 기존 설정을 보존하며 제거 시 복원한다", (t) => {
   const f = setup(t)
@@ -520,7 +566,7 @@ test("실제 stdio Graph MCP가 검증 증거와 수락 조건을 확인하며 �
     const task = created.structuredContent as any
     await client.callTool({
       name: "task_start",
-      arguments: { operationId: "start", taskId: task.id, agent: "opencode" },
+      arguments: { operationId: "start", taskId: task.id, agent: "opencode", sessionId: "ses_worker" },
     })
     const incomplete = await client.callTool({
       name: "task_complete",
@@ -842,5 +888,87 @@ test("관리자 종료 후 미완료 실행은 같은 요청에서 재개하고 
     await service.wake()
     assert.equal(native.submitted.filter(s => s.binding.messageID === continuation.messageID).length, 1)
     assert.notEqual(service.store.get("one")!.phase, "completed")
+  } finally { await service.close() }
+})
+
+test("프로젝트 전체 취소는 완료된 요청의 고아 예약도 재시작 후 정리한다", async t => {
+  const { directory } = setup(t)
+  const cfg = config(directory)
+  const graph = createGraphRuntime(cfg.database)
+  const { TaskScheduler } = await import("../packages/task-engine/src/scheduling.ts")
+  const task = graph.engine.createTask({ title: "고아 작업", goal: "고아 작업" })
+  new TaskScheduler(graph.engine).claim(task.id, {})
+  graph.close()
+  let stopped = false
+  class WorkspaceServer extends NativeServer {
+    async stopWorkspace() { return { stopped, evidence: "connection refused" } }
+  }
+  const native = new WorkspaceServer()
+  let service = new HostService(cfg, native)
+  await service.start()
+  let view: any
+  try {
+    view = await callService(cfg.socket, "/cancel-workspace", { workspace: directory })
+    await service.wake()
+    assert.equal(service.store.get(view.requestId)!.phase, "cancelling")
+    assert.match(service.store.get(view.requestId)!.error!, /connection refused/)
+  } finally { await service.close() }
+  stopped = true
+  service = new HostService(cfg, native)
+  await service.start()
+  try {
+    await service.wake()
+    assert.equal(service.store.get(view.requestId)!.phase, "cancelled")
+    const reopened = createGraphRuntime(cfg.database)
+    try {
+      assert.equal(new TaskScheduler(reopened.engine).status().active.length, 0)
+      assert.equal(reopened.engine.resolveRunnable().length, 0)
+    } finally { reopened.close() }
+  } finally { await service.close() }
+})
+
+test("요청 취소 중 연결 장애는 uncertain으로 버리지 않고 자동 재시도한다", async t => {
+  const { directory } = setup(t)
+  let outage = true
+  class RetryServer extends NativeServer {
+    async cancel(b: ServerBinding) { if (outage) throw new Error("connection refused"); await super.cancel(b) }
+  }
+  const service = new HostService(config(directory), new RetryServer())
+  await service.start()
+  try {
+    await callService(service.config.socket, "/event", event(directory))
+    await service.wake()
+    await callService(service.config.socket, "/cancel", { requestId: "one" })
+    assert.equal(service.store.get("one")!.phase, "cancelling")
+    outage = false
+    await service.wake()
+    assert.equal(service.store.get("one")!.phase, "cancelled")
+  } finally { await service.close() }
+})
+
+test("MCP 전체 취소는 요청 ID 없이 프로젝트의 기존 예약을 정리한다", async t => {
+  const { directory } = setup(t)
+  const cfg = config(directory)
+  class WorkspaceServer extends NativeServer {
+    async stopWorkspace() { return { stopped: true, evidence: "전체 세션 idle" } }
+  }
+  const service = new HostService(cfg, new WorkspaceServer())
+  await service.start()
+  try {
+    const graph = createGraphRuntime(cfg.database)
+    const { TaskScheduler } = await import("../packages/task-engine/src/scheduling.ts")
+    const task = graph.engine.createTask({ title: "기존 예약", goal: "기존 예약" })
+    new TaskScheduler(graph.engine).claim(task.id, {})
+    graph.close()
+    const bridge = createBridge("unused", cfg)
+    await ready(bridge)
+    const result = await rpc(bridge, "agent_cancel", { workspace: directory })
+    assert.ok(!result.result.isError)
+    await service.wake()
+    const reopened = createGraphRuntime(cfg.database)
+    try {
+      assert.equal(new TaskScheduler(reopened.engine).status().active.length, 0)
+      assert.equal(reopened.store.executionAllowed(task.id), false)
+    } finally { reopened.close() }
   } finally { await service.close() }
 })

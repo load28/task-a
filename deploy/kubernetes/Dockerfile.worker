@@ -2,10 +2,13 @@ ARG INSTANCE_IMAGE=task-agent-instances:local
 FROM rust:1.98-bookworm AS rust
 FROM ${INSTANCE_IMAGE}
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev curl python3 python3-venv python3-pip python-is-python3 default-jdk-headless maven ripgrep unzip && rm -rf /var/lib/apt/lists/*
 COPY --from=rust /usr/local/cargo /opt/cargo
 COPY --from=rust /usr/local/rustup /opt/rustup
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/data/home/.cargo
 ENV PATH=/opt/cargo/bin:$PATH
 COPY scripts/instance-model-stage.ts /app/scripts/instance-model-stage.ts
+RUN python3 -m venv /opt/python && /opt/python/bin/pip install --no-cache-dir pytest uv
+ENV PATH=/opt/python/bin:$PATH
+RUN node --version && npm --version && python --version && pytest --version && uv --version && java -version && mvn --version && cargo --version
 USER node

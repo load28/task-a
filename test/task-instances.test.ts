@@ -388,3 +388,48 @@ test("model cannot choose archive storage and missing configured storage leaves 
     if (prior === undefined) delete process.env.TASK_INSTANCE_ARCHIVE_CLAIM; else process.env.TASK_INSTANCE_ARCHIVE_CLAIM = prior
   }
 })
+
+test("전체 취소는 보관 볼륨의 소비자 정리 대기보다 우선해 Pod를 중지한다", async () => {
+  const { api, manager, tick } = await fixture()
+  const instance = await manager.load("leaf-1")
+  await api.replace("taskinstances", { ...instance,
+    spec: { ...instance.spec, desiredState: "Suspended", archive: { claimName: "archives", cleanupOnCompletion: true } },
+    status: { ...instance.status, archive: { key: "saved" }, archivedRun: instance.spec.run } })
+  await api.create("taskinstances", { metadata: { name: "consumer" }, spec: { restoreFromTaskId: "leaf-1" }, status: { phase: "Running" } })
+  await tick()
+  await tick()
+  assert.equal((await manager.load("leaf-1")).status.phase, "Suspended")
+  assert.ok(!api.deletions.some(d => d.startsWith("persistentvolumeclaims/")))
+})
+
+test("실패 증거를 컨트롤러까지 전달하고 응답 지침으로 같은 볼륨에서 재개한다", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "failure-recovery-"))
+  const input = spec()
+  input.stages = [{ id: "verify", command: [process.execPath, "-e", `if(process.env.TASK_RECOVERY_INSTRUCTIONS !== '사용자 응답: 대체 검증 진행') { console.error('python3: command not found'); process.exit(1) }`] }]
+  try {
+    assert.equal(await runInstance(input, dir, "test-instance"), 1)
+    const receipt = JSON.parse(readFileSync(join(dir, "termination.json"), "utf8"))
+    assert.equal(receipt.failure.stage, "verify")
+    assert.match(receipt.failure.logTail, /python3: command not found/)
+    assert.ok(Buffer.byteLength(JSON.stringify(receipt)) < 4096)
+    const { api, manager, tick } = await fixture()
+    const instance = await manager.load("leaf-1"), ids = names(instance)
+    const pod = (await api.get("pods", ids.pod))!
+    await api.replace("pods", { ...pod, status: { phase: "Failed", containerStatuses: [{ name: "worker", state: { terminated: { exitCode: 1, message: JSON.stringify(receipt) } } }] } })
+    await tick()
+    assert.equal((await manager.load("leaf-1")).status.result.failure.stage, "verify")
+    const resumed = await manager.resume("leaf-1", 2, "사용자 응답: 대체 검증 진행")
+    assert.equal(resumed.spec.recoveryInstructions, "사용자 응답: 대체 검증 진행")
+    await assert.rejects(manager.resume("leaf-1", 2, "다른 답변"), /different recovery/)
+    assert.equal(await runInstance({ ...input, run: 2, recoveryInstructions: resumed.spec.recoveryInstructions }, dir, "test-instance"), 0)
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, "checkpoint.json"), "utf8")).completed, ["verify"])
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test("성공 결과를 오류로 표시하지 않는다", async () => {
+  const { api, manager, tick } = await fixture()
+  const pod = (await api.get("pods", names(await manager.load("leaf-1")).pod))!
+  await api.replace("pods", { ...pod, status: { phase: "Succeeded", containerStatuses: [{ name: "worker", state: { terminated: { exitCode: 0, message: '{}' } } }] } })
+  await tick()
+  assert.equal((await manager.load("leaf-1")).status.result.failure, undefined)
+})

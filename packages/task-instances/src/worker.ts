@@ -1,3 +1,4 @@
+import { safeDiagnostic, type ExecutionFailure } from "./diagnostics.ts"
 import { snapshotCode, type CodeSnapshot } from "../../task-snapshots/src/index.ts"
 import { spawn, type ChildProcess } from "node:child_process"
 import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, appendFileSync, rmSync, cpSync, readdirSync } from "node:fs"
@@ -62,6 +63,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
   if (checkpoint.identity !== identity) throw new Error("Saved workspace does not match immutable task execution specification")
   checkpoint.resultKeys ??= {}; checkpoint.reused ??= {}
   const inputSources: Array<{ taskId: string; hash: string; path: string }> = []
+  let failure: ExecutionFailure | undefined
   let child: ChildProcess | undefined, stopping = false
   const save = () => { checkpoint.updated = new Date().toISOString(); atomicJson(checkpointPath, checkpoint) }
   let force: ReturnType<typeof setTimeout> | undefined
@@ -78,14 +80,23 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
   process.on("SIGTERM", stop); process.on("SIGINT", stop)
   const execute = (command: string[], cwd: string) => new Promise<number>((done, fail) => {
     if (stopping) return done(143)
+    let tail = ""
+    const capture = (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-6000) }
     child = spawn(command[0]!, command.slice(1), { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"], env: {
-      ...process.env, HOME: resolve(directory, "home"), TASK_ID: spec.taskId,
+      ...process.env, HOME: resolve(directory, "home"), TASK_ID: spec.taskId, TASK_RECOVERY_INSTRUCTIONS: spec.recoveryInstructions ?? "",
       TASK_INPUT_SOURCES: JSON.stringify(inputSources), TASK_INPUT_SNAPSHOT: JSON.stringify(spec.inputSnapshot ?? {}), TASK_CHECKPOINT: checkpointPath, TASK_RESUME_CONTEXT: resolve(directory, "resume.json"),
     } })
-    child.stdout?.on("data", chunk => { appendFileSync(resolve(directory, "execution.log"), chunk); process.stdout.write(chunk) })
-    child.stderr?.on("data", chunk => { appendFileSync(resolve(directory, "execution.log"), chunk); process.stderr.write(chunk) })
-    child.once("error", fail)
-    child.once("close", code => { child = undefined; done(code ?? 143) })
+    child.stdout?.on("data", chunk => { capture(chunk); appendFileSync(resolve(directory, "execution.log"), chunk); process.stdout.write(chunk) })
+    child.stderr?.on("data", chunk => { capture(chunk); appendFileSync(resolve(directory, "execution.log"), chunk); process.stderr.write(chunk) })
+    child.once("error", error => {
+      failure = { stage: checkpoint.active, command: safeDiagnostic(command[0]!, 200), message: safeDiagnostic(error.message, 600) }
+      fail(error)
+    })
+    child.once("close", (code, signal) => {
+      if (code !== 0 && !failure) failure = { stage: checkpoint.active, command: safeDiagnostic(command[0]!, 200), exitCode: code ?? undefined, signal,
+        message: signal ? `Stage process terminated by ${signal}` : `Stage process exited with code ${code}`, logTail: safeDiagnostic(tail, 1400) }
+      child = undefined; done(code ?? 143)
+    })
   })
   try {
     // Upgrade old plain checkouts without losing staged/untracked files, and repair
@@ -145,12 +156,14 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     if (!stopping && spec.archive?.cleanupOnCompletion) savedArchive = await saveWorkspace(directory, archiveRoot, instanceId, spec.run)
     return stopping ? 143 : 0
   } catch (error) {
+    failure ??= { stage: checkpoint.active, message: safeDiagnostic(error instanceof Error ? error.message : String(error), 600) }
     checkpoint.state = stopping ? "Suspended" : "Failed"; save(); throw error
   } finally {
     if (force) clearTimeout(force)
     process.off("SIGTERM", stop); process.off("SIGINT", stop)
     // Kubernetes bind-mounts this individual file; replacing it with rename yields EBUSY.
-    writeFileSync(process.env.TASK_TERMINATION_MESSAGE ?? resolve(directory, "termination.json"),
-      JSON.stringify({ codeSnapshot, inputSnapshotDigest: spec.inputSnapshot?.digest, state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused, ...(savedArchive ? { archive: savedArchive } : {}) }) + "\n")
+    const receipt = { ...(failure ? { failure } : {}), codeSnapshot, inputSnapshotDigest: spec.inputSnapshot?.digest, state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused, ...(savedArchive ? { archive: savedArchive } : {}) }
+    while (failure?.logTail && Buffer.byteLength(JSON.stringify(receipt)) > 3900) failure.logTail = failure.logTail.slice(Math.max(1, Math.floor(failure.logTail.length / 4)))
+    writeFileSync(process.env.TASK_TERMINATION_MESSAGE ?? resolve(directory, "termination.json"), JSON.stringify(receipt) + "\n")
   }
 }

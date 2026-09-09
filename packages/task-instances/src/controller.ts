@@ -78,6 +78,10 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
     await api.replace("taskinstances", { ...instance, metadata: { ...instance.metadata, finalizers: [...(instance.metadata.finalizers ?? []), FINALIZER] } })
     return
   }
+  if (instance.spec.desiredState === "Suspended") {
+    if (pod) { await api.remove("pods", pod); await report("Suspending"); return }
+    await report("Suspended"); return
+  }
   // Persist archive identity before deleting anything. Reconciliation can restart
   // after either deletion and still distinguish cleanup from accidental loss.
   if (instance.status?.archive && instance.status.archivedRun === instance.spec.run && instance.spec.archive?.cleanupOnCompletion) {
@@ -87,10 +91,6 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
     if (pod) { await api.remove("pods", pod); return }
     if (pvc) { if (!owned(pvc)) throw new Error("Archive cleanup volume identity mismatch"); await api.remove("persistentvolumeclaims", pvc); return }
     await report("Archived", { result: instance.status.result }); return
-  }
-  if (instance.spec.desiredState === "Suspended") {
-    if (pod) { await api.remove("pods", pod); await report("Suspending"); return }
-    await report("Suspended"); return
   }
   // Recheck external storage even for instances created before admission checks existed.
   if (instance.spec.archive && !["Succeeded", "Failed", "Running"].includes(pod?.status?.phase)) {
@@ -136,7 +136,7 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
       await report("Starting", { podUid: pod.metadata.uid, reason: diagnostic.reason ?? "Pending", message: diagnostic.message ?? "" }); return
     }
     await report(terminal === "Succeeded" ? "Completed" : terminal === "Failed" ? "Failed" : terminal === "Running" ? "Running" : "Starting",
-      { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "", ...(() => { try { const r = JSON.parse(details.message ?? "{}"); return { codeSnapshot: r.codeSnapshot, inputSnapshotDigest: r.inputSnapshotDigest } } catch { return {} } })() } } : {}) })
+      { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "", ...(() => { try { const r = JSON.parse(details.message ?? "{}"); return { codeSnapshot: r.codeSnapshot, inputSnapshotDigest: r.inputSnapshotDigest, failure: r.failure ?? (details.exitCode !== 0 ? { message: details.reason ?? "Worker terminated", exitCode: details.exitCode, signal: details.signal } : undefined) } } catch { return {} } })() } } : {}) })
     return
   }
   if (instance.status?.observedRun === instance.spec.run && instance.status?.podUid) {

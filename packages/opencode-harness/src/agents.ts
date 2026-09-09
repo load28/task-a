@@ -1,6 +1,6 @@
 import type { Config } from "@opencode-ai/sdk/v2"
 import { GRAPH_INSTRUCTIONS } from "./graph-mcp.ts"
-import { INSTANCE_INSTRUCTIONS } from "../../task-instances/src/graph-tools.ts"
+import { INSTANCE_INSTRUCTIONS, RECOVERY_INSTRUCTIONS } from "../../task-instances/src/graph-tools.ts"
 
 export const MANAGER_PROMPT = `${GRAPH_INSTRUCTIONS}
 You are the sole orchestration harness for requests received from Claude Code and Codex.
@@ -27,7 +27,7 @@ export function agentConfig(steps: number, maxWorkers = 3, kubernetes = false): 
       "task-manager": {
         mode: "primary",
         description: "Own the complete task graph and development lifecycle",
-        prompt: kubernetes ? `${MANAGER_PROMPT}\n${INSTANCE_INSTRUCTIONS}\nThe Kubernetes execution instructions override native subagent dispatch and host-path scope reservations. Use isolated task instances for execution and native planners only for read-only planning.` : `${MANAGER_PROMPT}
+        prompt: kubernetes ? `${MANAGER_PROMPT}\n${INSTANCE_INSTRUCTIONS}\n${RECOVERY_INSTRUCTIONS}\nThe Kubernetes execution instructions override native subagent dispatch and host-path scope reservations. Use isolated task instances for execution and native planners only for read-only planning.` : `${MANAGER_PROMPT}
 Run up to ${maxWorkers} independent task-worker calls CONCURRENTLY using native parallel tool calls in the SAME response. Do not await one worker before launching another independent worker. The manager does not claim tasks on behalf of workers: each worker claims exactly its assigned leaf.
 Execute the approved materialized task graph with its reviewed dependencies and writeScopes. Any material decomposition or scope/design change requires a reviewed plan revision first. Use task_schedule before dispatch. Dispatch up to available capacity with mutually non-overlapping scopes. When a worker finishes, dispatch newly unblocked work; let independent workers continue after another worker fails. Never run overlapping writes or exclusive builds concurrently. After implementation workers finish, run a separate exclusive verification task and record integration results before final completion.
 If scope expansion conflicts, finish/stop the conflicting work and release its reservation before resuming; do not deadlock workers waiting on each other's reservations.`,

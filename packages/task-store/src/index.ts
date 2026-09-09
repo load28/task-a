@@ -117,6 +117,7 @@ export class TaskGraphStore {
       this.db.prepare("SELECT max(version) AS version FROM plan_revisions WHERE plan_id=? AND state='approved'").get(planId)?.version ?? 0)
   }
   executionAllowed(taskId: string): boolean {
+    if (this.db.prepare("SELECT 1 FROM task_cancellations WHERE task_id=?").get(taskId)) return false
     const row = this.db.prepare("SELECT active, fenced FROM plan_task_visibility WHERE task_id=?").get(taskId)
     return !row || (row.active === 1 && row.fenced === 0)
   }
@@ -591,6 +592,7 @@ export class TaskGraphStore {
       CREATE TABLE IF NOT EXISTS plan_task_visibility(task_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, active INTEGER NOT NULL, fenced INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS plan_transitions(id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS plan_revision_results(plan_id TEXT NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(plan_id,version));
+      CREATE TABLE IF NOT EXISTS task_cancellations(task_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS task_attempts(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_task_attempts ON task_attempts(task_id);
       CREATE TABLE IF NOT EXISTS task_reuse_candidates(task_id TEXT PRIMARY KEY, payload TEXT NOT NULL);

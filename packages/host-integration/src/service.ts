@@ -8,6 +8,7 @@ import type { HostEvent } from "./store.ts"
 import { workspaceFor, type HostConfig } from "./config.ts"
 import { createGraphRuntime } from "../../../apps/task-agent/src/graph-runtime.ts"
 import { advanceTransition, advanceInputSignals } from "../../task-instances/src/transitions.ts"
+import { requestCancellation, advanceCancellation } from "../../task-instances/src/cancellation.ts"
 import { InstanceManager } from "../../task-instances/src/manager.ts"
 import { KubectlApi } from "../../task-instances/src/kubectl.ts"
 import { KubernetesApi } from "../../task-instances/src/api.ts"
@@ -32,6 +33,34 @@ export class HostService {
     this.config = structuredClone(config)
     this.store = new RelayStore(resolve(config.directory, "relay.db"))
     this.harness = harness ?? new OpenCodeServer(config)
+  }
+  enqueueWorkspaceCancellation(workspacePath: string): RelayRequest {
+    const workspace = resolve(String(workspacePath ?? ""))
+    if (!workspacePath || !this.store.projects().includes(workspace) && !this.config.workspaces.some(w => w.path === workspace))
+      throw new Error("Unknown workspace")
+    if (this.config.graphMcpUrl) throw new Error("프로젝트 전체 취소는 로컬 그래프 연결이 필요합니다.")
+    this.store.register(workspace)
+    const pending = this.store.active().filter(r => r.workspace === workspace)
+    let cancellation = pending.find(r => r.control === "cancel-workspace")
+    if (!cancellation) {
+      const id = `cancel_${randomBytes(16).toString("hex")}`
+      cancellation = this.store.enqueue({ id, host: "codex", sessionId: id, workspace, kind: "UserPromptSubmit", text: "프로젝트 전체 작업 취소" })
+      cancellation.control = "cancel-workspace"
+    }
+    for (const r of [...pending, cancellation]) {
+      r.phase = "cancelling"
+      r.workspaceCancellation = true
+      r.result = undefined
+      r.error = undefined
+      this.store.save(r)
+    }
+    const database = workspaceDatabase(this.config, workspace)
+    if (existsSync(database)) {
+      let graph = this.graphs.get(workspace)
+      if (!graph) { graph = createGraphRuntime(database); this.graphs.set(workspace, graph) }
+      requestCancellation(graph.engine, graph.store.db.prepare("SELECT id FROM tasks").all().map(r => String(r.id)))
+    }
+    return this.store.get(cancellation.id)!
   }
   async start(): Promise<void> {
     if (existsSync(this.config.socket)) {
@@ -149,6 +178,12 @@ export class HostService {
           res.end(JSON.stringify({ pending: this.response(latest) }))
           return
         }
+        if (req.url === "/cancel-workspace") {
+          const cancellation = this.enqueueWorkspaceCancellation(input.workspace)
+          void this.wake()
+          res.end(JSON.stringify(this.response(this.store.get(cancellation.id)!)))
+          return
+        }
         const record = this.store.get(input.requestId)
         if (!record) throw new Error("Unknown requestId")
         if (req.url === "/control") {
@@ -158,6 +193,7 @@ export class HostService {
           return
         }
         if (req.url === "/status") {
+          if (record.phase === "interrupted" && record.sessionID) await this.refreshInterrupted(record)
           const deadline = Date.now() + Math.max(0, Math.min(Number(input.waitMs) || 0, 25000))
           do {
             void this.wake()
@@ -234,6 +270,22 @@ export class HostService {
       this.store.claimDelivery(view.requestId)
     for (const key of ["activeRequest", "blockedBy"])
       if (view[key]) this.markPresented(view[key])
+  }
+  private async refreshInterrupted(record: RelayRequest): Promise<void> {
+    // Old relays could mark an idle post-compaction turn interrupted after reading
+    // only its pre-compaction parentID. Re-observe; never resend or duplicate work.
+    const state = await this.harness.inspect(this.store.binding(record))
+    if (this.closed || this.store.get(record.id)?.phase !== "interrupted") return
+    record.executionTaskIds = [...new Set([...(record.executionTaskIds ?? []), ...(state.executionTaskIds ?? [])])]
+    if (state.state === "completed" && record.executionTaskIds.length) {
+      const graph = this.graphs.get(record.workspace)
+      if (!graph || record.executionTaskIds.some(id => !["verified", "integrated"].includes(graph.engine.requireTask(id).status)))
+        state.state = "interrupted"
+    }
+    record.result = state
+    record.phase = ["running", "waiting"].includes(state.state) ? "submitted" : state.state as RelayRequest["phase"]
+    record.error = undefined
+    this.store.save(record)
   }
   response(r: RelayRequest): Record<string, unknown> {
     const blocker = this.blocker(r)
@@ -334,15 +386,34 @@ export class HostService {
       // Ambiguous delivery blocks subsequent prompts until the user cancels this request.
       if (record.phase === "uncertain") continue
       try {
-        await this.harness.prepare(record.workspace, workspaceDatabase(this.config, record.workspace))
         if (record.phase === "cancelling") {
-          await this.harness.cancel(record)
+          const graph = this.graphs.get(record.workspace)
+          let workspaceStopped
+          if (record.workspaceCancellation) {
+            if (!this.harness.stopWorkspace) throw new Error("프로젝트 전체 실행 종료 관찰기를 사용할 수 없습니다.")
+            try { workspaceStopped = await this.harness.stopWorkspace(record.workspace) }
+            catch (error) { workspaceStopped = { stopped: false, evidence: String(error) } }
+          } else if (record.sessionID) await this.harness.cancel(record)
+          if (graph) {
+            requestCancellation(graph.engine, record.workspaceCancellation
+              ? graph.store.db.prepare("SELECT id FROM tasks").all().map(r => String(r.id))
+              : record.executionTaskIds ?? [])
+            const k = this.config.kubernetes
+            const instances = k ? new InstanceManager(k.context ? new KubectlApi(k.context, k.namespace) : new KubernetesApi(k.namespace), k.namespace) : undefined
+            const rows = await advanceCancellation(graph.engine, instances, this.harness.stopWorker ? {
+              stopAndInspect: sessionId => this.harness.stopWorker!(record.workspace, sessionId),
+            } : undefined, workspaceStopped)
+            const blocked = rows.filter(r => r.state === "requested")
+            if (blocked.length) throw new Error(blocked.map(r => `${r.taskId}: ${r.error}`).join("\n"))
+          }
+          if (workspaceStopped && !workspaceStopped.stopped) throw new Error(workspaceStopped.evidence)
           record.phase = "cancelled"
           record.result = undefined
           record.error = undefined
           this.store.save(record)
           continue
         }
+        await this.harness.prepare(record.workspace, workspaceDatabase(this.config, record.workspace))
         if (record.phase === "queued") {
           record.sessionID =
             this.store.session(record.workspace) ??
@@ -374,6 +445,7 @@ export class HostService {
         if (record.phase === "prepared") {
           if (["cancelling", "cancelled"].includes(this.store.get(record.id)?.phase ?? "")) continue
           record.phase = "sending"
+          this.store.registerTurn(record)
           this.store.save(record)
           await this.harness.submit(
             record,
@@ -387,7 +459,7 @@ export class HostService {
           continue
         }
         if (record.phase === "submitted") {
-          const state = await this.harness.inspect(record)
+          const state = await this.harness.inspect(this.store.binding(record))
           if (["cancelling", "cancelled"].includes(this.store.get(record.id)?.phase ?? "")) continue
           if (state.state === "interrupted" && Date.now() - record.updated < 5000) continue
           record.executionTaskIds = [...new Set([...(record.executionTaskIds ?? []), ...(state.executionTaskIds ?? [])])]
@@ -425,7 +497,7 @@ export class HostService {
           ["cancelling", "cancelled"].includes(this.store.get(record.id)?.phase ?? "")
         )
           continue
-        if (record.phase === "cancelling") record.phase = "uncertain"
+        // Cancellation is durable and retried after backend outages.
         record.error = e instanceof Error ? e.message : String(e)
         // Preparation has no task effects. Submission errors remain ambiguous until reconciled.
         if (["queued", "prepared"].includes(record.phase)) record.phase = "failed"

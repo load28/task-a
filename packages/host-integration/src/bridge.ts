@@ -1,6 +1,6 @@
 import { TaskAgentMcpServer } from "../../protocol-mcp/src/index.ts"
 import type { TaskAgent } from "#task-agent-core"
-import { callService } from "./service.ts"
+import { HostService, callService } from "./service.ts"
 import { hostView } from "./presentation.ts"
 import { ensureService } from "./launcher.ts"
 import type { HostConfig } from "./config.ts"
@@ -61,18 +61,23 @@ export function createBridge(configPath: string, config: HostConfig) {
       },
       {
         name: "agent_cancel",
-        description: "Cancel this request and its worker sessions when requested by the user.",
-        inputSchema: { type: "object", properties: { requestId }, required: ["requestId"] },
+        description: "Cancel a request, or all tasks and worker sessions in an absolute workspace path. Workspace cancellation includes orphaned reservations and retries backend outages.",
+        inputSchema: { type: "object", properties: { requestId, workspace: { type: "string", minLength: 1 } }, oneOf: [{ required: ["requestId"] }, { required: ["workspace"] }] },
       },
     ],
     async dispatch(name, input) {
-      if (typeof input.requestId !== "string" || !input.requestId) throw new Error("requestId is required")
+      if (!(name === "agent_cancel" && typeof input.workspace === "string" && input.workspace) && (typeof input.requestId !== "string" || !input.requestId)) throw new Error("requestId is required")
+      if (name === "agent_cancel" && input.workspace) {
+        const service = new HostService(config)
+        try { service.enqueueWorkspaceCancellation(input.workspace) }
+        finally { await service.close() }
+      }
       await ensureService(configPath, config)
       const paths: Record<string, string> = {
         agent_control: "/control",
         agent_status: "/status",
         agent_reply: "/reply",
-        agent_cancel: "/cancel",
+        agent_cancel: input.workspace ? "/cancel-workspace" : "/cancel",
       }
       const view = hostView(await callService(config.socket, paths[name]!, input, 35000))
       if (name === "agent_status") {

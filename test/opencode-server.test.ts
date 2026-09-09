@@ -5,6 +5,9 @@ import { OpenCodeServer } from "../packages/opencode-harness/src/server.ts"
 import type { HostConfig } from "../packages/host-integration/src/config.ts"
 
 test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구성하고 비동기 세션을 사용한다", async () => {
+  let staleTool: string | undefined
+  let abortAcknowledged = true
+  let continuationMessages: any[] = []
   const calls: Array<{ path: string; method: string; body: any }> = []
   let connected = true,
     modelAvailable = true,
@@ -32,6 +35,7 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
       }
     else if (path === "/config") result = body
     else if (path === "/mcp") result = { task_graph: { status: "connected" } }
+    else if (path.endsWith("/abort")) result = abortAcknowledged
     else if (path === "/session" && req.method === "GET") result = []
     else if (path === "/session" && req.method === "POST") result = { id: "ses_main" }
     else if (path === "/session/status")
@@ -40,7 +44,7 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
     else if (path.endsWith("/children")) result = []
     else if (path === "/session/ses_main/message")
       result = [
-        { info: { id: "msg_one", role: "user" }, parts: [] },
+        { info: { id: "msg_one", role: "user", time: { created: -1 } }, parts: [] },
         {
           info: { id: "msg_answer", role: "assistant", parentID: "msg_one", time: { completed: 1 }, finish },
           parts: [
@@ -50,10 +54,12 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
           ],
         },
         {
-          info: { id: "msg_old", role: "assistant", parentID: "msg_other", time: { completed: 1 }, finish: "stop" },
+          info: { id: "msg_old", role: "assistant", parentID: "msg_other", time: { created: -2, completed: 1 }, finish: "stop" },
           parts: [{ type: "text", text: "다른 요청 결과" }],
         },
+        ...continuationMessages,
       ]
+    else if (path === "/session/ses_child/message") result = staleTool ? [{ info: {}, parts: [{ type: "tool", tool: staleTool, state: { status: "running" } }] }] : []
     else if (path === "/question")
       result = waiting
         ? [
@@ -125,7 +131,16 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
     await native.reply(b, { kind: "question", requestID: "q_child", answers: [["사용자 답변"]] })
     await native.reply(b, { kind: "permission", requestID: "p_child", reply: "once" })
     assert.equal(calls.find((c) => c.path === "/permission/p_child/reply")!.body.reply, "once")
+    await assert.rejects(native.cancel(b), /still stopping/)
+    busy = false
+    staleTool = "bash"
+    abortAcknowledged = false
+    await assert.rejects(native.cancel(b), /not acknowledged/)
+    abortAcknowledged = true
     await native.cancel(b)
+    staleTool = "webfetch"
+    await native.cancel(b)
+    staleTool = undefined
     assert.ok(calls.some((c) => c.path === "/session/ses_child/abort"))
     assert.ok(calls.some((c) => c.path === "/session/ses_main/abort"))
     waiting = false
@@ -133,6 +148,30 @@ test("실제 SDK가 OpenCode 기본·하위 에이전트와 그래프 MCP를 구
     assert.equal((await native.inspect(b)).state, "completed")
     finish = "tool-calls"
     assert.equal((await native.inspect(b)).state, "interrupted")
+    continuationMessages = [
+      { info: { id: "compact", role: "user", time: { created: 2 } }, parts: [{ type: "compaction", auto: true }] },
+      { info: { id: "summary", role: "assistant", parentID: "compact", summary: true, time: { created: 3, completed: 4 }, finish: "stop" }, parts: [{ type: "text", text: "요약은 완료가 아님" }] },
+      { info: { id: "continue", role: "user", time: { created: 5 } }, parts: [{ type: "text", synthetic: true, metadata: { compaction_continue: true }, text: "계속" }] },
+      { info: { id: "repaired", role: "assistant", parentID: "continue", time: { created: 6, completed: 7 }, finish: "stop" }, parts: [
+        { type: "text", text: "복구 검증 완료" },
+        { type: "tool", tool: "task_graph_task_instance_create", state: { status: "completed", input: { taskId: "repair" } } },
+        { type: "tool", tool: "task_graph_task_instance_status", state: { status: "completed", output: JSON.stringify({ status: { phase: "Archived" } }) } },
+      ] },
+    ]
+    const compacted = await native.inspect(b)
+    assert.equal(compacted.state, "completed")
+    assert.equal(compacted.text, "서버 결과\n복구 검증 완료")
+    assert.deepEqual(compacted.executionTaskIds, ["leaf", "repair"])
+    assert.equal(compacted.progress?.currentAction, "실행 상태: Archived")
+    continuationMessages.push({ info: { id: "next-request", role: "user", time: { created: 8 } }, parts: [] },
+      { info: { id: "next-answer", role: "assistant", parentID: "next-request", time: { created: 9 }, finish: "tool-calls" }, parts: [{ type: "text", text: "다음 요청 진행 중" }] })
+    busy = true; waiting = true
+    const historical = await native.inspect({ ...b, endMessageID: "next-request" })
+    assert.equal(historical.state, "completed")
+    assert.equal(historical.text, "서버 결과\n복구 검증 완료")
+    assert.deepEqual(historical.questions, [])
+    assert.deepEqual(historical.permissions, [])
+    assert.deepEqual(historical.progress?.workers, [])
     modelAvailable = false
     await assert.rejects(native.createSession(process.cwd(), "unavailable-model"), /not available/)
     connected = false

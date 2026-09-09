@@ -86,6 +86,7 @@ spec:
                 image: {type: string, minLength: 1, maxLength: 512}
                 desiredState: {type: string, enum: [Running, Suspended]}
                 run: {type: integer, minimum: 1}
+                recoveryInstructions: {type: string, maxLength: 8000}
                 deletionPolicy: {type: string, enum: [Retain, Delete], default: Retain}
                 storage:
                   type: object

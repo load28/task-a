@@ -1,9 +1,11 @@
+import { safeDiagnostic } from "../packages/task-instances/src/diagnostics.ts"
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { createInterface } from "node:readline"
 import { atomicJson } from "../packages/task-instances/src/worker.ts"
+import { WORKER_ENVIRONMENT_INSTRUCTIONS } from "../packages/task-instances/src/environment.ts"
 
 // Credentials and model sessions belong to the task PVC, never the host checkout.
 const directory = join(process.env.XDG_DATA_HOME ?? join(process.env.HOME!, ".local/share"), "opencode")
@@ -22,7 +24,11 @@ const model = process.env.TASK_WORKER_MODEL ?? "openai/gpt-5.6-terra"
 const key = createHash("sha256").update(JSON.stringify([model, args])).digest("hex")
 const statePath = join(directory, `task-stage-${key}.json`)
 let state: { sessionID?: string } = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {}
+args.push(`${WORKER_ENVIRONMENT_INSTRUCTIONS}\nRepair safe environment/code failures within this task and rerun affected checks. Do not use sudo or bypass permissions. If blocked, explain the exact command/error, attempted repairs and decision needed in your final output prefixed with TASK_BLOCKED:; do not claim validation passed.`)
+if (process.env.TASK_RECOVERY_INSTRUCTIONS) args.push(`Recovery direction for this run: ${process.env.TASK_RECOVERY_INSTRUCTIONS}. Inspect preserved partial work and rerun affected validation.`)
 let failed = false, completed = false
+let diagnostic = ""
+
 const child = spawn("opencode", ["run", "--format", "json", "--model", model,
   ...(state.sessionID ? ["--session", state.sessionID] : []), ...args], {
   stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, TASK_AGENT_INTERNAL: "1" },
@@ -35,9 +41,17 @@ output.on("line", line => {
     if (event.sessionID && state.sessionID !== event.sessionID) {
       state = { sessionID: event.sessionID }; atomicJson(statePath, state)
     }
-    if (event.type === "error") failed = true
+    const part = event.part, result = part?.state
+    if (event.type === "text" && part?.text?.includes("TASK_BLOCKED:")) { failed = true; diagnostic = safeDiagnostic(part.text, 900) }
+    if (event.type === "error") { failed = true; diagnostic = safeDiagnostic(JSON.stringify(event.error ?? event), 900) }
+    if (part?.type === "tool" && (result?.status === "error" || (typeof result?.metadata?.exit === "number" && result.metadata.exit !== 0)))
+      diagnostic = safeDiagnostic(JSON.stringify({ tool: part.tool, command: result.input?.command, error: result.error ?? result.output }), 900)
     if (event.type === "step_finish" && event.part?.reason === "stop") completed = true
   } catch { /* Non-JSON CLI diagnostics are preserved above. */ }
 })
 child.once("error", error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1 })
-child.once("close", code => { process.exitCode = code === 0 && !failed && completed ? 0 : code || 1 })
+child.once("close", (code, signal) => {
+  process.exitCode = code === 0 && !failed && completed ? 0 : code || 1
+  if (process.exitCode) process.stderr.write(JSON.stringify({ type: "stage_failure", childExitCode: code, signal, completed,
+    message: diagnostic || "Model exited without a successful completion event" }) + "\n")
+})

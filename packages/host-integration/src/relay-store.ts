@@ -20,6 +20,7 @@ export interface RelayRequest extends ServerBinding {
     | "cancelling"
     | "cancelled"
     | "interrupted"
+  workspaceCancellation?: boolean
   executionTaskIds?: string[]
   targetId?: string
   control?: string
@@ -37,7 +38,14 @@ export class RelayStore {
       CREATE TABLE IF NOT EXISTS relay_deliveries(id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS relay_projects(path TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS relay_sessions(workspace TEXT PRIMARY KEY, session TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS relay_turns(sequence INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL UNIQUE, request_id TEXT NOT NULL, session_id TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS relay_turns_session ON relay_turns(session_id, sequence);
     `)
+    // Existing installations retain the most recent transport anchor per request.
+    // New turns are registered before submission, so restart never depends on native parent IDs.
+    this.db.exec(`INSERT OR IGNORE INTO relay_turns(message_id,request_id,session_id)
+      SELECT json_extract(record,'$.messageID'),id,json_extract(record,'$.sessionID') FROM relay_requests
+      WHERE json_extract(record,'$.sessionID') != '' AND json_extract(record,'$.phase') NOT IN ('held','queued','prepared') ORDER BY rowid`)
   }
   enqueue(event: HostEvent): RelayRequest {
     const existing = this.get(event.id)
@@ -74,6 +82,15 @@ export class RelayStore {
   }
   bind(workspace: string, session: string): void {
     this.db.prepare("INSERT OR REPLACE INTO relay_sessions VALUES(?,?)").run(workspace, session)
+  }
+  registerTurn(record: RelayRequest): void {
+    this.db.prepare("INSERT OR IGNORE INTO relay_turns(message_id,request_id,session_id) VALUES(?,?,?)")
+      .run(record.messageID, record.id, record.sessionID)
+  }
+  binding(record: RelayRequest): ServerBinding {
+    const next = this.db.prepare(`SELECT message_id FROM relay_turns WHERE session_id=? AND sequence >
+      (SELECT sequence FROM relay_turns WHERE message_id=?) ORDER BY sequence LIMIT 1`).get(record.sessionID, record.messageID)
+    return { ...record, endMessageID: next ? String(next.message_id) : undefined }
   }
   active(): RelayRequest[] {
     return this.db

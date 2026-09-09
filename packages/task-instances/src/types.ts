@@ -6,6 +6,7 @@ export interface InstanceSpec {
   taskId: string
   image: string
   desiredState: "Running" | "Suspended"
+  recoveryInstructions?: string
   run: number
   storage: { size: string; className?: string }
   repository?: { url: string; commit: string }
@@ -40,6 +41,7 @@ export interface ClusterApi {
 export function validateSpec(spec: InstanceSpec) {
   if (spec.inputSnapshot && (!/^[a-f0-9]{64}$/.test(spec.inputSnapshot.digest) || !Array.isArray(spec.inputSnapshot.inputRefs))) throw new Error("Invalid pinned input snapshot")
   if (spec.inputSnapshot?.sources?.some(s => !s.taskId || !/^[a-f0-9]{64}$/.test(s.hash))) throw new Error("Invalid source snapshot")
+  if (spec.recoveryInstructions !== undefined && (typeof spec.recoveryInstructions !== "string" || spec.recoveryInstructions.length > 8000)) throw new Error("Invalid recovery instructions")
   if (!spec.taskId?.trim() || !spec.image?.trim()) throw new Error("taskId and image are required")
   if (!Number.isInteger(spec.run) || spec.run < 1) throw new Error("run must be a positive integer")
   if (!["Running", "Suspended"].includes(spec.desiredState)) throw new Error("Invalid desiredState")

@@ -50,6 +50,9 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
             required: [...(t.inputSchema.required ?? []), "operationId"],
           },
     }))
+  const nativeStart = schemas.find(t => t.name === "task_start")!.inputSchema as any
+  nativeStart.properties = { ...nativeStart.properties, sessionId: { type: "string", minLength: 1, pattern: "\\S" } }
+  nativeStart.required = [...nativeStart.required, "sessionId"]
   const ajv = new Ajv({ strict: false, allErrors: true })
   const validators = new Map(schemas.map((t) => [t.name, ajv.compile(t.inputSchema)]))
   store.db.exec(
@@ -160,6 +163,8 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
       if (name === "work_plan_reconcile") return advanceTransition(e, String(args.transitionId), instances)
       if (name.startsWith("task_instance_") && instances) {
         const input = structuredClone(args) as Record<string, any>
+        if (["task_instance_create", "task_instance_resume"].includes(name) && store.db.prepare("SELECT 1 FROM task_cancellations WHERE task_id=?").get(input.taskId))
+          throw new Error("취소된 작업의 실행 환경은 시작하거나 재개할 수 없습니다.")
         if (name === "task_instance_status") { e.loadTask(input.taskId); return instances.load(physicalId(input.taskId)) }
         const stable = (value: any): any => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
           ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value
@@ -234,7 +239,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances: Inst
             })
             return instances.create(input.spec)
           case "task_instance_suspend": return instances.suspend(physicalId(input.taskId))
-          case "task_instance_resume": return instances.resume(physicalId(input.taskId), input.run)
+          case "task_instance_resume": return instances.resume(physicalId(input.taskId), input.run, input.recoveryInstructions)
           case "task_instance_delete": return instances.remove(physicalId(input.taskId))
           }
         }

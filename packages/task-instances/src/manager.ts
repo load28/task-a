@@ -42,11 +42,15 @@ export class InstanceManager {
     if (instance.spec.desiredState === "Suspended") return instance
     return this.api.replace("taskinstances", { ...instance, spec: { ...instance.spec, desiredState: "Suspended" } })
   }
-  async resume(taskId: string, run: number) {
+  async resume(taskId: string, run: number, recoveryInstructions?: string) {
     const instance = await this.load(taskId)
+    validateSpec({ ...instance.spec, recoveryInstructions })
     await this.preflight(instance.spec)
     // Explicit generation makes retries safe even after the requested run has already finished.
-    if (instance.spec.run === run && instance.spec.desiredState === "Running") return instance
+    if (instance.spec.run === run && instance.spec.desiredState === "Running") {
+      if (recoveryInstructions !== undefined && recoveryInstructions !== instance.spec.recoveryInstructions) throw new Error("Run already has different recovery instructions")
+      return instance
+    }
     const consumers = (await this.api.list("taskinstances")).filter(r => r.spec?.restoreFromTaskId === taskId && !["Completed", "Archived"].includes(r.status?.phase))
     if (consumers.length) throw new Error("Workspace is pinned by repair consumers; wait for their completion before resuming the source")
     if (run !== instance.spec.run + 1) throw new Error("Resume must request exactly the next execution generation")
@@ -54,7 +58,7 @@ export class InstanceManager {
       throw new Error("Wait for a stopped or failed instance before resuming")
     if (instance.status?.phase === "RecoveryRequired")
       throw new Error("Lost execution requires operator recovery; confirm old worker termination and restore missing storage first")
-    return this.api.replace("taskinstances", { ...instance, spec: { ...instance.spec, desiredState: "Running", run, ...(instance.status?.phase === "Archived" && instance.spec.archive ? { archive: { ...instance.spec.archive, cleanupOnCompletion: false } } : {}) } })
+    return this.api.replace("taskinstances", { ...instance, spec: { ...instance.spec, desiredState: "Running", run, recoveryInstructions, ...(instance.status?.phase === "Archived" && instance.spec.archive ? { archive: { ...instance.spec.archive, cleanupOnCompletion: false } } : {}) } })
   }
   async remove(taskId: string) {
     const instance = await this.load(taskId)

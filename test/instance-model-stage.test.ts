@@ -29,3 +29,27 @@ console.log(JSON.stringify(process.env.FAIL_MODEL ? {type:'error',error:{message
     assert.equal(run(true).status, 1)
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+test("모델 미완료 시 마지막 명령 오류와 실제 종료 상태를 보존한다", () => {
+  const root = mkdtempSync(join(tmpdir(), "model-diagnostic-"))
+  mkdirSync(join(root, "bin"))
+  writeFileSync(join(root, "bin/opencode"), `#!${process.execPath}
+console.log(JSON.stringify({type:'tool_use',part:{type:'tool',tool:'bash',state:{status:'completed',input:{command:'python3 -m pytest'},metadata:{exit:127},output:'python3: command not found'}}}));
+`, { mode: 0o755 })
+  try {
+    const result = spawnSync(process.execPath, [resolve("scripts/instance-model-stage.ts"), "verify"], { encoding: "utf8", env: { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, XDG_DATA_HOME: root } })
+    assert.equal(result.status, 1)
+    const receipt = JSON.parse(result.stderr.trim())
+    assert.equal(receipt.childExitCode, 0)
+    assert.equal(receipt.completed, false)
+    assert.match(receipt.message, /python3: command not found/)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test("실패 원인이 호스트 진행 상황에서 사라지지 않는다", async () => {
+  const { executionProgress } = await import("../packages/host-integration/src/presentation.ts")
+  const failure = { stage: "verify", message: "Python 없음", logTail: "python3: command not found" }
+  const parts = [{ type: "tool", tool: "task_graph_task_instance_status", state: { status: "completed", output: JSON.stringify({ status: { phase: "Failed", result: { failure } } }) } }]
+  assert.deepEqual(executionProgress(parts).failure, failure)
+  assert.match(executionProgress(parts).currentAction, /Python 없음/)
+})

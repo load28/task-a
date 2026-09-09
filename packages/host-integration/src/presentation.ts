@@ -58,6 +58,7 @@ export function executionProgress(parts: any[]) {
   let currentTask: string | undefined
   let currentAction = "요청을 분석하고 있습니다"
   let plan: Record<string, any> | undefined
+  let failure: Record<string, any> | undefined
   for (const p of parts) {
     if (p.type !== "tool") continue
     const done = p.state.status === "completed"
@@ -66,7 +67,14 @@ export function executionProgress(parts: any[]) {
       try { result = JSON.parse(p.state.output) } catch {}
     }
     if (p.tool === "task_graph_task_instance_status" && done && result?.status) {
-      currentAction = result.status.message ?? result.status.reason ?? `실행 상태: ${result.status.phase}`
+      failure = result.status.result?.failure
+      currentAction = failure ? `작업 오류: ${failure.message}` : result.status.message ?? result.status.reason ?? `실행 상태: ${result.status.phase}`
+    }
+    if (p.tool === "task_graph_task_instance_resume" && done) { failure = undefined; currentAction = "복구 지침을 반영해 작업을 재개했습니다"; milestones.push(currentAction) }
+    if (p.tool === "task_graph_task_instance_create" && done && result?.spec?.taskId) {
+      failure = undefined
+      currentAction = "새 작업 실행을 시작했습니다"
+      milestones.push(currentAction)
     }
     if (p.tool === "task_graph_task_start" && done && result?.title) {
       currentTask = result.title
@@ -94,5 +102,5 @@ export function executionProgress(parts: any[]) {
       currentAction = "통합 검증 결과를 확인하고 있습니다"
     }
   }
-  return { ...(currentTask ? { currentTask } : {}), ...(plan ? { plan } : {}), currentAction, milestones: [...new Set(milestones)].slice(-3) }
+  return { ...(failure ? { failure } : {}), ...(currentTask ? { currentTask } : {}), ...(plan ? { plan } : {}), currentAction, milestones: [...new Set(milestones)].slice(-3) }
 }

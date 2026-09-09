@@ -48,6 +48,10 @@ export function loadConfig(path: string): HostConfig {
 }
 export function workspaceFor(config: HostConfig, cwd: string): HostConfig["workspaces"][number] | undefined {
   const canonical = realpathSync(cwd)
+  for (let path = canonical; ; path = dirname(path)) {
+    if (existsSync(resolve(path, ".task-agent-disabled"))) return
+    if (path === dirname(path)) break
+  }
   const registered = config.workspaces
     .filter((w) => canonical === w.path || canonical.startsWith(w.path + "/"))
     .sort((a, b) => b.path.length - a.path.length)[0]

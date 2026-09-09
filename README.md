@@ -44,6 +44,10 @@ Claude Code / Codex
 
 기존 `packages/task-orchestrator` 실행 루프와 Claude CLI 실행기는 이전 API의 호환성·회귀 테스트용 코드입니다. 기본 런타임, 호스트 서비스, MCP 및 `npm run orchestrate`에서 실행하지 않습니다. 그래프 세부 모델은 [도메인 설계](docs/architecture.md)를 참고합니다.
 
+## 코드 수정 후 로컬 반영
+
+`npm run host:reload` 한 번으로 검사 → 컨트롤러·작업자 이미지 빌드 → kind 이미지 로드 → CRD·컨트롤러 갱신 → 호스트 재시작 → 설치된 Codex·Claude MCP 등록 갱신과 실제 초기화 검증을 수행합니다. 설치된 로컬 kind 설정을 사용하며 소스 내용으로 이미지 태그를 구분합니다. 빌드 중 소스가 바뀌면 배포를 중단합니다. 기존 설정·인증·DB·볼륨·프로젝트 비활성 설정을 보존하며, 기존 실행 Pod는 재생성하지 않습니다. 새 작업부터 새 작업자 이미지를 사용합니다. 등록된 실행 명령으로 `initialize`와 `tools/list`까지 성공해야 갱신 완료로 기록합니다. 구버전의 삭제된 실행 파일 경로는 현재 등록으로 이전하며, 연동 해제 시 구버전 등록을 복원하지 않습니다. 반영 결과는 `~/.task-agent/local-release.json`에 기록합니다.
+
 ## 운영과 검증
 
 ```sh
@@ -51,12 +55,21 @@ node scripts/host-setup.ts start
 npm run host:doctor
 npm run host:status
 node scripts/host-setup.ts cancel --request <requestId>
+node scripts/host-setup.ts cancel --workspace /absolute/project/path
 npm run host:stop
 npm run host:uninstall
 npm run check
 npm run evaluate:host -- --model claude
 ```
 
+프로젝트 전체 취소는 `agent_cancel({workspace: "/absolute/project/path"})` 또는 위 `cancel --workspace` 명령으로 요청합니다. 대기 작업과 기존 예약을 먼저 차단하고, OpenCode 세션 및 Kubernetes Pod 종료 확인 후 예약을 해제합니다. 연결 장애 중에는 `cancelling`과 오류 이유를 보존하며 재시작 후에도 재시도합니다. 저장 볼륨은 삭제하지 않습니다. 원격 Graph MCP 연결에서는 전체 취소를 지원하지 않습니다.
+
 `host:doctor`는 실제 서버, 모델 인증, Graph MCP, 에이전트 로딩을 확인합니다. `check`는 결정적인 회귀·SDK 계약·훅·서비스 복구 테스트입니다. `evaluate:host`는 임시 프로젝트에서 실제 모델이 파일을 만들고 그래프 결과를 기록하는 별도 평가이며 서버 모델 인증이 필요합니다.
 
 그래프 단독 stdio는 `npm run mcp`, JWT 인증 원격 Graph MCP는 `npm run remote`입니다. 이들은 OpenCode가 사용하는 백엔드이며 호스트 자동 연동의 대체물이 아닙니다. 기본 그래프 DB는 `data/tasks-v2.db`이고 `TASK_AGENT_DB`로 변경합니다. 기존 Docker 배포는 [배포 안내](deploy/README.md)에 있습니다.
+
+### 작업 환경과 실패 복구
+
+기본 작업자 이미지는 Node.js/npm, Python/pytest/uv, Java/Maven, Rust/Cargo와 빌드 도구를 포함하며 빌드 중 실행 여부를 검사합니다. 프로젝트별 버전과 의존성은 저장소의 명세·잠금 파일을 따라 작업 공간에 설치합니다.
+실패 결과에는 단계, 실행 프로그램, 종료 코드·시그널과 비밀값을 제거한 제한 길이의 오류 로그를 보존하고 호스트 진행 상황으로 전달합니다. 전체 실행 로그와 부분 작업은 기존 PVC에 남습니다.
+관리자는 승인 범위 안의 오류를 진단해 복구 지침으로 재개합니다. 두 번의 복구 실패 또는 권한·인증·요구사항 판단이 필요하면 기존 질문 기능으로 실제 사용자 응답을 기다립니다. 응답은 재실행 세대의 `recoveryInstructions`에 저장되며 동일 PVC와 모델 세션에 전달됩니다. 이미지 변경은 기존 이슈 라우팅과 작업 공간 복원 경로를 사용합니다.

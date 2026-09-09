@@ -24,6 +24,7 @@ export interface InstallOptions {
   verifyCommand?: string
   maxWorkers?: number
   autoContinue?: boolean
+  preserveConfig?: boolean
 }
 export const serviceRoot = fileURLToPath(new URL("../../../", import.meta.url))
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
@@ -97,6 +98,22 @@ function replaceToml(text: string, block: string): { text: string; previous: str
   }
   return { text: kept.join("\n").trimEnd() + "\n" + block, previous: removed.join("\n") }
 }
+/** A previous generation of this integration is not an external config to restore. */
+function managedMcp(value: unknown): boolean {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "")
+  return ["host-entry.ts", "host-mcp.ts"].some(name => text.includes(resolve(serviceRoot, "scripts", name)))
+}
+export function refreshHostBindings(home: string, configPath: string): Array<"claude" | "codex"> {
+  const manifest = readJson(resolve(home, ".task-agent/installation.json"))
+  const tomlPath = resolve(home, ".codex/config.toml")
+  const codex = existsSync(tomlPath) ? replaceToml(readFileSync(tomlPath, "utf8"), "").previous : ""
+  const claude = readJson(resolve(home, ".claude.json")).mcpServers?.["task-agent"]
+  const hosts = (["claude", "codex"] as const).filter(host => manifest[host] || managedMcp(host === "codex" ? codex : claude))
+  if (configPath !== resolve(home, ".task-agent/host.json")) throw new Error("Host binding configuration path mismatch")
+  if (hosts.length) install({ home, hosts, preserveConfig: true })
+  return hosts
+}
+
 export function install(options: InstallOptions): { config: string; files: string[] } {
   if (options.kubernetes && (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(options.kubernetes.namespace) ||
     (options.kubernetes.context !== undefined && !options.kubernetes.context.trim()))) throw new Error("Invalid Kubernetes execution configuration")
@@ -107,7 +124,7 @@ export function install(options: InstallOptions): { config: string; files: strin
   chmodSync(directory, 0o700)
   const configPath = resolve(directory, "host.json")
   const existing = readJson(configPath)
-  const config: HostConfig = {
+  const config: HostConfig = options.preserveConfig ? structuredClone(existing) : {
     version: 1,
     autoDiscover: true,
     directory,
@@ -149,6 +166,7 @@ export function install(options: InstallOptions): { config: string; files: strin
       const settings = readJson(path)
       settings.mcpServers ??= {}
       if (!manifest.claude) manifest.claude = { mcp: settings.mcpServers["task-agent"] ?? null }
+      if (managedMcp(manifest.claude.mcp)) manifest.claude.mcp = null
       settings.mcpServers["task-agent"] = mcp
       changes.set(path, JSON.stringify(settings, null, 2) + "\n")
     } else {
@@ -157,6 +175,7 @@ export function install(options: InstallOptions): { config: string; files: strin
       const block = `\n[mcp_servers.task-agent]\ncommand = ${JSON.stringify(mcp.command)}\nargs = ${JSON.stringify(mcp.args)}\n`
       const replaced = replaceToml(original, block)
       if (!manifest.codex) manifest.codex = { mcp: replaced.previous }
+      if (managedMcp(manifest.codex.mcp)) manifest.codex.mcp = ""
       changes.set(path, replaced.text)
     }
   }
@@ -193,7 +212,7 @@ export function uninstall(home: string, hosts: Array<"claude" | "codex">): void 
     if (host === "claude" && manifest.claude) {
       const p = resolve(home, ".claude.json")
       const data = readJson(p)
-      if (manifest.claude.mcp === null) delete data.mcpServers?.["task-agent"]
+      if (manifest.claude.mcp === null || managedMcp(manifest.claude.mcp)) delete data.mcpServers?.["task-agent"]
       else {
         data.mcpServers ??= {}
         data.mcpServers["task-agent"] = manifest.claude.mcp
@@ -203,7 +222,7 @@ export function uninstall(home: string, hosts: Array<"claude" | "codex">): void 
     } else if (host === "codex" && manifest.codex) {
       const p = resolve(home, ".codex/config.toml")
       backup(p)
-      atomic(p, replaceToml(readFileSync(p, "utf8"), manifest.codex.mcp + "\n").text)
+      atomic(p, replaceToml(readFileSync(p, "utf8"), (managedMcp(manifest.codex.mcp) ? "" : manifest.codex.mcp) + "\n").text)
     }
     delete manifest[host]
   }

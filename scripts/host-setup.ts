@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { existsSync } from "node:fs"
 import { install, uninstall } from "../packages/host-integration/src/install.ts"
 import { loadConfig } from "../packages/host-integration/src/config.ts"
-import { callService } from "../packages/host-integration/src/service.ts"
+import { HostService, callService } from "../packages/host-integration/src/service.ts"
 const args = process.argv.slice(2),
   command = args.shift() ?? "status"
 function option(name: string): string | undefined {
@@ -59,6 +59,13 @@ if (command === "install") {
 } else if (["status", "doctor", "stop", "cancel"].includes(command)) {
   const config = loadConfig(configPath)
   try {
+    if (command === "cancel" && option("--workspace")) {
+      // Fence work before a stopped relay is restarted; no model turn is needed to cancel.
+      const service = new HostService(config)
+      try { service.enqueueWorkspaceCancellation(resolve(option("--workspace")!)) }
+      finally { await service.close() }
+      await ensureService(configPath, config)
+    }
     console.log(
       JSON.stringify(
         await callService(
@@ -69,8 +76,8 @@ if (command === "install") {
               ? "/health"
               : command === "stop"
                 ? "/shutdown"
-                : "/cancel",
-          ["status", "doctor"].includes(command) ? undefined : { requestId: option("--request") },
+                : option("--workspace") ? "/cancel-workspace" : "/cancel",
+          ["status", "doctor"].includes(command) ? undefined : { requestId: option("--request"), workspace: option("--workspace") ? resolve(option("--workspace")!) : undefined },
           command === "doctor" ? 60000 : 15000,
         ),
         null,

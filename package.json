@@ -23,6 +23,7 @@
     "test": "node --test",
     "check": "tsc --noEmit && node --test",
     "host:install": "node scripts/host-setup.ts install",
+    "host:reload": "node scripts/host-reload.ts",
     "host:status": "node scripts/host-setup.ts status",
     "host:stop": "node scripts/host-setup.ts stop",
     "host:uninstall": "node scripts/host-setup.ts uninstall",
