@@ -2,7 +2,7 @@ import { CacheFallbackBudgetUnavailable } from "./cognitive-cache.ts"
 import { randomUUID } from "node:crypto"
 import type { ActivationGrant } from "../../task-cognition/src/model.ts"
 import type { ControlRuntime } from "./runtime.ts"
-import { canonical } from "./value.ts"
+import { canonical,digest } from "./value.ts"
 
 export interface GrantedExecutor {
   execute(grantId:string):Promise<unknown>
@@ -48,7 +48,8 @@ export class GrantDispatcher {
           this.save(id,"cancelled",{reason:"Grant is no longer executable"});continue
         }
         if(running+ids.length>=this.maxWorkers)break
-        this.db.prepare("UPDATE grant_dispatches SET state='dispatching',owner=?,payload=? WHERE grant_id=?").run(this.owner,canonical({startedAt:Date.now()}),id)
+        this.db.prepare("UPDATE grant_dispatches SET owner=? WHERE grant_id=?").run(this.owner,id)
+        this.save(id,"dispatching",{startedAt:Date.now()})
         ids.push(id)
       }
       return ids
@@ -113,7 +114,17 @@ export class GrantDispatcher {
     }
   }
   private save(id:string,state:string,payload:unknown):void {
-    this.db.prepare("UPDATE grant_dispatches SET state=?,payload=? WHERE grant_id=?").run(state,canonical(payload),id)
+    this.runtime.store.atomic(()=>{
+      const row=this.db.prepare("SELECT d.state,d.payload,g.task_id FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE d.grant_id=?").get(id)
+      if(!row)return
+      const now=Date.now(),prior=JSON.parse(String(row.payload||"{}")),transition={from:String(row.state),to:state,at:now,detail:payload}
+      const value={...prior,...(payload&&typeof payload==="object"?payload:{}),updatedAt:now,transitions:[...(Array.isArray(prior.transitions)?prior.transitions:[]),transition]}
+      this.db.prepare("UPDATE grant_dispatches SET state=?,payload=? WHERE grant_id=?").run(state,canonical(value),id)
+      if(row.state!==state) {
+        const owner=this.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(String(row.task_id)),correlationId=String(owner?.request_id??row.task_id)
+        this.runtime.store.event({id:`dispatch-transition:${digest({id,state,index:value.transitions.length})}`,type:"GrantDispatchTransition",entityId:String(row.task_id),correlationId,schemaVersion:1,timestamp:now,payload:{grantId:id,transition}})
+      }
+    })
   }
   status(){return this.db.prepare("SELECT grant_id,state,payload FROM grant_dispatches ORDER BY rowid").all().map(row=>({grantId:String(row.grant_id),state:String(row.state),payload:JSON.parse(String(row.payload)) as unknown}))}
   async stopAll():Promise<{stopped:boolean;evidence:string}> {

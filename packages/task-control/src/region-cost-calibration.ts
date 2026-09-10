@@ -66,8 +66,8 @@ export class RegionCostCalibration {
   ingest():number {
     const {store}=this.runtime
     return store.consume("region-cost-calibration/v1","completed-repair-cost/v1",event=>{
-      if(!["RequestCompleted","RegionCostComponentRecorded"].includes(event.type))return
-      const requestedId=event.type==="RequestCompleted"?(event.payload as {requestId:string}).requestId:String(store.db.prepare("SELECT request_id FROM request_region_repairs WHERE id=?").get((event.payload as {repairId:string}).repairId)?.request_id??"")
+      if(!["RequestCompleted","RegionCostComponentRecorded","GrantDispatchTransition"].includes(event.type))return
+      const requestedId=event.type==="RequestCompleted"?(event.payload as {requestId:string}).requestId:event.type==="GrantDispatchTransition"?event.correlationId:String(store.db.prepare("SELECT request_id FROM request_region_repairs WHERE id=?").get((event.payload as {repairId:string}).repairId)?.request_id??"")
       const request=this.runtime.requests.get(requestedId),program=request?.program&&store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version),selectionPolicy=program?.replanner?.selection
       if(!request||!selectionPolicy?.calibration)return
       const completionRow=store.db.prepare("SELECT json_extract(payload,'$.timestamp') timestamp,payload FROM event_outbox WHERE type='RequestCompleted' AND correlation_id=? ORDER BY sequence DESC LIMIT 1").get(request.id)
@@ -96,6 +96,22 @@ export class RegionCostCalibration {
           const job=JSON.parse(String(row.payload)) as {evidence:import("../../task-causality/src/model.ts").VersionRef;receipt:{startedAt:number;finishedAt:number}}
           if(!this.runtime.evidence.valid(job.evidence)||!Number.isFinite(job.receipt?.startedAt)||!Number.isFinite(job.receipt?.finishedAt)||job.receipt.finishedAt<job.receipt.startedAt)continue
           this.record({repairId:repair.id,category:"integration",amount:(job.receipt.finishedAt-job.receipt.startedAt)/policy.elapsedMsPerUnit,unit:selectionPolicy.costUnit,evidence:[job.evidence],source:`validation-job:${row.id}`})
+        }
+        if((selected.interruption??0)>0&&!store.db.prepare("SELECT 1 FROM region_cost_component_receipts WHERE repair_id=? AND category='interruption'").get(repair.id)&&store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()) {
+          const dispatches=store.db.prepare("SELECT d.grant_id,d.payload FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id JOIN controlled_tasks t ON t.task_id=g.task_id WHERE t.request_id=?").all(request.id).map(row=>({grantId:String(row.grant_id),payload:JSON.parse(String(row.payload)) as {transitions?:Array<{from:string;to:string;at:number;detail:unknown}>}}))
+          if(dispatches.length&&dispatches.every(item=>Array.isArray(item.payload.transitions))) {
+            const intervals=dispatches.flatMap(item=>{
+              const transitions=item.payload.transitions!,result:Array<{grantId:string;startedAt:number;finishedAt:number}>=[]
+              for(let index=0;index<transitions.length;index++)if(transitions[index]!.to==="stopping") {
+                const end=transitions.slice(index+1).find(next=>["failed","cancelled","completed"].includes(next.to))
+                if(end)result.push({grantId:item.grantId,startedAt:transitions[index]!.at,finishedAt:end.at})
+              }
+              return result
+            }).filter(interval=>interval.startedAt>=repair.startedAt&&interval.finishedAt<=Number(completionRow.timestamp))
+            const content={repairId:repair.id,requestId:request.id,intervals,source:"durable grant dispatch stop transitions",completion}
+            const proof=this.runtime.evidence.put({id:`regional-interruption:${digest(content)}`,version:1,type:"runtime",source:"durable dispatch transition measurement",producer:"region-cost-calibration",validatorVersion:"dispatch-interruption/v1",timestamp:Number(completionRow.timestamp),content,contentHash:digest(content),inputVector:[],confidence:1,expiresAt:null})
+            this.record({repairId:repair.id,category:"interruption",amount:intervals.reduce((sum,interval)=>sum+(interval.finishedAt-interval.startedAt)/policy.elapsedMsPerUnit,0),unit:selectionPolicy.costUnit,evidence:[proof],source:"durable grant dispatch stop transitions"})
+          }
         }
         const componentRows=store.db.prepare("SELECT category,amount,payload FROM region_cost_component_receipts WHERE repair_id=? ORDER BY category,id").all(repair.id)
         const measured=new Map<string,number>()

@@ -128,6 +128,30 @@ export class FileObservations {
       return output
     })
   }
+  /** An authorized OS/VCS watcher can report a path that no model previously
+   * read. Since no causal edge is known, the owning task is invalidated
+   * conservatively and downstream containment must be proved again. */
+  reportBoundaryChange(taskId:string,workspace:string,path:string,status:"observed"|"missing"|"unknown",hash:string|null,authorization:VersionRef[]):DependencyVersion {
+    const evidence=new EvidenceStore(this.store)
+    if(!authorization.length||authorization.some(ref=>{const item=evidence.require(ref);return !["user","code","runtime"].includes(item.type)}))throw new Error("Boundary change feed requires registered observer evidence")
+    if(isAbsolute(path)||path.split(/[\\/]/).some(part=>["",".","..",".git",".codex",".agents",".task-agent"].includes(part))||status==="observed"&&!hash||status!=="observed"&&hash!==null)throw new Error("Invalid boundary change observation")
+    const root=realpathSync(workspace),id=`file:${digest({workspace:root,path})}`,now=Date.now()
+    return this.store.atomic(()=>{
+      const head=Number(this.store.db.prepare("SELECT version FROM observed_file_heads WHERE id=?").get(id)?.version??0)
+      const previous=head?JSON.parse(String(this.store.db.prepare("SELECT payload FROM observed_file_versions WHERE id=? AND version=?").get(id,head)!.payload)):null
+      const measuredHash=hash??digest({status,path}),version=previous?.hash===measuredHash?head:head+1
+      const input:DependencyVersion={entityId:id,port:"content",view:"utf8-exact",version,hash:measuredHash}
+      if(version===head)return input
+      const value={id,version,workspace:root,path,hash:measuredHash,status,observedAt:now,source:"authorized boundary change feed"}
+      const content={taskId,input,status,workspace:root,path,authorization,coverage:"one watcher-reported path; causal consumers and unreported process inputs remain unknown"}
+      const proof=evidence.put({id:`boundary-change:${digest(content)}`,version:1,type:"runtime",source:"authorized external change feed",producer:"file-observations",validatorVersion:"boundary-change-feed/v1",timestamp:now,content,contentHash:digest(content),inputVector:[input],confidence:status==="unknown"?0:1,expiresAt:null})
+      this.store.db.prepare("INSERT INTO observed_file_versions VALUES(?,?,?)").run(id,version,canonical(value))
+      this.store.db.prepare("INSERT INTO observed_file_heads VALUES(?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version").run(id,version)
+      this.store.event({id:`file-observation:${id}:${version}`,type:"FileVersionObserved",entityId:id,correlationId:taskId,schemaVersion:1,timestamp:now,payload:{before:previous,after:value,evidence:proof,completeness:"unknown",reportedOwner:taskId}})
+      this.invalidated?.(taskId,input,[...authorization,proof])
+      return input
+    })
+  }
   assertObservedReadsCurrent(grantId:string):void {
     const db=this.store.db,seen=new Set<string>()
     const grantRow=db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grantId)

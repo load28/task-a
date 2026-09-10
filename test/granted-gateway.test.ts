@@ -32,6 +32,19 @@ function setup() {
   return {r,workspace,task,worker,grant,authority,gateway,close:()=>{r.close();rmSync(workspace,{recursive:true,force:true})}}
 }
 
+test("등록 watcher의 gateway 밖 변경은 소유 작업을 보수적으로 무효화한다",()=>{
+  const f=setup()
+  try {
+    const authorization=f.r.control.evidence.put({id:"watcher-authorization",version:1,type:"code",source:"configured watcher",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content:{scope:f.workspace},contentHash:digest({scope:f.workspace}),inputVector:[],confidence:1,expiresAt:null})
+    const input=f.r.control.files.reportBoundaryChange(f.task.id,f.workspace,"outside.txt","observed",digest("external edit"),[authorization])
+    assert.equal(f.r.engine.requireTask(f.task.id).status,"stale")
+    assert.ok(f.r.engine.signals.stops().some(stop=>stop.taskId===f.task.id&&stop.state==="requested"))
+    const event=f.r.store.db.prepare("SELECT payload FROM event_outbox WHERE type='FileInputInvalidated' AND entity_id=?").get(f.task.id)!
+    assert.equal(JSON.parse(String(event.payload)).payload.input.entityId,input.entityId)
+    assert.throws(()=>f.r.control.files.reportBoundaryChange(f.task.id,f.workspace,"../escape","observed",digest("x"),[authorization]),/Invalid boundary/)
+  }finally{f.close()}
+})
+
 test("인증된 adapter만 허가를 조회하며 자식·타 세션은 비용을 소비할 수 없다",async()=>{
   const f=setup(),rpc=new AuthorityHttpServer(f.authority)
   try {

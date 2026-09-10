@@ -83,6 +83,10 @@ test("수신 불명 실행은 재호출하지 않으며 실제 종료 확인 전
     assert.equal(f.r.store.db.prepare("SELECT state FROM budget_reservations WHERE id=?").get(grant.id)!.state,"reserved")
     a.executor.stop=async()=>({stopped:true,evidence:"acknowledged"})
     await d.recover();assert.equal(d.status()[0]!.state,"failed")
+    const receipt=d.status()[0]!.payload as {startedAt?:number;transitions:Array<{from:string;to:string;at:number}>}
+    assert.ok(receipt.transitions.some(item=>item.to==="stopping"))
+    assert.ok(receipt.transitions.some(item=>item.from==="stopping"&&item.to==="failed"))
+    assert.equal(f.r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='GrantDispatchTransition'").get()!.n,2)
     d.tick();await d.settle();assert.equal(a.calls.length,0)
   } finally {await d.close();f.r.close()}
 })
