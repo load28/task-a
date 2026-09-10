@@ -97,7 +97,8 @@ export class CognitiveGateway {
           if(previous!==args.previousHash)throw new Error("File changed since the authorized read")
           durableReplace(path,args.content,current?current.mode&0o777:0o600)
         }
-        this.engine.store.control.event({id:`file:${workerSessionId}:${authorizationCallId}`,type:"CognitiveFileWritten",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId,path:args.path,before:args.previousHash,after:hash}})
+        const observed=this.files.write(grant,this.workspace,String(args.path),args.previousHash as string|null,hash,authorizationCallId)
+        this.engine.store.control.event({id:`file:${workerSessionId}:${authorizationCallId}`,type:"CognitiveFileWritten",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId,path:args.path,before:args.previousHash,after:hash,observed}})
       } else throw new Error("Unknown cognitive tool")
       if(Buffer.byteLength(JSON.stringify(result))>remaining)throw new Error("Tool result exceeds remaining context budget")
       db.prepare("INSERT INTO cognitive_tool_receipts VALUES(?,?,?,'completed',?) ON CONFLICT(session_id,call_id) DO UPDATE SET state='completed',payload=excluded.payload").run(workerSessionId,authorizationCallId,signature,canonical(result))

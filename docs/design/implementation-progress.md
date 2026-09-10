@@ -30,6 +30,8 @@
 
 native gateway의 실제 UTF-8 읽기는 workspace·path별 불변 파일 버전, read call, 소비 grant와 evidence vector에 고정한다. 채택된 AgentCompleted에서만 관찰된 파일 포트→task 입력 edge를 투영한다. 같은 call의 재전달은 기존 읽기 결과를 유지하며 다른 내용의 보고는 충돌로 거절한다. 새 파일 버전을 관찰하면 현재 attempt가 이전 버전을 소비한 task와 관련 memory view를 무효화한다. native 결과 채택 전에는 실제 읽은 파일을 다시 확인하며, 성공한 자기 쓰기와 외부 변경을 구분한다. 이 검사 역시 검사 시점 이후의 원자적 전체 파일 시스템 보존을 증명하지 않는다.
 
+granted write는 CAS 직전 hash와 교체 후 hash, grant·tool call·task·workspace·path를 immutable 파일 버전과 실제 runtime evidence에 함께 기록한다. 쓰기 자체는 기존 원자 교체와 fsync 경로를 유지한다. 자기 쓰기의 새 파일 버전은 해당 실행을 무효화하지 않으며 다른 실제 소비자에게만 입력 변경을 전파한다. task→파일 `generated_from` edge는 파일 쓰기 순간이 아니라 해당 grant 결과가 채택된 뒤에만 게시한다. 재전달된 tool call은 파일 버전·증거·edge를 중복 생성하지 않는다.
+
 Pod gateway는 read-prepared journal을 보존한 뒤 controller에 읽은 해시를 보고한다. controller는 live grant·봉인 상태·read scope·실제로 허가한 call과 args hash를 대조한다. Pod clone은 source lineage가 완전히 증명되기 전까지 별도 입력 namespace로 둔다. 두 adapter의 관찰은 `completeness=observed`이며 모든 파일·도구·환경·시간·외부 입력의 완전성 증명을 대신하지 않는다. 임의의 외부 파일 변경 watcher나 모든 변경의 자동 복구까지 구현한 것은 아니다.
 
 `integrationValidators`에 일곱 차원의 검증기를 등록한 program은 최초 계획과 regional replacement에서 leaf membership의 검증 경계를 자동 등록한다. 현재 attempt의 실제 semantic observations가 모이면 behavior/interface/data/temporal/error-propagation/resource-contention/semantic 의무를 각각 생성한다. 정확한 boundary version·observation tuple에 고정하며 하나라도 실패하면 요청 완료를 막는다. 새 경계 버전의 의무가 이전 실패 이력을 명시적으로 대체하며 기록은 삭제하지 않는다. 통합 정책이 없는 기존 프로그램에 임의의 검증 명령을 주입하지 않는다. 성공 receipt가 있어도 의무의 입력 근거가 만료되면 satisfied로 재사용하지 않는다.
@@ -76,7 +78,7 @@ native 검증은 macOS seatbelt 안에서 실행한다. 작업 공간과 명시�
 
 ## 검증 근거
 
-- `npm run check`: TypeScript 검사와 전체 407개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
+- `npm run check`: TypeScript 검사와 전체 408개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
 - `test/policy-regression.test.ts`: 실제 격리 검증기와 합성 grant 결과로 회귀 rollback, 회귀 미관측, malformed/명령 실패/실행 오류/출력 잘림의 unknown 처리, head 교체 및 원복 뒤 stale 차단, 재시작, synthetic 표본 제외의 10개 경로를 확인했다. 진행 중 허가 보존·sample 한도·중복 event 방지도 확인했다. 실제 모델 요청은 없다.
 - 추가 통합 검증: 실제 native 파일 관찰·채택 전 freshness 검사·이전 소비 task 무효화, 인증된 Pod 읽기 보고, program의 실제 7차원 통합 검증, finite search의 40개 전수 oracle 비교, 실제 후보 validator→replanner 경로 및 unknown 차단, host 완료 결과의 비용 귀속·멱등성을 확인했다. 새 Pod 읽기 보고는 로컬 HTTP/gateway 테스트이며 기존 kind 영수증을 새 이미지 검증으로 재사용하지 않는다.
 - `scripts/smoke-granted-validation.ts`: 실제 로컬 `kind-task-agent-local`에서 별도 namespace/PVC/Pod를 생성해 검증했다. 읽기 전용 결과·인증 제외·상속되는 네트워크 차단·같은 image ID·snapshot 유지·실제 semantic receipt를 확인했다. 봉인된 합성 모델 결과와 실제 Pod 검증 영수증을 합쳐 controller의 verified 전이까지 통과했다. 외부 모델 호출 0회이며 임시 namespace 정리도 확인했다. 결과는 `kubernetes-grant-validation.json`에 보존한다.
@@ -164,7 +166,7 @@ L1의 허가는 유효한 preflight receipt에 묶이며 모델 도구와 모델
 
 검증은 실제 파일이 이미 만족된 경우, 값 불일치·누락, receipt 수명 초과, worker 모델 예산 부족, 근거 철회, 사전 검증 후 파일 변경, 검증 대기 중 재시작을 포함한다. 이 구현은 임의의 쓰기 작업을 실행하는 solver나 모든 판단의 정적 해결을 제공하지 않는다. 등록 프로그램의 preflight 적용이 필요하며, 아직 적용하지 않은 운영 프로그램을 자동 변경하지 않는다.
 
-최신 검증: 타입 검사와 전체 407개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 397개 테스트를 통과한 시점의 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
+최신 검증: 타입 검사와 전체 408개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 397개 테스트를 통과한 시점의 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
 
 ## 검증 중 초안 대체와 native 계획 입력 복구
 
@@ -194,7 +196,7 @@ scoped revision의 저장과 최종 활성화는 실제 등록 검증 작업, �
 
 중단 대기 중 연속 변경은 다음 episode의 현재 원인으로 병합한다. 원래 요청·기대치·이미 사용한 모델 예산·repair 횟수는 유지하며 quota 소진 시 미해결 상태를 유지한다. DB 재시작, 폐기 트랜잭션의 강제 실패와 rollback, 중복 폐기, 종료 확인 전 발급 차단, 폐기된 revision의 재승인 차단, 새 revision 실행과 최종 완료를 검증했다. 독립 region 병렬 처리는 이 경로에 아직 연결되지 않았다.
 
-최신 전체 검사 407개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 이 변경 이후 kind 검증은 다시 실행하지 않았으며, `kubernetes-grant-validation.json`은 기록된 이전 source hash의 결과다.
+최신 전체 검사 408개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 이 변경 이후 kind 검증은 다시 실행하지 않았으며, `kubernetes-grant-validation.json`은 기록된 이전 source hash의 결과다.
 
 ## 검증된 경계 보존과 keep/switch 판단
 
@@ -212,7 +214,7 @@ region 후보 검증기는 같은 `costUnit`으로 planning·reasoning·context�
 
 1. 파일 gateway 밖의 실제 코드·도구·환경 입력 관찰과 완전성 증거, Pod source lineage와 모든 외부 입력 유형의 관찰·복구를 연결하고 legacy 전체 snapshot/스캔을 대체해야 한다. 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
 2. 실제 boundary 보존 증거를 활용한 보수적 영역 축소와 불확실성 포함 keep/switch 판단은 연결했다. finite 후보·등록 검증기의 feasibility/공통 단위 비용·최적성 gap 경로도 연결했으나 비용 모델의 실제 성능 calibration은 남아 있다. 독립 region의 병렬 복구는 남아 있다. 승인 전이 중 episode 병합은 미활성 revision 폐기와 source/head 분리로 연결했다. 질문 대기 중 입력 변경 병합은 연결했다. 등록 decision의 증거 기반 무효화와 유효 가정·결정의 대체 task 바인딩 보존은 연결했다. native 관찰 입력 및 등록 가정의 유효성 손실, 진행 중 repair의 최신 원인 교체는 연결했다.
-3. activation additional-trigger의 historical/shadow 비교는 연결했으나, 모든 13개 정책 target의 실행 적용, 외부 입력·쓰기 작업의 attribution 및 paired holdout 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory/routine의 실제 graph mutation과 역할 lifecycle 학습은 아직 전체 실행 루프에 연결되지 않았다.
+3. activation additional-trigger의 historical/shadow 비교와 gateway 파일 쓰기의 실제 attribution은 연결했으나, 모든 13개 정책 target의 실행 적용, 파일 밖 외부 입력의 attribution 및 observed paired holdout 운영 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory/routine의 실제 graph mutation과 역할 lifecycle 학습은 아직 전체 실행 루프에 연결되지 않았다.
 4. 기존 운영 데이터/worker의 전면 이관, 권한 변경 reply 재개, quota 증액의 정책 변경 경로, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
 
 `implementation-status.json`의 endToEndVerified는 위 전체 수용 조건을 기준으로 유지한다. 단위 함수나 새 경로 일부의 테스트 통과만으로 원문 요구 전체를 완료 처리하지 않는다.

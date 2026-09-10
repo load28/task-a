@@ -52,6 +52,8 @@ export class FileObservations {
       CREATE TABLE IF NOT EXISTS observed_file_heads(id TEXT PRIMARY KEY,version INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS observed_file_reads(grant_id TEXT NOT NULL,call_id TEXT NOT NULL,file_id TEXT NOT NULL,version INTEGER NOT NULL,evidence TEXT NOT NULL,PRIMARY KEY(grant_id,call_id));
       CREATE INDEX IF NOT EXISTS observed_file_consumers ON observed_file_reads(file_id,grant_id);
+      CREATE TABLE IF NOT EXISTS observed_file_writes(grant_id TEXT NOT NULL,call_id TEXT NOT NULL,file_id TEXT NOT NULL,before_version INTEGER,version INTEGER NOT NULL,evidence TEXT NOT NULL,PRIMARY KEY(grant_id,call_id));
+      CREATE INDEX IF NOT EXISTS observed_file_producers ON observed_file_writes(file_id,grant_id);
       CREATE TABLE IF NOT EXISTS observed_file_scan_cursors(workspace TEXT PRIMARY KEY,last_id TEXT NOT NULL);
       CREATE TRIGGER IF NOT EXISTS observed_file_immutable_update BEFORE UPDATE ON observed_file_versions BEGIN SELECT RAISE(ABORT,'Immutable file observation'); END;
       CREATE TRIGGER IF NOT EXISTS observed_file_immutable_delete BEFORE DELETE ON observed_file_versions BEGIN SELECT RAISE(ABORT,'Immutable file observation'); END;`)
@@ -82,6 +84,48 @@ export class FileObservations {
       db.prepare("INSERT INTO observed_file_reads VALUES(?,?,?,?,?)").run(grant.id,callId,id,version,canonical(proof))
       this.store.event({id:proof.id,type:"FileReadObserved",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId:grant.id,input,evidence:proof}})
       return input
+    })
+  }
+  /** Record the exact CAS transition performed by the granted gateway. The
+   * output edge is published only after the grant result itself is accepted. */
+  write(grant:ActivationGrant,workspace:string,path:string,beforeHash:string|null,afterHash:string,callId:string,adapter:"native"|"pod"="native"):DependencyVersion {
+    if(adapter==="native")workspace=realpathSync(workspace)
+    return this.store.atomic(()=>{
+      const db=this.store.db,id=`file:${digest({workspace,path})}`
+      if(db.prepare("SELECT state FROM activation_grants WHERE id=?").get(grant.id)?.state!=="claimed")throw new Error("File write observation requires a live claimed grant")
+      const repeated=db.prepare("SELECT file_id,version,evidence FROM observed_file_writes WHERE grant_id=? AND call_id=?").get(grant.id,callId)
+      if(repeated) {
+        const value=JSON.parse(String(db.prepare("SELECT payload FROM observed_file_versions WHERE id=? AND version=?").get(String(repeated.file_id),Number(repeated.version))!.payload))
+        if(repeated.file_id!==id||value.hash!==afterHash)throw new Error("File write identity conflict")
+        return {entityId:id,port:"content",view:"utf8-exact",version:Number(repeated.version),hash:afterHash}
+      }
+      let head=Number(db.prepare("SELECT version FROM observed_file_heads WHERE id=?").get(id)?.version??0)
+      let current=head?JSON.parse(String(db.prepare("SELECT payload FROM observed_file_versions WHERE id=? AND version=?").get(id,head)!.payload)) as {hash:string}:undefined
+      let beforeVersion:number|null=null
+      if(beforeHash!==null) {
+        if(current?.hash!==beforeHash) {
+          head++
+          db.prepare("INSERT INTO observed_file_versions VALUES(?,?,?)").run(id,head,canonical({id,version:head,workspace,path,hash:beforeHash,status:"observed",observedAt:Date.now(),source:"gateway-write-cas"}))
+          db.prepare("INSERT INTO observed_file_heads VALUES(?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version").run(id,head)
+          current={hash:beforeHash}
+        }
+        beforeVersion=head
+      } else if(current)throw new Error("Created file write conflicts with an observed existing file")
+      let version=head,changedValue:{id:string;version:number;workspace:string;path:string;hash:string;status:string;observedAt:number;source:string}|undefined
+      if(current?.hash!==afterHash) {
+        version=head+1
+        const value={id,version,workspace,path,hash:afterHash,status:"observed",observedAt:Date.now(),source:"granted-write"}
+        db.prepare("INSERT INTO observed_file_versions VALUES(?,?,?)").run(id,version,canonical(value))
+        db.prepare("INSERT INTO observed_file_heads VALUES(?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version").run(id,version)
+        changedValue=value
+      }
+      const output:DependencyVersion={entityId:id,port:"content",view:"utf8-exact",version,hash:afterHash}
+      const content={grantId:grant.id,callId,taskId:grant.taskId,workspace,path,before:beforeVersion===null?null:{version:beforeVersion,hash:beforeHash},after:output,coverage:"one granted atomic file replacement"}
+      const proof=new EvidenceStore(this.store).put({id:`file-write:${digest({grant:grant.id,callId})}`,version:1,type:"runtime",source:`${adapter} cognitive gateway`,producer:"file-observations",validatorVersion:"exact-file-write/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[output],confidence:1,expiresAt:null})
+      db.prepare("INSERT INTO observed_file_writes VALUES(?,?,?,?,?,?)").run(grant.id,callId,id,beforeVersion,version,canonical(proof))
+      if(changedValue)this.store.event({id:`file-observation:${id}:${version}`,type:"FileVersionObserved",entityId:id,correlationId:grant.taskId,schemaVersion:1,timestamp:changedValue.observedAt,payload:{before:current??null,after:changedValue,producerGrantId:grant.id,evidence:proof,completeness:"observed"}})
+      this.store.event({id:proof.id,type:"FileWriteObserved",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId:grant.id,input:output,evidence:proof}})
+      return output
     })
   }
   assertObservedReadsCurrent(grantId:string):void {
@@ -153,17 +197,17 @@ export class FileObservations {
   ingest():number {
     return this.store.consume("file-read-projection/v2","accepted-read-and-planner-binding/v2",event=>{
       if(event.type==="FileVersionObserved"&&(this.invalidated||this.cognitionInvalidated)) {
-        const change=event.payload as {before:unknown;after:{id:string;version:number;hash:string};evidence?:VersionRef}
+        const change=event.payload as {before:unknown;after:{id:string;version:number;hash:string};evidence?:VersionRef;producerGrantId?:string}
         if(!change.before)return
         const latest=change.after
         if(this.store.db.prepare("SELECT version FROM observed_file_heads WHERE id=?").get(latest.id)?.version!==latest.version)return
-        if(this.cognitionInvalidated)for(const row of this.store.db.prepare("SELECT g.id,min(r.evidence) AS evidence FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version JOIN activation_grants g ON g.id=r.grant_id WHERE r.file_id=? AND g.state IN ('claimed','completed') AND json_extract(g.payload,'$.executionMode')='cognition' AND json_extract(v.payload,'$.hash')<>? GROUP BY g.id").all(latest.id,latest.hash)) {
+        if(this.cognitionInvalidated)for(const row of this.store.db.prepare("SELECT g.id,min(r.evidence) AS evidence FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version JOIN activation_grants g ON g.id=r.grant_id WHERE r.file_id=? AND g.state IN ('claimed','completed') AND json_extract(g.payload,'$.executionMode')='cognition' AND json_extract(v.payload,'$.hash')<>? AND g.id<>coalesce(?, '') GROUP BY g.id").all(latest.id,latest.hash,change.producerGrantId??null)) {
           const fresh=this.store.db.prepare("SELECT evidence FROM observed_file_reads WHERE file_id=? AND version=? ORDER BY rowid DESC LIMIT 1").get(latest.id,latest.version)
           const proof=change.evidence??(fresh?JSON.parse(String(fresh.evidence)) as VersionRef:undefined)
           if(proof)this.cognitionInvalidated(String(row.id),{entityId:latest.id,port:"content",view:"utf8-exact",version:latest.version,hash:latest.hash},[JSON.parse(String(row.evidence)),proof],event.id)
         }
         if(!this.invalidated)return
-        const rows=this.store.db.prepare("SELECT g.task_id,g.payload AS grant_payload,r.evidence FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version JOIN activation_grants g ON g.id=r.grant_id WHERE r.file_id=? AND g.state='completed' AND json_extract(g.payload,'$.executionMode')='task' AND json_extract(v.payload,'$.hash')<>?").all(latest.id,latest.hash)
+        const rows=this.store.db.prepare("SELECT g.id,g.task_id,g.payload AS grant_payload,r.evidence FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version JOIN activation_grants g ON g.id=r.grant_id WHERE r.file_id=? AND g.state='completed' AND json_extract(g.payload,'$.executionMode')='task' AND json_extract(v.payload,'$.hash')<>? AND g.id<>coalesce(?, '')").all(latest.id,latest.hash,change.producerGrantId??null)
         const seen=new Set<string>()
         for(const row of rows) {
           const taskId=String(row.task_id),grant=JSON.parse(String(row.grant_payload)) as ActivationGrant
@@ -192,6 +236,12 @@ export class FileObservations {
         const previous=graph.outgoing(fileId).find(edge=>edge.id===id),evidence=JSON.parse(String(row.evidence))
         if(previous?.evidence.some(ref=>ref.id===evidence.id))continue
         graph.put({id,version:(previous?.version??0)+1,source:{entityId:fileId,port:"content",view:"utf8-exact"},target:{entityId:target.taskId,port:"inputs",view:"gateway-file-reads"},relation:"depends_on",changeTypes:["syntactic","implementation","behavior","contract","dependency"],impactWeight:1,critical:true,observedPropagationRate:{successes:0,trials:0,estimate:1,modelVersion:"unmeasured-conservative/v1"},evidence:[...(previous?.evidence??[]),evidence],completeness:"observed"},previous?.version??0)
+      }
+      for(const row of db.prepare("SELECT * FROM observed_file_writes WHERE grant_id=? ORDER BY file_id,version,call_id").all(grantId)) {
+        const fileId=String(row.file_id),id=digest({taskId:target.taskId,fileId,relation:"generated_from",view:"utf8-exact"}),evidence=JSON.parse(String(row.evidence)) as VersionRef
+        const previous=graph.outgoing(target.taskId).find(edge=>edge.id===id)
+        if(previous?.evidence.some(ref=>ref.id===evidence.id&&ref.version===evidence.version))continue
+        graph.put({id,version:(previous?.version??0)+1,source:{entityId:target.taskId,port:"outputs",view:"gateway-file-writes"},target:{entityId:fileId,port:"content",view:"utf8-exact"},relation:"generated_from",changeTypes:["syntactic","implementation","behavior","contract","dependency"],impactWeight:1,critical:true,observedPropagationRate:{successes:0,trials:0,estimate:1,modelVersion:"unmeasured-conservative/v1"},evidence:[...(previous?.evidence??[]),evidence],completeness:"observed"},previous?.version??0)
       }
     },1000)
   }

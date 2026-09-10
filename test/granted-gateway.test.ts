@@ -77,11 +77,38 @@ test("파일 교체는 실제 reservation과 CAS를 강제하고 재전송은 �
     assert.equal(readFileSync(join(f.workspace,"a.txt"),"utf8"),"after")
     assert.deepEqual(f.gateway.execute("cognitive_write",request.args),result)
     assert.equal(f.r.store.db.prepare("SELECT count(*) AS n FROM event_outbox WHERE type='CognitiveFileWritten'").get()!.n,1)
+    assert.equal(f.r.store.db.prepare("SELECT count(*) AS n FROM observed_file_writes").get()!.n,1)
+    const write=JSON.parse(String(f.r.store.db.prepare("SELECT evidence FROM observed_file_writes").get()!.evidence))
+    const proof=f.r.control.evidence.require(write)
+    assert.equal((proof.content as {before:{hash:string};after:{hash:string}}).before.hash,digest("before"))
+    assert.equal((proof.content as {before:{hash:string};after:{hash:string}}).after.hash,digest("after"))
     const stale={args:{path:"a.txt",content:"new",previousHash:digest("before")} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_write",callID:"stale"},stale)
     assert.throws(()=>f.gateway.execute("cognitive_write",stale.args),/changed since/)
     assert.equal(readFileSync(join(f.workspace,"a.txt"),"utf8"),"after")
   } finally {f.close()}
+})
+
+test("채택된 granted write만 task→파일 causal lineage를 만들고 다른 소비자에게 전파한다",async()=>{
+  const f=setup()
+  try {
+    const hooks=grantHooks(f.authority),read={args:{path:"a.txt"} as Record<string,unknown>}
+    await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"write-source-read"},read)
+    f.gateway.execute("cognitive_read",read.args)
+    const write={args:{path:"a.txt",content:"owned output",previousHash:digest("before")} as Record<string,unknown>}
+    await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_write",callID:"attributed-write"},write)
+    f.gateway.execute("cognitive_write",write.args)
+    assert.equal(f.r.engine.requireTask(f.task.id).status,"running")
+    assert.equal(f.r.control.graph.outgoing(f.task.id).filter(edge=>edge.relation==="generated_from").length,0)
+    f.r.control.admission.submit(f.grant.id,f.worker,{taskId:f.task.id,findings:[],decisions:[],risks:[],unresolvedQuestions:[],evidence:[],proposedTasks:[],confidence:1,requiresEscalation:false},{inputTokens:1,outputTokens:1,toolCalls:2,elapsedMs:1})
+    const edges=f.r.control.graph.outgoing(f.task.id).filter(edge=>edge.relation==="generated_from")
+    assert.equal(edges.length,1)
+    assert.equal(edges[0]!.target.port,"content")
+    assert.equal(edges[0]!.completeness,"observed")
+    assert.equal(f.r.control.evidence.require(edges[0]!.evidence[0]!).validatorVersion,"exact-file-write/v1")
+    for(let i=0;i<3;i++)f.r.engine.atomic(()=>f.r.control.files.ingest())
+    assert.equal(f.r.control.graph.outgoing(f.task.id).filter(edge=>edge.relation==="generated_from").length,1)
+  }finally{f.close()}
 })
 
 test("메시지·시스템·도구 정의의 합산 예산과 이전 호출의 사용량 영수증을 강제한다",async()=>{
