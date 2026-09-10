@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite"
 import { resolve } from "node:path"
+import { createHash } from "node:crypto"
 import { TaskGraphStore } from "#task-store"
 import { TaskGraphEngine } from "#task-engine"
 
@@ -22,21 +23,33 @@ export function importLegacy(source: string, target: string, workspace: string):
     )
     store.db
       .exec(`CREATE TABLE IF NOT EXISTS legacy_imports(source TEXT NOT NULL,old_id TEXT NOT NULL,new_id TEXT NOT NULL,PRIMARY KEY(source,old_id));
-      CREATE TABLE IF NOT EXISTS legacy_records(source TEXT NOT NULL,table_name TEXT NOT NULL,record_key TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,table_name,record_key));`)
+      CREATE TABLE IF NOT EXISTS legacy_records(source TEXT NOT NULL,table_name TEXT NOT NULL,record_key TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,table_name,record_key));
+      CREATE TABLE IF NOT EXISTS legacy_migration_audits(source TEXT PRIMARY KEY,source_hash TEXT NOT NULL,payload TEXT NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS legacy_records_update BEFORE UPDATE ON legacy_records BEGIN SELECT RAISE(ABORT,'Immutable legacy record'); END;
+      CREATE TRIGGER IF NOT EXISTS legacy_records_delete BEFORE DELETE ON legacy_records BEGIN SELECT RAISE(ABORT,'Immutable legacy record'); END;
+      CREATE TRIGGER IF NOT EXISTS legacy_migration_audit_update BEFORE UPDATE ON legacy_migration_audits BEGIN SELECT RAISE(ABORT,'Immutable migration audit'); END;
+      CREATE TRIGGER IF NOT EXISTS legacy_migration_audit_delete BEFORE DELETE ON legacy_migration_audits BEGIN SELECT RAISE(ABORT,'Immutable migration audit'); END;`)
     const sourceKey = resolve(source)
     const tasks = old.prepare("SELECT * FROM tasks").all()
     return store.transaction(() => {
-      const tables = old.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()
+      const tables = old.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
+      const tableCounts: Record<string, number> = {}
+      const hash = createHash("sha256")
       for (const table of tables) {
         const name = String(table.name)
         if (!/^[a-z_]+$/.test(name)) throw new Error("Unexpected legacy table name")
-        const rows = old.prepare(`SELECT * FROM "${name}"`).all()
-        rows.forEach((row, index) =>
-          store!.db
-            .prepare("INSERT OR IGNORE INTO legacy_records VALUES(?,?,?,?)")
-            .run(sourceKey, name, String(row.id ?? row.task_id ?? index), JSON.stringify(row)),
-        )
+        const rows = old.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()
+        tableCounts[name] = rows.length
+        rows.forEach((row, index) => {
+          const payload=JSON.stringify(row),key=String(row.id ?? `${row.task_id ?? "row"}:${index}`)
+          hash.update(JSON.stringify([name,key,payload]))
+          const prior=store!.db.prepare("SELECT payload FROM legacy_records WHERE source=? AND table_name=? AND record_key=?").get(sourceKey,name,key)
+          if(prior&&String(prior.payload)!==payload)throw new Error("Legacy source changed after an earlier import")
+          store!.db.prepare("INSERT OR IGNORE INTO legacy_records VALUES(?,?,?,?)").run(sourceKey,name,key,payload)
+        })
       }
+      const sourceHash=hash.digest("hex"),priorAudit=store!.db.prepare("SELECT source_hash FROM legacy_migration_audits WHERE source=?").get(sourceKey)
+      if(priorAudit&&String(priorAudit.source_hash)!==sourceHash)throw new Error("Legacy source changed after an earlier import")
       if (tables.some((t) => t.name === "service_owner")) {
         const owner = old.prepare("SELECT issuer,subject FROM service_owner WHERE id=1").get()
         if (owner) store!.bindOwner(String(owner.issuer), String(owner.subject))
@@ -90,6 +103,8 @@ export function importLegacy(source: string, target: string, workspace: string):
         }
         if (!progress) throw new Error("Legacy parent graph has missing parents or a cycle; import rolled back")
       }
+      const audit={source:sourceKey,sourceHash,tableCounts,totalRecords:Object.values(tableCounts).reduce((sum,count)=>sum+count,0),tasks:tasks.length,dependencyCompleteness:"unknown",contractCompleteness:"unknown",cognitionEvidence:"not synthesized",policyEvidence:"not synthesized"}
+      store!.db.prepare("INSERT OR IGNORE INTO legacy_migration_audits VALUES(?,?,?)").run(sourceKey,sourceHash,JSON.stringify(audit))
       return { imported, total: tasks.length }
     })
   } finally {

@@ -25,6 +25,7 @@ import { FileObservations } from "./file-observations.ts"
 import { RoleRouter } from "./role-router.ts"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 import { RoutineRegistry } from "./routines.ts"
+import { PlanMemory } from "./plan-memory.ts"
 import { digest } from "./value.ts"
 import type { SystemEvent } from "./store.ts"
 import { randomUUID } from "node:crypto"
@@ -41,6 +42,7 @@ export class ControlRuntime {
   readonly admission:Admission
   readonly roleLifecycle:RoleRegistry
   readonly routines:RoutineRegistry
+  readonly planMemory:PlanMemory
   readonly assumptions:AssumptionLedger
   readonly decisions:DecisionLedger
   readonly validators:ValidatorRegistry
@@ -70,6 +72,7 @@ export class ControlRuntime {
     this.replanning=new ScopedReplanning(engine)
     this.inputs=new ObservedInputs(this)
     this.routines=new RoutineRegistry(this)
+    this.planMemory=new PlanMemory(this)
     this.requests=new RequestController(this)
     this.roles=new RoleRouter(this)
     this.files=new FileObservations(this.store,(taskId,input,evidence)=>{
@@ -122,6 +125,7 @@ export class ControlRuntime {
       while(this.assumptions.ingest()===1000){ /* independent proposition validation and source invalidation */ }
       while(this.decisions.ingest()===1000){ /* validated decisions retain their source and assumption lineage */ }
       while(this.memory.ingest()===1000){ /* retract only records that consumed the invalidated reference */ }
+      while(this.planMemory.ingest()===1000){ /* append typed plan-node execution lineage */ }
     })
   }
   get store(){return this.engine.store.control}

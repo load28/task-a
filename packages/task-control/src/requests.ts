@@ -124,7 +124,7 @@ export class RequestController {
       if(!role||!this.runtime.roleLifecycle.executable(entry.role,ref=>this.runtime.evidence.valid(ref))||role.allowedTools.some(tool=>!allowedTools.has(tool)))throw new Error("Request role exceeds the cognitive gateway or lacks lifecycle certification")
       if(program.specialists?.includes(entry)&&(role.allowedTools.includes("task_graph_cognitive_write")||!role.validators.length))throw new Error("Specialists require read-only capabilities and independent result validators")
     }
-    for(const entry of [program.planner,...(program.specialists??[]),...(program.replanner?[program.replanner]:[])])if(entry.profile.level===5)throw new Error("L5 execution currently requires the worker adversarial protocol")
+    if((program.specialists??[]).some(entry=>entry.profile.level===5))throw new Error("Independent L5 reviewer roles cannot recursively require L5")
     const workerProfiles=[program.worker.profile,...(program.workerPrecision?.profiles??[])]
     if(program.workerPrecision) {
       const {profiles,failureThresholds}=program.workerPrecision
@@ -137,7 +137,8 @@ export class RequestController {
       }
       for(const profile of profiles){validateProfile(profile);if(profile.level<2)throw new Error("Adaptive worker execution needs a supported model profile")}
     }
-    if(workerProfiles.some(profile=>profile.level===5&&(!program.adversarialValidator||profile.independentRoles.some(id=>!program.specialists?.some(entry=>entry.role.id===id&&entry.profile.level<5)))))throw new Error("L5 requires separately registered read-only reviewers and a joint validator")
+    const l5Profiles=[program.planner.profile,program.worker.profile,...(program.replanner?[program.replanner.profile]:[]),...(program.workerPrecision?.profiles??[])].filter(profile=>profile.level===5)
+    if(l5Profiles.some(profile=>!program.adversarialValidator||profile.independentRoles.some(id=>!program.specialists?.some(entry=>entry.role.id===id&&entry.profile.level<5))))throw new Error("L5 requires separately registered read-only reviewers and a joint validator")
     if(program.integrationValidators&&INTEGRATION_DIMENSIONS.some(dimension=>!program.integrationValidators![dimension]))throw new Error("Integration policy requires all seven dimensions")
     for(const validator of [...(program.adversarialValidator?[program.adversarialValidator]:[]),...(program.replanner?.selection?[program.replanner.selection.validator]:[]),...Object.values(program.integrationValidators??{}),...program.planValidators,...program.observationValidators,...(program.replanner?.validators??[]),...(program.specialists??[]).flatMap(entry=>this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!.validators)]) {
       const match=/^([a-z][a-z0-9-]*)\/v([1-9][0-9]*)$/.exec(validator)
@@ -286,6 +287,11 @@ export class RequestController {
       if(state==="fenced")throw new Error("Planning grant was fenced; automatic model retry is prohibited")
       if(row?.state!=="completed")return
       this.assertPlannerInputsCurrent(request)
+      if(JSON.parse(String(this.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)!.payload)).profile.level===5) {
+        const review=this.runtime.adversarial.status(request.plannerGrant!)
+        if(review==="failed")throw new Error("Planner L5 adversarial review failed")
+        if(review!=="satisfied")return
+      }
       const output=JSON.parse(String(row.payload)).output as AgentOutput
       if(output.requiresEscalation) {
         this.permissions.ask(request,program,output)

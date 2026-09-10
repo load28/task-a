@@ -172,6 +172,12 @@ export class RegionalRepairs {
         if(state==="fenced")throw new Error("Regional cognition grant was fenced; no blind retry")
         if(state!=="completed")return
         if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()&&db.prepare("SELECT state FROM grant_dispatches WHERE grant_id=?").get(grantId)?.state!=="completed")return
+        const completedGrant=JSON.parse(String(db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grantId)!.payload)) as import("../../task-cognition/src/model.ts").ActivationGrant
+        if(completedGrant.profile.level===5) {
+          const review=runtime.adversarial.status(grantId)
+          if(review==="failed")throw new Error("Regional planner L5 adversarial review failed")
+          if(review!=="satisfied")return
+        }
         const output=JSON.parse(String(db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grantId)!.payload)).output as AgentOutput
         if(output.unresolvedQuestions.length) {
           runtime.replanning.assertCurrent(repair.lease.id)

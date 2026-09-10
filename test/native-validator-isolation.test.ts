@@ -1,10 +1,33 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync } from "node:fs"
+import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,realpathSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createGraphRuntime } from "../apps/task-agent/src/graph-runtime.ts"
 import { executeValidator } from "../packages/task-evidence/src/validators.ts"
+import { linuxBubblewrap } from "../packages/task-evidence/src/native-sandbox.ts"
+
+test("Linux native 검증기는 전체 host root 없이 bubblewrap 격리 명령을 구성한다",()=>{
+  const directory=mkdtempSync(join(tmpdir(),"linux-isolation-contract-")),workspace=join(directory,"workspace")
+  mkdirSync(workspace)
+  const sandbox=linuxBubblewrap([process.execPath,"-e","process.exit(0)"],workspace,workspace,{},[],"/usr/bin/bwrap")
+  try {
+    assert.equal(sandbox.receipt.kind,"linux-bubblewrap")
+    assert.ok(sandbox.command.includes("--unshare-all"))
+    assert.ok(sandbox.command.includes("--die-with-parent"))
+    const mountedWorkspace=realpathSync(workspace)
+    assert.ok(sandbox.command.some((value,index)=>value==="--ro-bind"&&sandbox.command[index+1]===mountedWorkspace&&sandbox.command[index+2]===mountedWorkspace))
+    assert.equal(sandbox.command.some((value,index)=>value==="--ro-bind"&&sandbox.command[index+1]==="/"),false)
+    assert.equal(sandbox.environment.HOME,undefined)
+  }finally{sandbox.close();rmSync(directory,{recursive:true,force:true})}
+})
+
+test("Linux native 검증기는 작업공간 밖 cwd를 격리 명령에 넣지 않는다",()=>{
+  const directory=mkdtempSync(join(tmpdir(),"linux-isolation-cwd-")),workspace=join(directory,"workspace"),outside=join(directory,"outside")
+  mkdirSync(workspace);mkdirSync(outside)
+  try {assert.throws(()=>linuxBubblewrap([process.execPath,"-e","process.exit(0)"],workspace,outside,{},[],"/usr/bin/bwrap"),/cwd must stay inside/)}
+  finally{rmSync(directory,{recursive:true,force:true})}
+})
 
 test("native 검증기는 외부 파일·네트워크·쓰기·분리된 자식 프로세스를 차단한다",async()=>{
   const directory=mkdtempSync(join(tmpdir(),"native-isolation-test-")),workspace=join(directory,"workspace"),secret=join(directory,"private-credential"),r=createGraphRuntime(":memory:")

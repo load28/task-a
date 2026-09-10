@@ -16,7 +16,7 @@ for(const mode of ["regressed","unchanged","malformed","failed","stale","aba","r
   try {
     const content={condition:"A result containing the risk 'regression' violates the registered invariant"}
     const authorization=r.control.evidence.put({id:"operator",version:1,type:"code",source:"test controller",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content,contentHash:digest(content),confidence:1,inputVector:[],expiresAt:null})
-    const proposal:PolicyProposal={id:"learned",version:1,target:"activation",observedPattern:"관측 결과",rootCause:"호출 정책",proposedInvariant:"위험 보존",proposedRule:{op:"gte",feature:"risk",value:.5},expectedBenefit:1,regressionRisk:.1,evidence:[authorization],counterexamples:[],rollback:{id:"learned",version:1}}
+    const proposal:PolicyProposal={id:"learned",version:1,target:"activation",observedPattern:"관측 결과",rootCause:"호출 정책",proposedInvariant:"위험 보존",proposedRule:{op:"gte",feature:"risk",value:.5},expectedBenefit:1,regressionRisk:.1,evidence:[authorization],supportingCases:[authorization],counterexamples:[],structuralAbstraction:"risk band",holdoutCriteria:["independent episode"],rollbackCondition:"quality regression",rollback:{id:"learned",version:1}}
     r.store.control.put("policy_versions",proposal.id,1,proposal)
     r.store.control.put("policy_versions",proposal.id,2,{...proposal,version:2})
     r.store.db.prepare("INSERT INTO policy_heads VALUES('activation','learned',2)").run()

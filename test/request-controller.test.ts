@@ -73,6 +73,13 @@ test("요청 해석→실제 계획 validator→worker grant→파일 검증→�
       assert.equal(outcome.sampleType,"synthetic")
       assert.equal(outcome.quality.usefulActivations,null)
       assert.equal(outcome.quality.missedFailures,null)
+      const requestId=String(measured.store.db.prepare("SELECT id FROM control_requests").get()!.id),request=measured.control.requests.get(requestId)!,taskId=measured.control.requests.tasks(requestId)[0]!,memory=measured.control.planMemory.current(request.planId!,1,"write")!
+      assert.equal(memory.taskId,taskId)
+      assert.equal(memory.status,"verified")
+      assert.deepEqual(memory.expected,{id:taskId,version:1})
+      assert.ok(memory.actual)
+      assert.deepEqual(memory.error,memory.actual)
+      assert.ok(measured.control.planMemory.history(request.planId!,1,"write").length>=2)
       const planner=JSON.parse(String(measured.store.db.prepare("SELECT payload FROM activation_grants WHERE json_extract(payload,'$.executionMode')='cognition'").get()!.payload)) as ActivationGrant
       const planObligation=JSON.parse(String(measured.store.db.prepare("SELECT payload FROM validation_obligations WHERE json_extract(payload,'$.kind')='request-plan'").get()!.payload))
       assert.ok(planObligation.reason.some((ref:any)=>ref.id===planner.inputBoundary!.evidence.id&&ref.version===planner.inputBoundary!.evidence.version))
@@ -107,7 +114,7 @@ test("실제 의미 실패는 필요한 QA만 깨우며 quota와 결과 검증 �
     const baseline=install(r),base=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
     r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const chunk of process.stdin)value+=chunk;const data=JSON.parse(value);if(!data.evidence[0].content.output.findings.includes('file mismatch confirmed'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
     for(const [id,hard] of [["qa",true],["architect",false]] as const)r.control.roleLifecycle.installConfigured({...base,id,validators:["review/v1"],activationPolicy:{...base.activationPolicy,hardTriggers:hard?["failure"]:[],softSignals:hard?{}:{architectureViolation:1}}},"request specialist fixture")
-    new PolicyLearning(r.store.control).propose({id:"architect-trigger",version:1,target:"activation",observedPattern:"실패 관찰",rootCause:"구조 검토 판단",proposedInvariant:"필수 의무 보존",proposedRule:{op:"gte",feature:"failure",value:.5},expectedBenefit:1,regressionRisk:.1,evidence:[{id:"operator",version:1}],counterexamples:[],rollback:baseline.policy},ref=>r.control.evidence.valid(ref))
+    new PolicyLearning(r.store.control).propose({id:"architect-trigger",version:1,target:"activation",observedPattern:"실패 관찰",rootCause:"구조 검토 판단",proposedInvariant:"필수 의무 보존",proposedRule:{op:"gte",feature:"failure",value:.5},expectedBenefit:1,regressionRisk:.1,evidence:[{id:"operator",version:1}],supportingCases:[{id:"operator",version:1}],counterexamples:[],structuralAbstraction:"failure signal",holdoutCriteria:["independent request"],rollbackCondition:"critical regression",rollback:baseline.policy},ref=>r.control.evidence.valid(ref))
     r.control.policyReplay.register({id:"architect-shadow",proposal:{id:"architect-trigger",version:1},role:{id:"architect",version:1},effect:"additional-trigger",split:{seed:"pre-outcome",holdoutBuckets:25}})
     r.control.policyReplay.register({id:"qa-shadow",proposal:{id:"architect-trigger",version:1},role:{id:"qa",version:1},effect:"additional-trigger",split:{seed:"pre-outcome",holdoutBuckets:25}})
     const program:ControllerProgram={...baseline,version:2,tokenLimit:66003,specialists:["qa","architect"].map(id=>({role:{id,version:1},profile:baseline.worker.profile}))}
@@ -945,6 +952,29 @@ for(const mode of ["pass","conflict","question","repair","adaptive"] as const)te
       assert.equal(decision.signals.failure,null)
       assert.ok(decision.reasons.includes("registered mandatory review"))
     }
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+test("planner의 L5 결과도 독립 검토와 합동 판정 전에는 채택하지 않는다",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"planner-adversarial-")),r=createGraphRuntime(":memory:")
+  try {
+    const base=install(r),role=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
+    r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value);if(!input.evidence[0].content.output.findings.includes('plan contract confirmed'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    r.control.validators.register({id:"joint",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value),joint=input.evidence.find(e=>e.validatorVersion==='adversarial-joint/v1').content;if(joint.reviews.length!==2||joint.reviews.some(r=>!r.output.findings.includes('plan contract confirmed')))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    for(const id of ["qa","critic"])r.control.roleLifecycle.installConfigured({...role,id,validators:["review/v1"]},"planner adversarial reviewer fixture")
+    const profile={...base.planner.profile,level:5 as const,independentRoles:["qa","critic"]}
+    const program:ControllerProgram={...base,version:2,adversarialValidator:"joint/v1",planner:{...base.planner,profile},specialists:["qa","critic"].map(id=>({role:{id,version:1},profile:base.worker.profile}))}
+    r.control.requests.register(program)
+    r.control.requests.submit({id:"planner-l5",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
+    r.control.requests.tick();const source=r.control.requests.get("planner-l5")!.plannerGrant!;accept(r,source,proposal);r.control.requests.tick()
+    assert.equal(r.control.requests.get("planner-l5")!.state,"planning")
+    const reviews=r.store.db.prepare("SELECT grant_id FROM specialist_demands WHERE json_extract(payload,'$.sourceGrant')=? ORDER BY decision_id").all(source)
+    assert.equal(reviews.length,2)
+    for(const row of reviews){assert.ok(row.grant_id,JSON.stringify({demands:r.store.db.prepare("SELECT * FROM specialist_demands").all(),events:r.store.db.prepare("SELECT type,payload FROM event_outbox WHERE type='SpecialistAdmissionDeferred'").all()}));accept(r,String(row.grant_id),[],{findings:["plan contract confirmed"]});await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000})}
+    for(let i=0;i<3;i++){await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()}
+    assert.equal(r.control.adversarial.status(source),"satisfied",JSON.stringify({review:r.store.db.prepare("SELECT * FROM adversarial_reviews").all(),demands:r.store.db.prepare("SELECT * FROM specialist_demands").all(),jobs:r.store.db.prepare("SELECT validator,state,payload FROM validation_jobs").all()}))
+    assert.equal(r.control.requests.get("planner-l5")!.state,"executing")
+    assert.equal(r.control.requests.tasks("planner-l5").length,1)
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })
 

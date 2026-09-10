@@ -48,8 +48,8 @@ export class RegionSelection {
         const output=JSON.parse(receipt.stdout)
         const estimate=output.switching,interval=(value:any)=>value&&[value.estimate,value.lower,value.upper].every(Number.isFinite)&&value.lower>=0&&value.lower<=value.estimate&&value.estimate<=value.upper
         if(![true,false,"unknown"].includes(output.feasible)||output.costUnit!==policy.costUnit||!output.reason||typeof output.costs!=="object"||!output.costs||COST_PARTS.some(part=>!Number.isFinite(output.costs[part])||output.costs[part]<0)||!estimate||typeof estimate.currentValid!=="boolean"||!interval(estimate.keep)||!interval(estimate.newFailure)||estimate.newFailure.estimate!==output.costs.expectedFailure)throw new Error("Malformed feasibility, switching estimate, or normalized cost output")
-        const calibratedParts=new Set(["planning","reasoning","context","reexecution"]),scalable=[...calibratedParts].reduce((sum,part)=>sum+output.costs[part],0),factor=calibration?.stable?calibration.factor:1
-        const cost=scalable*factor+output.costs.integration+output.costs.expectedFailure
+        const calibratedParts=new Set<string>(COST_PARTS.filter(part=>part!=="expectedFailure")),scalable=[...calibratedParts].reduce((sum,part)=>sum+output.costs[part],0),factor=calibration?.stable?calibration.factor:1
+        const cost=scalable*factor+output.costs.expectedFailure
         if(!Number.isFinite(cost))throw new Error("Nonfinite normalized cost")
         const switching={currentValid:estimate.currentValid,keep:estimate.keep,newFailure:estimate.newFailure}
         return {feasible:output.feasible,cost,evidence:[`${proof.id}@${proof.version}`],reason:output.reason,switching,costComponents:Object.fromEntries(COST_PARTS.map(part=>[part,calibratedParts.has(part)?output.costs[part]*factor:output.costs[part]])),rawCostComponents:Object.fromEntries(COST_PARTS.map(part=>[part,output.costs[part]]))} satisfies RegionEvaluation

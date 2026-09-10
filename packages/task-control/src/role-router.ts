@@ -34,7 +34,7 @@ export class RoleRouter {
         return
       }
       if(!["ValidatorFailed","PredictionObserved","AgentCompleted"].includes(event.type))return
-      const row=store.db.prepare("SELECT r.payload FROM control_requests r JOIN control_request_tasks t ON t.request_id=r.id WHERE t.task_id=? ORDER BY r.rowid DESC LIMIT 1").get(event.entityId)
+      const row=store.db.prepare("SELECT r.payload FROM control_requests r JOIN controlled_tasks t ON t.request_id=r.id WHERE t.task_id=? ORDER BY r.rowid DESC LIMIT 1").get(event.entityId)
       if(!row)return
       const request=JSON.parse(String(row.payload)) as ControlledRequest
       if(["completed","cancelled"].includes(request.state)||!request.program)return
@@ -125,13 +125,19 @@ export class RoleRouter {
         store.db.prepare("UPDATE specialist_timers SET state='fired' WHERE id=?").run(String(timer.id))
         store.event({id:String(timer.id),type:"SpecialistCooldownElapsed",entityId:taskId,correlationId:request.id,schemaVersion:1,timestamp:now,payload:{decisionId:authorization.id,dueAt:Number(timer.due_at)}})
       }
-      if(!runtime.evidence.valid(demand.proofRef)||!runtime.engine.signals.matches(taskId))return
-      const obligation=runtime.evidence.obligation(demand.obligationId)
-      if(!obligation||!runtime.evidence.applicable(obligation)||digest(obligation.tuple)!==digest(observationInputVector(runtime.engine,taskId)))return
+      if(!runtime.evidence.valid(demand.proofRef)||demand.kind!=="adversarial"&&!runtime.engine.signals.matches(taskId))return
+      const obligation=demand.obligationId?runtime.evidence.obligation(demand.obligationId):undefined
+      if(demand.kind==="adversarial") {
+        const source=store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(demand.sourceGrant)
+        const sourceGrant=source&&JSON.parse(String(source.payload)) as ActivationGrant|undefined
+        if(!sourceGrant||source.state!=="completed"||digest(sourceGrant.inputVector)!==digest(currentInputVector(runtime.engine,taskId)))return
+        if(demand.obligationId&&(!obligation||!runtime.evidence.applicable(obligation)||digest(obligation.tuple)!==digest(observationInputVector(runtime.engine,taskId))))return
+      }else if(!obligation||!runtime.evidence.applicable(obligation)||digest(obligation.tuple)!==digest(observationInputVector(runtime.engine,taskId)))return
       if(authorization.action!=="activate"&&!timer)return
-      const eligibility=activation({...authorization,eventId:timer?String(timer.id):`admission-recheck:${authorization.id}:${budget}`,role,signals:demand.signals,eligible:runtime.engine.store.executionAllowed(taskId),now,lastInvocation,invocations:previous.length,...(demand.requiredBy?{requiredBy:demand.requiredBy}:{})})
+      const eligible=demand.kind==="adversarial"||runtime.engine.store.executionAllowed(taskId)
+      const eligibility=activation({...authorization,eventId:timer?String(timer.id):`admission-recheck:${authorization.id}:${budget}`,role,signals:demand.signals,eligible,now,lastInvocation,invocations:previous.length,...(demand.requiredBy?{requiredBy:demand.requiredBy}:{})})
       if(timer||eligibility.action!=="activate") {
-        authorization=runtime.policyReplay.recordActivation({...authorization,eventId:eligibility.eventId,role,signals:demand.signals,eligible:runtime.engine.store.executionAllowed(taskId),now,lastInvocation,invocations:previous.length,...(demand.requiredBy?{requiredBy:demand.requiredBy}:{})},request.id,[demand.proofRef])
+        authorization=runtime.policyReplay.recordActivation({...authorization,eventId:eligibility.eventId,role,signals:demand.signals,eligible,now,lastInvocation,invocations:previous.length,...(demand.requiredBy?{requiredBy:demand.requiredBy}:{})},request.id,[demand.proofRef])
         demand.authorizationDecisionId=authorization.id;persist()
         this.cooldown(authorization,lastInvocation,role.activationPolicy.cooldownMs)
       }
@@ -140,7 +146,7 @@ export class RoleRouter {
         const proof=runtime.evidence.require(demand.proofRef),snapshot=runtime.engine.signals.capture(taskId),inputVector=currentInputVector(runtime.engine,taskId)
         const context=controlledContext(runtime,taskId,role,program.policy,entry.profile,[{id:proof.id,version:proof.version,kind:"evidence",content:JSON.stringify({reviewKind:demand.kind??"measured-failure",reviewInput:proof,expectation:store.get("task_expectations",taskId,store.head("task_expectations",taskId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,taskId],evidence:[demand.proofRef]}])
         store.put("context_manifests",context.id,1,context)
-        const grant=runtime.admission.issue({taskId,decisionId:authorization.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:[obligation.id],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
+        const grant=runtime.admission.issue({taskId,decisionId:authorization.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:obligation?[obligation.id]:[],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
         store.db.prepare("UPDATE specialist_demands SET state='issued',grant_id=? WHERE decision_id=?").run(grant.id,String(row.decision_id))
       })}catch(error){
         store.event({id:randomUUID(),type:"SpecialistAdmissionDeferred",entityId:taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{decisionId:String(row.decision_id),reason:error instanceof Error?error.message:"Specialist admission remains deferred"}})

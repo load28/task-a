@@ -39,14 +39,20 @@ test("완료된 지역 복구의 실제 사용량은 불변 비용 표본과 다
     const grant={id:grantId,taskId:task.id,executionMode:"cognition",role:{id:"role",version:1},policy:{id:"policy",version:1},profile:{provider:"test"}}
     runtime.store.db.prepare("INSERT INTO activation_grants VALUES(?,?,?,?,?)").run(grantId,"decision",task.id,"completed",canonical(grant))
     runtime.store.db.prepare("INSERT INTO agent_runs VALUES(?,?,?,?,?)").run("run",grantId,task.id,"completed",canonical({grant,usage:{inputTokens:100,outputTokens:50,toolCalls:1,elapsedMs:1000},output:{}}))
-    const components={planning:1,reasoning:1,context:1,reexecution:1,integration:0,interruption:0,discardedWork:0,warmSessionLoss:0,dataMigration:0,expectedFailure:0}
-    const repair={id:repairId,requestId,state:"applied",grantId,grantIds:[grantId],startedAt:now-1,selection:{region:{id:"region",nodes:[task.id]},cost:4,trace:[{id:"region",evaluation:{costComponents:components,rawCostComponents:components}}]}}
+    const components={planning:1,reasoning:1,context:1,reexecution:1,integration:1,interruption:1,discardedWork:0,warmSessionLoss:0,dataMigration:0,expectedFailure:1}
+    const repair={id:repairId,requestId,state:"applied",grantId,grantIds:[grantId],startedAt:now-1,selection:{region:{id:"region",nodes:[task.id]},cost:5,trace:[{id:"region",evaluation:{costComponents:components,rawCostComponents:components}}]}}
     runtime.store.db.prepare("INSERT INTO request_region_repairs VALUES(?,?,?,?)").run(repairId,requestId,"applied",canonical(repair))
+    runtime.control.regionCosts.record({repairId,category:"integration",amount:1,unit:"work-units",evidence:[authorization],source:"measured integration validator duration"})
     runtime.store.control.event({id:"request-completed",type:"RequestCompleted",entityId:task.id,correlationId:requestId,schemaVersion:1,timestamp:now,payload:{requestId,evidence:authorization}})
     runtime.control.regionCosts.ingest()
+    assert.equal(runtime.store.db.prepare("SELECT count(*) n FROM region_cost_calibration_samples WHERE repair_id=?").get(repairId)!.n,0)
+    runtime.control.regionCosts.record({repairId,category:"interruption",amount:1,unit:"work-units",evidence:[authorization],source:"measured stop interval"})
+    runtime.control.regionCosts.ingest()
     const row=runtime.store.db.prepare("SELECT actual,estimated,relative_error FROM region_cost_calibration_samples WHERE repair_id=?").get(repairId)!
-    assert.deepEqual({...row},{actual:4,estimated:4,relative_error:0})
-    assert.deepEqual(runtime.control.regionCosts.summary(registered.replanner.selection),{key:runtime.control.regionCosts.key(registered.replanner.selection),samples:1,stable:true,factor:1,maximumObservedRelativeError:0,reason:"observed execution costs are within the registered error bound"})
+    assert.deepEqual({...row},{actual:6,estimated:7,relative_error:1/7})
+    assert.deepEqual(runtime.control.regionCosts.summary(registered.replanner.selection),{key:runtime.control.regionCosts.key(registered.replanner.selection),samples:1,stable:true,factor:1,maximumObservedRelativeError:1/7,reason:"observed execution costs are within the registered error bound"})
     assert.equal(runtime.store.db.prepare("SELECT count(*) n FROM execution_costs WHERE run_id=? AND kind='measured'").get(grantId)!.n,1)
+    assert.equal(runtime.store.db.prepare("SELECT count(*) n FROM execution_costs WHERE run_id=? AND category='integration'").get(repairId)!.n,1)
+    assert.throws(()=>runtime.control.regionCosts.record({repairId,category:"integration",amount:1,unit:"other",evidence:[authorization],source:"wrong unit"}),/registered repair unit/)
   }finally{runtime.close()}
 })

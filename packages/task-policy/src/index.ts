@@ -11,7 +11,8 @@ export type PolicyTarget=typeof POLICY_TARGETS[number]
 export type StructuralRule = {op:"all"|"any";rules:StructuralRule[]} | {op:"gte"|"lte";feature:Feature;value:number} | {op:"relation";value:typeof RELATIONS[number]} | {op:"scope";value:typeof CHANGE_SCOPES[number]}
 export interface PolicyProposal {
   id:string;version:number;target:PolicyTarget;observedPattern:string;rootCause:string;proposedInvariant:string;proposedRule:StructuralRule
-  expectedBenefit:number;regressionRisk:number;evidence:VersionRef[];counterexamples:VersionRef[];rollback:VersionRef
+  expectedBenefit:number;regressionRisk:number;evidence:VersionRef[];supportingCases:VersionRef[];counterexamples:VersionRef[]
+  structuralAbstraction:string;holdoutCriteria:string[];rollbackCondition:string;rollback:VersionRef
 }
 export interface Evaluation {
   id:string;version:number;proposal:VersionRef;stage:"shadow"|"validated"|"active";episodes:string[];holdoutEpisodes:string[]
@@ -53,7 +54,7 @@ export class PolicyLearning {
   readonly store:ControlStore
   constructor(store:ControlStore){this.store=store}
   propose(proposal:PolicyProposal,validEvidence:(r:VersionRef)=>boolean):void {
-    if(!POLICY_TARGETS.includes(proposal.target)||![proposal.observedPattern,proposal.rootCause,proposal.proposedInvariant].every(s=>s.trim())||!proposal.evidence.length||!proposal.evidence.every(validEvidence))throw new Error("Incomplete structural policy proposal")
+    if(!POLICY_TARGETS.includes(proposal.target)||![proposal.observedPattern,proposal.rootCause,proposal.proposedInvariant,proposal.structuralAbstraction,proposal.rollbackCondition].every(s=>s.trim())||!proposal.evidence.length||!proposal.supportingCases.length||!proposal.holdoutCriteria.length||proposal.holdoutCriteria.some(value=>!value.trim())||![...proposal.evidence,...proposal.supportingCases,...proposal.counterexamples].every(validEvidence))throw new Error("Incomplete structural policy proposal")
     validateRule(proposal.proposedRule);unit(proposal.regressionRisk,"Regression risk")
     if(!Number.isFinite(proposal.expectedBenefit))throw new Error("Invalid expected benefit")
     this.store.put("policy_proposals",proposal.id,proposal.version,proposal)

@@ -179,6 +179,9 @@ test("구버전 이전은 원본과 이벤트를 보존하고 반복해도 중�
     .prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?,?)")
     .run("old", "이전 작업", "목표", "completed", null, "2026-01-01", "2026-01-01")
   old.prepare("INSERT INTO task_events VALUES(?,?,?)").run("event", "old", "기존 결정")
+  old.exec("CREATE TABLE worker_history(task_id TEXT,state TEXT,detail TEXT)")
+  old.prepare("INSERT INTO worker_history VALUES(?,?,?)").run("old","cancelled","첫 실행")
+  old.prepare("INSERT INTO worker_history VALUES(?,?,?)").run("old","archived","두 번째 실행")
   old.close()
   const original = readFileSync(source)
   assert.equal(importLegacy(source, target, f.directory).imported, 1)
@@ -192,6 +195,11 @@ test("구버전 이전은 원본과 이벤트를 보존하고 반복해도 중�
       runtime.store.db.prepare("SELECT content FROM artifact_versions").get()!.content as string,
       /기존 결정/,
     )
+    assert.equal(runtime.store.db.prepare("SELECT count(*) n FROM legacy_records WHERE table_name='worker_history'").get()!.n,2)
+    const audit=JSON.parse(String(runtime.store.db.prepare("SELECT payload FROM legacy_migration_audits").get()!.payload))
+    assert.equal(audit.totalRecords,4)
+    assert.equal(audit.dependencyCompleteness,"unknown")
+    assert.equal(audit.cognitionEvidence,"not synthesized")
   } finally {
     runtime.close()
   }

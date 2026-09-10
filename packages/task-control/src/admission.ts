@@ -37,7 +37,8 @@ export class Admission {
         const row=owner&&this.store.db.prepare("SELECT payload FROM control_requests WHERE id=?").get(String(owner.request_id))
         const request=row&&JSON.parse(String(row.payload))
         const program=request?.program&&this.store.get<import("./requests.ts").ControllerProgram>("controller_programs",request.program.id,request.program.version)
-        if(input.executionMode!=="task"||!program?.adversarialValidator||![program.worker.profile,...(program.workerPrecision?.profiles??[])].some(profile=>digest(profile)===digest(input.profile))||digest(program.worker.role)!==digest(input.role))throw new Error("L5 grant requires the registered independent review execution protocol")
+        const paths=program?[{...program.worker,mode:"task" as const},...(program.workerPrecision?.profiles??[]).map((profile:import("../../task-cognition/src/model.ts").ReasoningProfile)=>({role:program.worker.role,profile,mode:"task" as const})),{...program.planner,mode:"cognition" as const},...(program.replanner?[{...program.replanner,mode:"cognition" as const}]:[])]:[]
+        if(!program?.adversarialValidator||!paths.some(path=>path.mode===input.executionMode&&digest(path.profile)===digest(input.profile)&&digest(path.role)===digest(input.role)))throw new Error("L5 grant requires the registered independent review execution protocol")
       }
       const role=this.store.get<RoleVersion>("role_versions",input.role.id,input.role.version)
       const context=this.store.get<ContextManifest>("context_manifests",input.context.id,input.context.version)

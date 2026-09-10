@@ -26,7 +26,7 @@
 
 동시에 들어온 변경은 각각의 실제 affected closure를 계산한 뒤 closure·보존 boundary·공유 contract/resource·causal link·계층적 write scope·물리 reservation의 overlap graph로 분할한다. 전이적으로 겹친 변경은 한 component로 합치고, 완전한 보존 경계로 서로 독립임이 확인된 component에는 같은 union lease 아래 별도 replanner grant를 발급한다. 각 결과는 자기 component 밖의 기존 node를 건드릴 수 없다. 질문은 해당 component의 grant만 새로 발급하며 다른 component의 완료 결과를 보존한다. 모든 component patch는 controller가 결합하고 전체 합성 계획을 등록 validator로 다시 검증한 뒤 하나의 revision으로 원자 커밋한다. 따라서 병렬 계획이 전역 generation 경쟁이나 두 번째 stale commit을 만들지 않는다.
 
-`RegionCostCalibration`은 완료된 지역 복구의 모든 replanner 호출과 교체 task 실행에서 controller가 채택한 실제 input/output token, tool call, elapsed receipt를 등록된 공통 단위로 환산한다. 선택 당시의 원시 추정 성분과 실제 합계를 불변 `region_cost_calibration_samples` 및 `execution_costs`에 함께 저장한다. 질문 재개로 늘어난 replanner 호출도 같은 episode에 포함한다. calibration key는 validator·비용 단위·환산 정책 버전에 고정한다. 최소 표본 수와 최대 상대 오차를 모두 통과한 경우에만 관측된 최대 비율을 보수 계수로 이후 후보 비용에 적용한다. 표본 부족이나 오차 초과 상태에서는 `minimumProven=false`로 내리고 비용 기반 keep/switch 권한을 발급하지 않는다. 현재 자동 실측 범위는 replanner와 교체 task의 모델 실행이며 integration, interruption, discarded work, warm session loss, data migration, expected failure는 검증기가 별도 비용 성분으로 제출하지만 실제 receipt calibration 범위에는 아직 포함하지 않는다.
+`RegionCostCalibration`은 완료된 지역 복구의 모든 replanner 호출과 교체 task 실행에서 controller가 채택한 실제 input/output token, tool call, elapsed receipt를 등록된 공통 단위로 환산한다. integration, interruption, discarded work, warm session loss, data migration, expected failure는 불변 성분별 영수증으로만 실제값에 더한다. 완료 뒤 늦게 도착한 성분 영수증도 별도 내구 event로 다시 평가하며, 추정값이 0이 아닌 성분의 영수증이 하나라도 없으면 표본을 만들지 않는다. 성공한 완료 conjunction은 실제 expected failure 0의 근거가 되며 integration validator의 실행 시간은 자동 수집한다. 나머지 운영 성분은 해당 adapter가 실측 영수증을 제출해야 한다. calibration key는 validator·비용 단위·환산 정책 버전에 고정한다. 최소 표본 수와 최대 상대 오차를 모두 통과한 경우에만 관측된 최대 비율을 보수 계수로 이후 후보 비용 전체에 적용한다.
 
 방향 수정은 원래 목표·기존 plan·이미 제출된 변경을 보존하고 새 사용자 evidence를 추가한다. 기존 요청을 중단한 뒤 같은 계획의 scoped replanner에 전달한다. 최초 계획 전 수정도 원래 목표와 변경 지시를 함께 전달한다. 최초 계획·regional replanner·leaf worker의 질문은 아래 내구 reply 경로로 처리한다. specialist 질문은 동일한 필수 검토 의무를 유지하는 내구 재개 경로로 연결했다. 최초 계획의 권한 변경은 아래의 등록 프로그램 전이로 처리한다.
 
@@ -86,11 +86,11 @@ Kubernetes 설정에서는 `GrantedPodExecutor`를 사용하며 native로 대체
 
 모델 Pod 종료와 출력 snapshot을 관찰한 뒤 별도 검증 Pod를 만든다. 검증 Pod에는 모델 인증·authority capability·서비스 계정 토큰이 없다. 결과 PVC의 workspace 하위 경로만 읽기 전용으로 제공한다. 읽기 전용 root filesystem, 모든 capability 제거, no-new-privileges와 Linux seccomp launcher를 적용한다. launcher는 자식 프로세스에도 네트워크 socket과 io_uring 차단을 유지한다. controller는 Pod UID·실제 image ID·snapshot·명령/input tuple·시간/출력 상한을 대조한 영수증만 채택한다. unacknowledged Pod 생성도 내구 의도와 실제 리소스를 대조해 종료한다.
 
-native 검증은 macOS seatbelt 안에서 실행한다. 작업 공간과 명시된 런타임은 읽기 전용이며, 쓰기는 작업별 임시 공간으로 제한한다. 환경을 상속하지 않고 네트워크·IPC·process fork를 금지한다. 별도 세션의 자식 프로세스가 host timeout을 벗어나지 못하도록 단일 프로세스만 허용하며, 다중 프로세스 검증은 격리 Pod에서 수행한다. 시간 초과 시 실제 프로세스를 종료하고 임시 공간을 정리한다. 지원하지 않는 native OS에서는 격리 없이 실행하지 않고 실패를 기록한다. 이 접근 통제는 모든 파일/환경 읽기의 dependency completeness 증명을 대신하지 않는다. 현재 실제 host 설정·인증은 변경하지 않았고 서비스 재시작이나 기존 실행의 운영 배포는 하지 않았다. controller program·validation budget·Pod authority 설정이 없으면 자동 호출을 차단한다.
+native 검증은 macOS seatbelt 또는 Linux bubblewrap 안에서 실행한다. Linux는 사용자·mount·PID·네트워크 namespace를 분리하고 host root를 mount하지 않는다. 작업 공간과 명시된 런타임은 읽기 전용이며, 쓰기는 작업별 임시 공간으로 제한한다. cwd는 작업 공간 안으로 한정한다. macOS에서는 환경 상속·네트워크·IPC·process fork를 금지하며, 다중 프로세스 검증은 격리 Pod에서 수행한다. Windows와 bubblewrap이 없는 Linux는 격리 없이 실행하지 않고 Pod를 요구한다. 시간 초과 시 실제 프로세스를 종료하고 임시 공간을 정리한다. 이 접근 통제는 모든 파일/환경 읽기의 dependency completeness 증명을 대신하지 않는다.
 
 ## 검증 근거
 
-- `npm run check`: TypeScript 검사와 전체 422개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 독립 region 병렬 계획과 합성 검증, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
+- `npm run check`: TypeScript 검사와 전체 425개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 독립 region 병렬 계획과 합성 검증, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
 - `test/policy-regression.test.ts`: 실제 격리 검증기와 합성 grant 결과로 회귀 rollback, 회귀 미관측, malformed/명령 실패/실행 오류/출력 잘림의 unknown 처리, head 교체 및 원복 뒤 stale 차단, 재시작, synthetic 표본 제외의 10개 경로를 확인했다. 진행 중 허가 보존·sample 한도·중복 event 방지도 확인했다. 실제 모델 요청은 없다.
 - 추가 통합 검증: 실제 native 파일 관찰·채택 전 freshness 검사·이전 소비 task 무효화, 인증된 Pod 읽기 보고, program의 실제 7차원 통합 검증, finite search의 40개 전수 oracle 비교, 실제 후보 validator→replanner 경로 및 unknown 차단, host 완료 결과의 비용 귀속·멱등성을 확인했다. 새 Pod 읽기 보고는 로컬 HTTP/gateway 테스트이며 기존 kind 영수증을 새 이미지 검증으로 재사용하지 않는다.
 - `scripts/smoke-granted-validation.ts`: 실제 로컬 `kind-task-agent-local`에서 별도 namespace/PVC/Pod를 생성해 검증했다. 읽기 전용 결과·인증 제외·상속되는 네트워크 차단·같은 image ID·snapshot 유지·실제 semantic receipt를 확인했다. 봉인된 합성 모델 결과와 실제 Pod 검증 영수증을 합쳐 controller의 verified 전이까지 통과했다. 외부 모델 호출 0회이며 임시 namespace 정리도 확인했다. 결과는 `kubernetes-grant-validation.json`에 보존한다.
@@ -130,7 +130,7 @@ EvidenceStore는 원문을 삭제하지 않는 철회와 indexed expiry event를
 
 `SpecialistQuestions`는 전문 역할의 사용자 질문을 동일 request/session/task/input에 고정한다. 답변 이후 같은 role/profile/policy와 읽기 전용 범위의 새 grant를 발급한다. 반복 재개에서도 원래 mandatory demand는 새 응답 검증 전까지 미해결이다. 과거 응답 의무는 그 demand로 이어지는 실제 grant 계보가 있을 때만 대체되며 과거 실패 기록은 삭제하거나 성공 처리하지 않는다. quota·cooldown·예산·근거 유효성을 유지한다. 실제 검토 질문 두 번→새 응답의 독립 validator→원래 leaf 복구→실제 파일 검증→요청 완료를 확인했다.
 
-`AdversarialReview`는 worker L5를 단일 호출의 이름으로 취급하지 않는다. program에 등록된 서로 다른 읽기 전용 reviewer grant를 각각 발급하고, 각 결과의 실제 독립 검증 이후 등록 joint validator가 모든 결론을 함께 판정한다. 필수 검토 activation은 실제 profile requirement에 근거하며 failure 신호를 조작하지 않는다. 두 검토의 개별 성공만으로 완료하지 않으며, joint 실패는 실제 실패 근거로 scoped 재계획→독립 계획 validator→새 실행→새로운 독립 검토를 모두 거쳐야 해소한다. 등록 프로토콜 없는 L5 grant, 중복 reviewer 이름, 아직 구현되지 않은 planner/specialist/replanner L5 조합은 거절한다.
+`AdversarialReview`는 worker·planner·replanner L5를 단일 호출의 이름으로 취급하지 않는다. program에 등록된 서로 다른 읽기 전용 reviewer grant를 각각 발급하고, 각 결과의 실제 독립 검증 이후 등록 joint validator가 모든 결론을 함께 판정한다. task 결과는 현재 관찰 tuple에, 인지 결과는 grant의 현재 입력 vector에 고정한다. 두 검토의 개별 성공만으로 worker 완료·최초 계획 채택·지역 patch 검증을 진행하지 않는다. joint 실패는 worker에서는 실제 실패 근거로 scoped 재계획에 연결하고, 인지 결과에서는 해당 제안을 거절한다. specialist reviewer 자체의 L5 재귀는 유한하지 않으므로 등록 단계에서 거절한다.
 
 검증: 타입 검사와 전체 320개 테스트 통과. 최신 검사는 결정 유효성 및 재계획, 유효 가정 바인딩 보존, 질문 중 입력 변경 episode 교체, 전문 검토 반복 질문·재시작·quota·근거 철회, L5 독립 검토의 성공·상충·질문·재계획 완료를 포함한다. 실행 모델은 합성 executor이고 독립 validator는 실제 격리 프로세스다. 이 결과는 모든 학습 target이나 전체 원문 수용 완료의 증명이 아니다.
 
@@ -178,7 +178,7 @@ L1의 허가는 유효한 preflight receipt에 묶이며 모델 도구와 모델
 
 검증은 실제 파일이 이미 만족된 경우, 값 불일치·누락, receipt 수명 초과, worker 모델 예산 부족, 근거 철회, 사전 검증 후 파일 변경, 검증 대기 중 재시작을 포함한다. 이 구현은 임의의 쓰기 작업을 실행하는 solver나 모든 판단의 정적 해결을 제공하지 않는다. 등록 프로그램의 preflight 적용이 필요하며, 아직 적용하지 않은 운영 프로그램을 자동 변경하지 않는다.
 
-최신 검증: 타입 검사와 전체 422개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
+최신 검증: 타입 검사와 전체 425개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
 
 ## 검증 중 초안 대체와 native 계획 입력 복구
 
@@ -242,6 +242,12 @@ Pod 생성 전에도 grant 벡터와 현재 관찰을 비교한다. 불변 `Inst
 
 paired 정책 측정도 baseline과 candidate의 경계 증거를 독립 측정 의무에 포함한다. 보고서는 모든 고정 실행의 경계 계약을 다시 검증해 `inputCoverage`를 계산한다. legacy 계약, 철회·위변조된 경계 증거, 하나 이상의 `unknown` 채널이 있으면 측정값과 신뢰구간은 관찰 결과로 보존하되 정책 승격에는 사용할 수 없다.
 
+## 불변 Plan Memory와 이관 계보
+
+`PlanMemory`는 활성 계획의 각 노드를 task 상태 한 행으로 덮어쓰지 않고 append-only `plan_node_versions`로 투영한다. 목표, 기대, 실제 관찰, prediction error, dependency view, 가정, 결정, 경계, 무효화 원인과 근거를 같은 버전에 묶는다. 등록 외부 입력이 unknown·missing·철회 상태여도 투영을 실패시키지 않고 미확정 hash를 계보에 남긴다. 같은 의미 상태의 event 재전달은 새 버전을 만들지 않는다. worker 실행과 검증이 진행되면 같은 plan/node의 역사에서 예상→실제→오차→검증 상태를 재구성할 수 있다.
+
+구버전 DB 이관은 source를 읽기 전용으로 열고 모든 table row를 `legacy_records`에 불변 보존한다. 기본 키가 없는 동일 task의 worker/cancel/archive 이력도 행 순서를 포함한 고유 키로 보존한다. source 전체 hash, table별 행 수, 총 레코드 수와 dependency/contract completeness unknown을 `legacy_migration_audits`에 기록한다. 같은 source의 내용이 이후 바뀌면 이전 이관과 섞지 않고 거절하며, 과거 cognition/policy evidence는 합성하지 않는다.
+
 ## 검증된 경계 보존과 keep/switch 판단
 
 완전 경계는 구성 task, 모든 실제 교차 causal edge, invariant, 전용 binding 검증기와 증거 수명을 불변 버전에 고정한다. 교차 edge 목록이 현재 그래프와 정확히 일치하고 모든 edge의 completeness가 verified인 경우만 등록한다. 현재 attempt의 의미 관찰에 대해 binding 검증과 behavior/interface/data/temporal/error propagation/resource contention/semantic 일곱 검증을 실제 프로세스로 모두 통과해야 scope별 `BoundaryProof`를 만든다. proof는 현재 그래프 hash·관찰 tuple·모든 출구·검증 receipt와 권한에 묶인다.
@@ -256,9 +262,9 @@ region 후보 검증기는 같은 `costUnit`으로 planning·reasoning·context�
 
 ## 남은 전체 수용 조건
 
-1. 파일 gateway 밖의 등록된 코드·도구·환경·외부 입력 관찰은 실행 벡터와 native/Pod 복구 identity에 연결했고 새 실행의 legacy 전체 snapshot을 독립 입력 view로 교체했다. 입력 채널별 완전성 계약과 증거도 실행 경계에 연결했다. 실제 모델 제공자의 난수 채널은 `unknown`이며, 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
-2. 실제 boundary 보존 증거를 활용한 보수적 영역 축소와 불확실성 포함 keep/switch 판단은 연결했다. finite 후보·등록 검증기의 feasibility/공통 단위 비용·최적성 gap 경로, 완료된 모델 실행 receipt의 보수적 calibration, 동일 batch의 독립 region 병렬 계획과 단일 합성 검증을 연결했다. integration·중단·폐기 작업·warm session·데이터 이동의 실제 비용 receipt 보정은 남아 있다. 승인 전이 중 episode 병합은 미활성 revision 폐기와 source/head 분리로 연결했다. 질문 대기 중 입력 변경 병합은 연결했다. 등록 decision의 증거 기반 무효화와 유효 가정·결정의 대체 task 바인딩 보존은 연결했다. native 관찰 입력 및 등록 가정의 유효성 손실, 진행 중 repair의 최신 원인 교체는 연결했다.
-3. activation additional-trigger의 historical/shadow 비교, gateway 파일 쓰기의 실제 attribution, 역할 lifecycle 실행 게이트, 검증된 routine의 실제 plan graph 확장은 연결했으나, 모든 13개 정책 target의 실행 적용, 파일 밖 외부 입력의 attribution 및 observed paired holdout 운영 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory의 실제 graph mutation은 아직 전체 실행 루프에 연결되지 않았다.
-4. 기존 운영 데이터/worker의 전면 이관, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 권한 변경 reply와 quota 증액은 사전 등록된 프로그램·정책 버전 전이와 새 계획 허가로 연결했다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
+1. 파일 gateway 밖의 등록된 코드·도구·환경·외부 입력 관찰은 실행 벡터와 native/Pod 복구 identity에 연결했다. 실제 모델 제공자의 난수 채널은 `unknown`이며, 등록하지 않은 경계 밖 변경을 발견해 현재 경계의 7차원 검증으로 연결하는 운영 change feed가 남아 있다.
+2. finite 영역 선택과 keep/switch, 독립 region 병렬 계획, 모델·integration·expected failure 및 adapter가 제출한 운영 비용 영수증의 보정은 연결했다. interruption·discarded work·warm session·data migration의 실제 영수증을 각 native/Pod 운영 adapter에서 자동 생산하는 연결은 남아 있다.
+3. worker·planner·replanner L5와 plan-node memory는 연결했다. 모든 13개 정책 target의 target별 runtime adapter, 파일 밖 외부 입력 attribution, observed paired holdout 운영 표본과 모든 활성 정책의 회귀 watch 자동 등록, 모든 판단 경로의 L1 우선 적용은 남아 있다. PolicyProposal은 supporting cases, counterexamples, structural abstraction, holdout criteria, rollback condition을 필수로 검증한다.
+4. 구버전 모든 원시 레코드와 task 계보의 무손실 격리 이관, macOS·Linux native 격리와 unsupported 환경의 Pod 강제는 연결했다. 실제 운영 중 worker를 중단·이관·재개하는 rolling 절차와 T01–T15를 각각 완전한 단일 trace로 묶는 수용 검사가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
 
 `implementation-status.json`의 endToEndVerified는 위 전체 수용 조건을 기준으로 유지한다. 단위 함수나 새 경로 일부의 테스트 통과만으로 원문 요구 전체를 완료 처리하지 않는다.
