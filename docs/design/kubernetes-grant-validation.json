@@ -1,7 +1,7 @@
 {
   "passed": true,
   "context": "kind-task-agent-local",
-  "namespace": "grant-validation-cf6df2ac",
+  "namespace": "grant-validation-f49345fa",
   "modelCalls": 0,
   "checks": [
     "actual PVC read-only mount",
@@ -28,36 +28,36 @@
         "timedOut": false,
         "inputVector": [
           {
-            "entityId": "cbf1cec7-ed6e-4f25-8f38-baba42e61da7",
+            "entityId": "542bbc34-48fa-4a34-834b-c2c4f018c550",
             "port": "inputs",
             "view": "legacy-complete-input",
             "version": 1,
             "hash": "5800a4310a7939e4b898ec9c19a1d7f49776fa03746ebc99828f7678040f73c5"
           },
           {
-            "entityId": "cbf1cec7-ed6e-4f25-8f38-baba42e61da7",
+            "entityId": "542bbc34-48fa-4a34-834b-c2c4f018c550",
             "port": "validation-attempt",
             "view": "attempt",
             "version": 1,
-            "hash": "eb7379120e96c7654b46e0b61d71ef86b46698cf4c8ff945c5e49e7fda45c082"
+            "hash": "cdc62182a1a525547d23c33da8155aea881cb9dfcf9de90b046d76e044c91a94"
           }
         ],
-        "inputHash": "b2c408d79802696efbdc105ce7b62459b6ec0b8510ae5836b31d277ca37199b9",
+        "inputHash": "3a345add8345f91e24daea96f02b5a23d2a82f112bd44a548df10c2ed173b599",
         "commandHash": "f200eea3bf0fae42d06919082de8350da00b8a1b2d4237ed5a7c684063d1c02b",
         "isolation": {
           "kind": "isolated-pod",
           "network": false,
           "workspaceReadOnly": true
         },
-        "startedAt": 1789005732757,
-        "finishedAt": 1789005732778
+        "startedAt": 1789016808542,
+        "finishedAt": 1789016808564
       }
     ]
   },
   "build": {
-    "image": "task-agent-control:verification-regional-20260910",
-    "imageId": "sha256:44be41666db0be6d0878947009a573c8e3f1e5e22b9ea29d47a47f6cbab98638",
-    "sourceHash": "a892b77f5020cd8036d5a60b195ac4a620157c5768ea6c8a930ffd0810671e52",
+    "image": "task-agent-control:verification-write-lineage-20260910",
+    "imageId": "sha256:bbd942a1d6720f3d3968a917524884fe7aeaba6678e4368a61eee9cad2fc2cf5",
+    "sourceHash": "018a9446ae1b1f85cdf6cecd440ac7a32edde5031e87e89940996e8a9a1dba2a",
     "algorithm": "sha256(sorted path + NUL + bytes + NUL) for package manifests, apps, packages and scripts",
     "date": "2026-09-10"
   },

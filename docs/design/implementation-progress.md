@@ -166,7 +166,7 @@ L1의 허가는 유효한 preflight receipt에 묶이며 모델 도구와 모델
 
 검증은 실제 파일이 이미 만족된 경우, 값 불일치·누락, receipt 수명 초과, worker 모델 예산 부족, 근거 철회, 사전 검증 후 파일 변경, 검증 대기 중 재시작을 포함한다. 이 구현은 임의의 쓰기 작업을 실행하는 solver나 모든 판단의 정적 해결을 제공하지 않는다. 등록 프로그램의 preflight 적용이 필요하며, 아직 적용하지 않은 운영 프로그램을 자동 변경하지 않는다.
 
-최신 검증: 타입 검사와 전체 408개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 397개 테스트를 통과한 시점의 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
+최신 검증: 타입 검사와 전체 408개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
 
 ## 검증 중 초안 대체와 native 계획 입력 복구
 
@@ -196,7 +196,7 @@ scoped revision의 저장과 최종 활성화는 실제 등록 검증 작업, �
 
 중단 대기 중 연속 변경은 다음 episode의 현재 원인으로 병합한다. 원래 요청·기대치·이미 사용한 모델 예산·repair 횟수는 유지하며 quota 소진 시 미해결 상태를 유지한다. DB 재시작, 폐기 트랜잭션의 강제 실패와 rollback, 중복 폐기, 종료 확인 전 발급 차단, 폐기된 revision의 재승인 차단, 새 revision 실행과 최종 완료를 검증했다. 독립 region 병렬 처리는 이 경로에 아직 연결되지 않았다.
 
-최신 전체 검사 408개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 이 변경 이후 kind 검증은 다시 실행하지 않았으며, `kubernetes-grant-validation.json`은 기록된 이전 source hash의 결과다.
+최신 전체 검사 408개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 같은 source hash의 이미지를 실제 kind에서 다시 검증했으며 `kubernetes-grant-validation.json`에 격리 receipt와 namespace 삭제 결과를 기록했다.
 
 ## 검증된 경계 보존과 keep/switch 판단
 
