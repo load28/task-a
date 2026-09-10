@@ -10,6 +10,7 @@ import type { ActivationGrant } from "../../task-cognition/src/model.ts"
 import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
 import { digest } from "./value.ts"
 import { AuthorityHttpClient } from "./authority-http.ts"
+import { currentInputVector } from "./completion.ts"
 
 export interface PodDispatchConfig {
   validationBudget?:{maxJobs:number;maxDurationMs:number}
@@ -53,6 +54,8 @@ export class GrantedPodExecutor implements GrantedExecutor {
     const db=this.runtime.store.db,row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(id)
     if(row?.state!=="issued")throw new Error("Pod dispatch requires an unused activation grant")
     const grant=JSON.parse(String(row.payload)) as ActivationGrant,physicalId=`grant-${id}`,secretName=`grant-${digest(id).slice(0,32)}`
+    const currentInputs=currentInputVector(this.runtime.engine,grant.taskId)
+    if(digest(currentInputs)!==digest(grant.inputVector))throw new Error("Pod dispatch inputs changed before provisioning")
     if(db.prepare("SELECT 1 FROM pod_dispatch_bindings WHERE grant_id=?").get(id))throw new Error("Interrupted Pod dispatch cannot be replayed")
     const binding=this.authority.register(id,this.config.authority!.url)
     db.prepare("INSERT INTO pod_dispatch_bindings VALUES(?,?,?)").run(id,physicalId,secretName)
@@ -68,7 +71,7 @@ export class GrantedPodExecutor implements GrantedExecutor {
       if(!["Completed","Archived"].includes(instance.status?.phase)||typeof hash!=="string")throw new Error("Pod dependency workspace has not settled")
       sources.push({taskId:String(prior.instance_task_id),hash})
     }
-    const spec:InstanceSpec={taskId:physicalId,image:this.config.image!,desiredState:"Running",run:1,storage:{size:"1Gi"},deletionPolicy:"Retain",stages:[{id:"cognition",command:["node","/app/scripts/granted-instance-stage.ts"]}],activation:{grantId:id,taskId:grant.taskId,generation:grant.generation,authoritySecret:secretName,expiresAt:grant.expiresAt},inputSnapshot:{digest:snapshot.digest,inputRefs:snapshot.inputRefs,sources},...(sources.length?{reuseSources:sources.map(source=>({taskId:source.taskId,stages:[]}))}:{}),...(this.config.repository?{repository:this.config.repository}:{}),...(this.config.envSecret?{envSecret:this.config.envSecret}:{}),...(this.config.archiveClaim?{archive:{claimName:this.config.archiveClaim,cleanupOnCompletion:false}}:{})}
+    const spec:InstanceSpec={taskId:physicalId,image:this.config.image!,desiredState:"Running",run:1,storage:{size:"1Gi"},deletionPolicy:"Retain",stages:[{id:"cognition",command:["node","/app/scripts/granted-instance-stage.ts"]}],activation:{grantId:id,taskId:grant.taskId,generation:grant.generation,authoritySecret:secretName,expiresAt:grant.expiresAt},inputSnapshot:{digest:snapshot.digest,inputRefs:snapshot.inputRefs,vector:currentInputs,sources},...(sources.length?{reuseSources:sources.map(source=>({taskId:source.taskId,stages:[]}))}:{}),...(this.config.repository?{repository:this.config.repository}:{}),...(this.config.envSecret?{envSecret:this.config.envSecret}:{}),...(this.config.archiveClaim?{archive:{claimName:this.config.archiveClaim,cleanupOnCompletion:false}}:{})}
     await this.instances.create(spec)
     while(!this.closed) {
       const state=db.prepare("SELECT state FROM activation_grants WHERE id=?").get(id)?.state

@@ -1,7 +1,7 @@
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import type { ControlStore } from "./store.ts"
 import type { ControlRuntime } from "./runtime.ts"
-import type { VersionRef } from "../../task-causality/src/model.ts"
+import type { VersionRef,VersionVector } from "../../task-causality/src/model.ts"
 import type { RegisteredValidator } from "../../task-evidence/src/registry.ts"
 import type { ValidationReceipt } from "../../task-evidence/src/validators.ts"
 import { digest,canonical } from "./value.ts"
@@ -174,4 +174,15 @@ export function observedInputValid(store:ControlStore,ref:VersionRef,now=Date.no
     const spec=store.get<RegisteredValidator>("validator_versions",match[1]!,Number(match[2]))!
     return [...definition.authorization,...value.evidence,...spec.authorization].every(ref=>evidence.valid(ref,now))&&evidence.satisfied(evidence.obligation(value.obligationId)!,now)
   }catch{return false}
+}
+export function observedInputVector(store:ControlStore,taskId:string,now=Date.now()):VersionVector {
+  return observedInputRefs(store,taskId).map(ref=>{
+    if(!observedInputValid(store,ref,now))throw new Error(`Observed input is unresolved: ${ref.id}@${ref.version}`)
+    const definition=store.get<ObservedInputDefinition>("observed_input_definitions",ref.id,ref.version)!,observation=observedInputCurrent(store,ref)!
+    return {entityId:`observed-input:${ref.id}:${ref.version}`,port:definition.kind,view:definition.schemaVersion,version:observation.version,hash:observation.hash}
+  }).sort((a,b)=>canonical(a).localeCompare(canonical(b)))
+}
+export function assertGrantObservedInputsCurrent(store:ControlStore,grant:{taskId:string;inputVector:VersionVector},now=Date.now()):void {
+  const pinned=grant.inputVector.filter(input=>input.entityId.startsWith("observed-input:")).sort((a,b)=>canonical(a).localeCompare(canonical(b)))
+  if(digest(pinned)!==digest(observedInputVector(store,grant.taskId,now)))throw new Error("Registered execution inputs changed or expired")
 }

@@ -11,6 +11,8 @@ import { withTaskAdmission } from "./task-admission.ts"
 import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
 import { canonical, digest } from "./value.ts"
 import type { AuthorityBinding } from "./authority-http.ts"
+import { attemptInputVector,currentInputVector } from "./completion.ts"
+import { assertGrantObservedInputsCurrent } from "./observed-inputs.ts"
 
 export interface PodDescription {grant:ActivationGrant;role:RoleVersion;context:ContextManifest}
 /** One secret binds one grant; network access confers no issuing/planning authority. */
@@ -52,7 +54,7 @@ export class PodAuthority {
         if(grant.executionMode==="task")withTaskAdmission(engine,grant.id,worker,()=>new TaskScheduler(engine,this.maxWorkers).claim(grant.taskId,{agent:"opencode-granted-pod",sessionId:worker,role:undefined}))
         else if(grant.writeScopes.length)throw new Error("Cognition Pod cannot write task files")
         const snapshot=engine.signals.capture(grant.taskId)
-        const inputs=[{entityId:grant.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+        const inputs=grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):currentInputVector(engine,grant.taskId)
         const claimed=this.runtime.admission.claim(grant.id,{worker,specHash:snapshot.specHash,inputVector:inputs,graphHash:this.runtime.graph.hash(),generation:grant.generation,now:Date.now()})
         this.guard.bind(worker,grant.id);return claimed
       })
@@ -98,7 +100,9 @@ export class PodAuthority {
       // Tool/model receipts, not caller totals, determine acceptance.
       return engine.atomic(()=>{
         const snapshot=engine.signals.capture(grant.taskId)
-        if(snapshot.specHash!==grant.specHash||grant.inputVector[0]?.hash!==snapshot.digest||!engine.store.executionAllowed(grant.taskId))throw new Error("Pod result inputs changed")
+        const pinned=grant.inputVector.find(input=>input.entityId===grant.taskId&&input.port==="inputs"&&input.view==="legacy-complete-input")
+        if(snapshot.specHash!==grant.specHash||(pinned?pinned.hash!==snapshot.digest:!engine.signals.matches(grant.taskId))||!engine.store.executionAllowed(grant.taskId))throw new Error("Pod result inputs changed")
+        assertGrantObservedInputsCurrent(this.runtime.store,grant)
         const session=this.runtime.store.db.prepare("SELECT input_used,output_used,tool_used FROM grant_sessions WHERE session_id=?").get(grant.worker!)!
         const run=this.runtime.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)!
         if(!this.runtime.store.db.prepare("SELECT 1 FROM grant_model_usage WHERE session_id=?").get(grant.worker!)||this.runtime.store.db.prepare("SELECT 1 FROM grant_model_admissions WHERE session_id=? AND active=1").get(grant.worker!)||this.runtime.store.db.prepare("SELECT 1 FROM grant_tool_calls WHERE session_id=? AND output_bytes IS NULL").get(grant.worker!))throw new Error("Pod execution receipts are incomplete")

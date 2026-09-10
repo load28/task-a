@@ -4,6 +4,7 @@ import { CausalGraph } from "../../task-causality/src/graph.ts"
 import { digest } from "./value.ts"
 import type { VersionRef } from "../../task-causality/src/model.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
+import { currentInputVector } from "./completion.ts"
 
 /** An operator string is not invalidation evidence for an enrolled task. */
 export function withTaskInvalidation<T>(engine:TaskGraphEngine,taskId:string,evidence:VersionRef[],operation:()=>T):T {
@@ -29,7 +30,7 @@ export function withTaskAdmission<T>(engine:TaskGraphEngine,grantId:string,worke
     const db=engine.store.db,row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)
     if(!row||row.state!=="issued")throw new Error("Task execution requires an unused grant")
     const grant=JSON.parse(String(row.payload)) as ActivationGrant,snapshot=engine.signals.capture(grant.taskId)
-    const vector=[{entityId:grant.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+    const vector=currentInputVector(engine,grant.taskId)
     if(!worker||grant.executionMode!=="task"||grant.expiresAt<=Date.now()||grant.specHash!==snapshot.specHash||digest(grant.inputVector)!==digest(vector)||grant.graphHash!==new CausalGraph(engine.store.control).hash())throw new Error("Task admission has stale or foreign inputs")
     db.prepare("INSERT INTO task_admission_intents VALUES(?,?,?)").run(grant.taskId,grant.id,worker)
     try {return operation()} finally {db.prepare("DELETE FROM task_admission_intents WHERE task_id=?").run(grant.taskId)}

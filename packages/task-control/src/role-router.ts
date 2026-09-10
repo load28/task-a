@@ -1,4 +1,4 @@
-import { observationInputVector } from "./completion.ts"
+import { observationInputVector,currentInputVector } from "./completion.ts"
 import type { PredictionError } from "../../task-causality/src/model.ts"
 import { randomUUID } from "node:crypto"
 import type { ControlRuntime } from "./runtime.ts"
@@ -85,7 +85,7 @@ export class RoleRouter {
         if(decision.action!=="activate")continue
         try {
           store.atomic(()=>{
-            const snapshot=runtime.engine.signals.capture(event.entityId),inputVector=[{entityId:event.entityId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+            const snapshot=runtime.engine.signals.capture(event.entityId),inputVector=currentInputVector(runtime.engine,event.entityId)
             const context=controlledContext(runtime,event.entityId,role,program.policy,entry.profile,[{id:proofRef.id,version:proofRef.version,kind:"evidence",content:JSON.stringify({failedValidation:evidence,expectation:store.get("task_expectations",event.entityId,store.head("task_expectations",event.entityId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,event.entityId],evidence:[proofRef]}])
             store.put("context_manifests",context.id,1,context)
             const grant=runtime.admission.issue({taskId:event.entityId,decisionId:decision.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:[obligation.id],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
@@ -136,7 +136,7 @@ export class RoleRouter {
       }
       if(eligibility.action!=="activate")return
       try {store.atomic(()=>{
-        const proof=runtime.evidence.require(demand.proofRef),snapshot=runtime.engine.signals.capture(taskId),inputVector=[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+        const proof=runtime.evidence.require(demand.proofRef),snapshot=runtime.engine.signals.capture(taskId),inputVector=currentInputVector(runtime.engine,taskId)
         const context=controlledContext(runtime,taskId,role,program.policy,entry.profile,[{id:proof.id,version:proof.version,kind:"evidence",content:JSON.stringify({reviewKind:demand.kind??"measured-failure",reviewInput:proof,expectation:store.get("task_expectations",taskId,store.head("task_expectations",taskId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,taskId],evidence:[demand.proofRef]}])
         store.put("context_manifests",context.id,1,context)
         const grant=runtime.admission.issue({taskId,decisionId:authorization.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:[obligation.id],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)

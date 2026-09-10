@@ -7,6 +7,7 @@ import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import type { RegisteredValidator } from "../../task-evidence/src/registry.ts"
 import { digest } from "./value.ts"
 import { observedReadsReusable } from "./file-observations.ts"
+import { currentInputVector } from "./completion.ts"
 
 type GrantInput=Omit<ActivationGrant,"id">
 type CachedContent={key:string;sourceGrant:string;obligationId:string;output:AgentOutput}
@@ -71,7 +72,7 @@ export class CognitiveResultCache {
         return
       }
       const snapshot=engine.signals.capture(grant.taskId),worker=`cache:${grant.id}`,now=Date.now()
-      admission.claim(id,{worker,specHash:snapshot.specHash,inputVector:[{entityId:grant.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}],graphHash:this.runtime.graph.hash(),generation:grant.generation,now})
+      admission.claim(id,{worker,specHash:snapshot.specHash,inputVector:currentInputVector(engine,grant.taskId),graphHash:this.runtime.graph.hash(),generation:grant.generation,now})
       admission.submit(id,worker,cached.output,{inputTokens:0,outputTokens:0,toolCalls:0,elapsedMs:Date.now()-now})
       store.db.prepare("INSERT INTO cognitive_cache_executions VALUES(?,?,?,?)").run(id,cached.record.id,cached.record.version,JSON.stringify({record:cached.record,outputHash:digest(cached.output),effectiveLevel:0,modelCalls:0}))
       store.event({id:`cognitive-reused:${id}`,type:"CognitiveResultReused",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId:id,record:cached.record,effectiveLevel:0}})

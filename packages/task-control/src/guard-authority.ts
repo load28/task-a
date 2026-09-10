@@ -6,6 +6,7 @@ import { cognitiveTools } from "./gateway.ts"
 import { randomUUID } from "node:crypto"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
+import { assertGrantObservedInputsCurrent } from "./observed-inputs.ts"
 
 /** The authority reads live fencing state for every model/tool admission. */
 export class GuardAuthority implements GrantAuthority {
@@ -39,6 +40,7 @@ export class GuardAuthority implements GrantAuthority {
       if(!row||row.state!=="claimed")throw new Error("Execution was fenced or completed")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
       if(grant.expiresAt<=Date.now()||grant.worker!==sessionId)throw new Error("Expired or foreign session grant")
+      assertGrantObservedInputsCurrent(this.store,grant)
       if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Role lifecycle authorization was withdrawn")
       const run=this.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)
       if(!run||Date.now()-Number(JSON.parse(String(run.payload)).startedAt)>=grant.profile.timeoutMs)throw new Error("Execution time budget exhausted")

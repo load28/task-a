@@ -3,7 +3,7 @@ import type { RequestQuestion } from "./request-questions.ts"
 import type { ActivationGrant,AgentOutput,RoleVersion,ActivationDecision } from "../../task-cognition/src/model.ts"
 import { activation } from "../../task-cognition/src/activation.ts"
 import { controlledContext } from "../../task-context/src/controlled.ts"
-import { observationInputVector } from "./completion.ts"
+import { observationInputVector,currentInputVector } from "./completion.ts"
 import { canonical,digest } from "./value.ts"
 
 /** A reply continues one review obligation; it never reopens the implementation. */
@@ -34,7 +34,7 @@ export class SpecialistQuestions {
     const demand=store.db.prepare("SELECT grant_id FROM specialist_demands WHERE decision_id=? AND task_id=?").get(target.decisionId,target.taskId)
     const row=store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(question.grantId),grant=row&&JSON.parse(String(row.payload)) as ActivationGrant|undefined
     const snapshot=runtime.engine.signals.capture(target.taskId)
-    if(demand?.grant_id!==question.grantId||row?.state!=="completed"||!grant||grant.specHash!==snapshot.specHash||grant.inputVector[0]?.hash!==snapshot.digest||!runtime.engine.signals.matches(target.taskId))throw new Error("Specialist question has stale review inputs")
+    if(demand?.grant_id!==question.grantId||row?.state!=="completed"||!grant||grant.specHash!==snapshot.specHash||digest(grant.inputVector)!==digest(currentInputVector(runtime.engine,target.taskId))||!runtime.engine.signals.matches(target.taskId))throw new Error("Specialist question has stale review inputs")
     runtime.evidence.require(question.source)
     return grant
   }

@@ -166,7 +166,7 @@ L1의 허가는 유효한 preflight receipt에 묶이며 모델 도구와 모델
 
 검증은 실제 파일이 이미 만족된 경우, 값 불일치·누락, receipt 수명 초과, worker 모델 예산 부족, 근거 철회, 사전 검증 후 파일 변경, 검증 대기 중 재시작을 포함한다. 이 구현은 임의의 쓰기 작업을 실행하는 solver나 모든 판단의 정적 해결을 제공하지 않는다. 등록 프로그램의 preflight 적용이 필요하며, 아직 적용하지 않은 운영 프로그램을 자동 변경하지 않는다.
 
-최신 검증: 타입 검사와 전체 408개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
+최신 검증: 타입 검사와 전체 415개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
 
 ## 검증 중 초안 대체와 native 계획 입력 복구
 
@@ -196,7 +196,7 @@ scoped revision의 저장과 최종 활성화는 실제 등록 검증 작업, �
 
 중단 대기 중 연속 변경은 다음 episode의 현재 원인으로 병합한다. 원래 요청·기대치·이미 사용한 모델 예산·repair 횟수는 유지하며 quota 소진 시 미해결 상태를 유지한다. DB 재시작, 폐기 트랜잭션의 강제 실패와 rollback, 중복 폐기, 종료 확인 전 발급 차단, 폐기된 revision의 재승인 차단, 새 revision 실행과 최종 완료를 검증했다. 독립 region 병렬 처리는 이 경로에 아직 연결되지 않았다.
 
-최신 전체 검사 414개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage, 역할 생명주기와 routine 그래프 재사용 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 같은 source hash의 이미지를 실제 kind에서 다시 검증했으며 `kubernetes-grant-validation.json`에 격리 receipt와 namespace 삭제 결과를 기록했다.
+최신 전체 검사 415개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage, 역할 생명주기, routine 그래프 재사용과 네 종류 외부 입력 고정 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 같은 source hash의 이미지를 실제 kind에서 다시 검증했으며 `kubernetes-grant-validation.json`에 격리 receipt와 namespace 삭제 결과를 기록했다.
 
 ## 역할 생명주기 실행 게이트
 
@@ -214,6 +214,12 @@ validated와 persistent 승격은 고정된 minimum effective samples, 순효용
 
 다른 상위 목표에서의 실제 draft plan 생성, 내부 dependency 보존, source expectation 복사, 등록·재전송 멱등성, 표본 부족, checkpoint receipt 누락, 근거 철회, 존재하지 않는 routine의 무변경 거절을 검증했다.
 
+## 등록 외부 입력의 실행 벡터 고정
+
+등록 관찰의 `code`, `tool`, `environment`, `external`은 각각 `(input id, kind port, schema view, observation version, value hash)`로 실행 입력 벡터에 들어간다. 계획·worker·specialist·L0 cache·L1 preflight·scoped replanning·질문 재개·도구 및 모델 호출이 같은 벡터를 재검사한다. 값의 유효 기간 만료나 근거 철회도 다음 모델·도구 승인을 막는다.
+
+Pod 생성 전에도 grant 벡터와 현재 관찰을 비교한다. 불변 `InstanceSpec.inputSnapshot.vector`에 전체 벡터를 저장하여 재시작 identity와 worker 환경으로 전달하고, 기존 dependency workspace의 code snapshot source lineage와 함께 유지한다. 네 입력 kind의 독립 view, request grant 포함, 잘못된 Pod vector 거절을 검증했다.
+
 ## 검증된 경계 보존과 keep/switch 판단
 
 완전 경계는 구성 task, 모든 실제 교차 causal edge, invariant, 전용 binding 검증기와 증거 수명을 불변 버전에 고정한다. 교차 edge 목록이 현재 그래프와 정확히 일치하고 모든 edge의 completeness가 verified인 경우만 등록한다. 현재 attempt의 의미 관찰에 대해 binding 검증과 behavior/interface/data/temporal/error propagation/resource contention/semantic 일곱 검증을 실제 프로세스로 모두 통과해야 scope별 `BoundaryProof`를 만든다. proof는 현재 그래프 hash·관찰 tuple·모든 출구·검증 receipt와 권한에 묶인다.
@@ -228,7 +234,7 @@ region 후보 검증기는 같은 `costUnit`으로 planning·reasoning·context�
 
 ## 남은 전체 수용 조건
 
-1. 파일 gateway 밖의 실제 코드·도구·환경 입력 관찰과 완전성 증거, Pod source lineage와 모든 외부 입력 유형의 관찰·복구를 연결하고 legacy 전체 snapshot/스캔을 대체해야 한다. 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
+1. 파일 gateway 밖의 등록된 코드·도구·환경·외부 입력 관찰은 실행 벡터와 native/Pod 복구 identity에 연결했다. 입력 경계의 등록 완전성 증거와 legacy 전체 snapshot/스캔 대체는 남아 있다. 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
 2. 실제 boundary 보존 증거를 활용한 보수적 영역 축소와 불확실성 포함 keep/switch 판단은 연결했다. finite 후보·등록 검증기의 feasibility/공통 단위 비용·최적성 gap 경로도 연결했으나 비용 모델의 실제 성능 calibration은 남아 있다. 독립 region의 병렬 복구는 남아 있다. 승인 전이 중 episode 병합은 미활성 revision 폐기와 source/head 분리로 연결했다. 질문 대기 중 입력 변경 병합은 연결했다. 등록 decision의 증거 기반 무효화와 유효 가정·결정의 대체 task 바인딩 보존은 연결했다. native 관찰 입력 및 등록 가정의 유효성 손실, 진행 중 repair의 최신 원인 교체는 연결했다.
 3. activation additional-trigger의 historical/shadow 비교, gateway 파일 쓰기의 실제 attribution, 역할 lifecycle 실행 게이트, 검증된 routine의 실제 plan graph 확장은 연결했으나, 모든 13개 정책 target의 실행 적용, 파일 밖 외부 입력의 attribution 및 observed paired holdout 운영 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory의 실제 graph mutation은 아직 전체 실행 루프에 연결되지 않았다.
 4. 기존 운영 데이터/worker의 전면 이관, 권한 변경 reply 재개, quota 증액의 정책 변경 경로, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.

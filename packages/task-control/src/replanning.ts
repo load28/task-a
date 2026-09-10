@@ -7,6 +7,7 @@ import type { ReplanLease, VersionVector, VersionRef } from "../../task-causalit
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { decisionValid } from "./decisions.ts"
 import { canonical, digest } from "./value.ts"
+import { currentInputVector } from "./completion.ts"
 
 interface LeaseBinding { lease:ReplanLease; validators:string[]; nodes:ScopedPlanNode[]; planNodes:PlanNode[]; contextHash:string }
 interface Stage { binding:LeaseBinding; patch:ReplanPatch; revisionInput:ReviseWorkPlanInput; tuple:VersionVector; obligationId:string; assigned?:Record<string,string>; metadata?:unknown; result?:ReturnType<TaskGraphEngine["reviseWorkPlan"]> }
@@ -30,7 +31,7 @@ export class ScopedReplanning {
   }
   get store(){return this.engine.store.control}
   private inputs(planId:string,revision:number):VersionVector {
-    return this.engine.store.planLinks(planId,revision).map(link=>({entityId:link.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:this.engine.signals.capture(link.taskId).digest})).sort((a,b)=>a.entityId.localeCompare(b.entityId))
+    return this.engine.store.planLinks(planId,revision).flatMap(link=>currentInputVector(this.engine,link.taskId)).sort((a,b)=>canonical(a).localeCompare(canonical(b)))
   }
   /** Revision numbers never rewind. A retired, unactivated head may be replaced
    * from the still active execution graph, with a distinct CAS head revision. */

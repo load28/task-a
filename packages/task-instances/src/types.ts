@@ -1,9 +1,10 @@
 export const GROUP = "tasks.task-agent.dev"
 export const VERSION = "v1alpha1"
 export const FINALIZER = `${GROUP}/stop-before-delete`
+export interface PinnedInputView {entityId:string;port:string;view:string;version:number;hash:string}
 export interface InstanceSpec {
   activation?: {grantId:string;taskId:string;generation:number;authoritySecret:string;expiresAt:number}
-  inputSnapshot?: { digest: string; inputRefs: Array<{ artifactId: string; version: number }>; sources?: Array<{ taskId: string; hash: string }> }
+  inputSnapshot?: { digest: string; inputRefs: Array<{ artifactId: string; version: number }>; vector?:PinnedInputView[]; sources?: Array<{ taskId: string; hash: string }> }
   taskId: string
   image: string
   desiredState: "Running" | "Suspended"
@@ -47,6 +48,7 @@ export function validateSpec(spec: InstanceSpec) {
     if(spec.stages?.length!==1||JSON.stringify(spec.stages[0]?.command)!==JSON.stringify(["node","/app/scripts/granted-instance-stage.ts"])||spec.stages[0]?.outputs?.length)throw new Error("A granted Pod can run only the fixed bounded adapter")
   }
   if (spec.inputSnapshot && (!/^[a-f0-9]{64}$/.test(spec.inputSnapshot.digest) || !Array.isArray(spec.inputSnapshot.inputRefs))) throw new Error("Invalid pinned input snapshot")
+  if(spec.inputSnapshot?.vector?.some(input=>!input.entityId||!input.port||!input.view||!Number.isSafeInteger(input.version)||input.version<1||!/^[a-f0-9]{64}$/.test(input.hash)))throw new Error("Invalid exact input vector")
   if (spec.inputSnapshot?.sources?.some(s => !s.taskId || !/^[a-f0-9]{64}$/.test(s.hash))) throw new Error("Invalid source snapshot")
   if (spec.recoveryInstructions !== undefined && (typeof spec.recoveryInstructions !== "string" || spec.recoveryInstructions.length > 8000)) throw new Error("Invalid recovery instructions")
   if (!spec.taskId?.trim() || !spec.image?.trim()) throw new Error("taskId and image are required")

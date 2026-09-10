@@ -8,6 +8,7 @@ import { canonical, digest } from "./value.ts"
 import { ScopedReplanning } from "./replanning.ts"
 import type { ReplanPatch } from "../../task-causality/src/replan.ts"
 import type { PlanNode } from "#task-domain"
+import { assertGrantObservedInputsCurrent } from "./observed-inputs.ts"
 
 const identity={grantId:{type:"string"},workerSessionId:{type:"string"},authorizationCallId:{type:"string"}}
 export const cognitiveTools=[
@@ -47,6 +48,7 @@ export class CognitiveGateway {
       const snapshot=this.engine.signals.capture(grant.taskId)
       const pinned=grant.inputVector.find(input=>input.entityId===grant.taskId&&input.port==="inputs"&&input.view==="legacy-complete-input")
       if(snapshot.specHash!==grant.specHash||(pinned?pinned.hash!==snapshot.digest:!this.engine.signals.matches(grant.taskId)))throw new Error("Task inputs changed before tool execution")
+      assertGrantObservedInputsCurrent(this.engine.store.control,grant)
       const call=db.prepare("SELECT c.tool,a.args_hash FROM grant_tool_calls c JOIN grant_tool_arguments a ON a.session_id=c.session_id AND a.call_id=c.call_id WHERE c.session_id=? AND c.call_id=?").get(workerSessionId,authorizationCallId)
       if(call?.tool!==`task_graph_${name}`||call.args_hash!==digest(args))throw new Error("Tool arguments were not admitted by the model adapter")
       const receipt=db.prepare("SELECT * FROM cognitive_tool_receipts WHERE session_id=? AND call_id=?").get(workerSessionId,authorizationCallId)

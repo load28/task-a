@@ -12,6 +12,7 @@ import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
 import { withTaskAdmission } from "./task-admission.ts"
 import { digest } from "./value.ts"
 import { selectWorkerPrecision } from "./worker-precision.ts"
+import { currentInputVector,attemptInputVector } from "./completion.ts"
 
 type Input=Omit<ActivationGrant,"id">
 type Preflight={taskId:string;program:VersionRef;expectation:TaskExpectation;specHash:string;inputVector:ActivationGrant["inputVector"];obligationId:string}
@@ -64,7 +65,7 @@ export class TaskPreflight {
     if(digest(store.get("controller_programs",program.id,program.version))!==digest(program))throw new Error("Preflight policy is not the registered program")
     if(program.workerPrecision&&digest(selectWorkerPrecision(store,program,taskId).profile)!==digest(program.worker.profile))return {state:"unresolved"}
     const expectation=store.get<TaskExpectation>("task_expectations",taskId,store.head("task_expectations",taskId))!
-    const inputVector=[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+    const inputVector=currentInputVector(engine,taskId)
     const identity={taskId,program:{id:program.id,version:program.version},expectation,specHash:snapshot.specHash,inputVector},id=digest(identity)
     if(!store.db.prepare("SELECT 1 FROM task_preflights WHERE id=?").get(id)) {
       const proof=evidence.put({id:`task-preflight:${id}`,version:1,type:"runtime",source:"registered deterministic preflight",producer:"task-preflight",validatorVersion:"task-preflight/v1",timestamp:Date.now(),content:identity,contentHash:digest(identity),inputVector,confidence:1,expiresAt:null})
@@ -88,7 +89,7 @@ export class TaskPreflight {
     if(grant.profile.level!==1||!proof)throw new Error("Deterministic task proof is no longer current")
     const worker=`preflight:${grant.id}`,scheduler=new TaskScheduler(engine,1),snapshot=engine.signals.capture(grant.taskId)
     withTaskAdmission(engine,grant.id,worker,()=>scheduler.claim(grant.taskId,{agent:"deterministic-preflight",sessionId:worker}))
-    admission.claim(grant.id,{worker,specHash:snapshot.specHash,inputVector:[{entityId:grant.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}],graphHash:this.runtime.graph.hash(),generation:grant.generation,now:Date.now()})
+    admission.claim(grant.id,{worker,specHash:snapshot.specHash,inputVector:attemptInputVector(engine,grant.taskId),graphHash:this.runtime.graph.hash(),generation:grant.generation,now:Date.now()})
     admission.submit(grant.id,worker,result(grant.taskId,proof.evidence),{inputTokens:0,outputTokens:0,toolCalls:0,elapsedMs:proof.elapsedMs})
     engine.completeTask({taskId:grant.taskId,attemptToken:engine.store.currentAttempt(grant.taskId)!.token,summary:"Pinned expectations already satisfied by registered deterministic observations; final validation remains required"})
     scheduler.release(grant.taskId,true)

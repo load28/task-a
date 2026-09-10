@@ -866,6 +866,7 @@ test("등록 입력은 계획 호출 전에 관찰되고 worker까지 고정되�
     const grant=JSON.parse(String(row.payload)) as ActivationGrant
     const context=r.store.control.get<import("../packages/task-cognition/src/model.ts").ContextManifest>("context_manifests",grant.context.id,1)!
     assert.ok(context.included.some(item=>item.required&&JSON.stringify(item.content).includes("before")))
+    assert.ok(grant.inputVector.some(item=>item.entityId==="observed-input:config:1"&&item.port==="environment"&&item.view==="config/v1"&&item.hash===r.control.inputs.current(input)!.hash))
     writeFileSync(join(dir,"config.txt"),"after")
     r.control.inputs.refresh(input)
     await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})

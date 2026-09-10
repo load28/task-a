@@ -1,6 +1,7 @@
 import type { TaskGraphEngine } from "../../task-engine/src/index.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { digest } from "./value.ts"
+import { currentInputVector } from "./completion.ts"
 
 /** Rechecked by the engine when delayed worker stops finally permit activation. */
 export function assertControlledPlanActivation(engine:TaskGraphEngine,planId:string,version:number):void {
@@ -31,6 +32,6 @@ export function assertControlledPlanActivation(engine:TaskGraphEngine,planId:str
   if(!stage||!obligation||!evidence.independentlySatisfied(obligation)||stage.binding.lease.expiresAt<=Date.now()||digest(stage.revisionInput.nodes)!==digest(engine.store.planNodes(planId,version)))throw new Error("Regional activation validation is missing, expired or changed")
   const lease=stage.binding.lease
   if(db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(planId)?.generation!==lease.generation)throw new Error("Regional activation generation changed")
-  const inputs=engine.store.planLinks(planId,lease.sourceRevision??lease.baseRevision).map(link=>({entityId:link.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:engine.signals.capture(link.taskId).digest})).sort((a,b)=>a.entityId.localeCompare(b.entityId))
+  const inputs=engine.store.planLinks(planId,lease.sourceRevision??lease.baseRevision).flatMap(link=>currentInputVector(engine,link.taskId)).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))
   if(digest(inputs)!==digest(lease.inputVector)||digest(engine.revisions.context(planId,lease.sourceRevision??lease.baseRevision))!==stage.binding.contextHash)throw new Error("Regional activation inputs changed while waiting for termination")
 }

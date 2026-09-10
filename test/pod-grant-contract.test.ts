@@ -75,13 +75,14 @@ test("Pod 파일 gateway는 live grant·CAS·scope·alias를 실제 파일에서
 })
 
 test("Pod activation은 고정 adapter·Secret·deadline·복구 identity에 묶인다",async()=>{
-  const spec:InstanceSpec={taskId:"physical",image:"worker:test",desiredState:"Running",run:1,storage:{size:"1Gi"},deletionPolicy:"Retain",stages:[{id:"cognition",command:["node","/app/scripts/granted-instance-stage.ts"]}],activation:{grantId:"grant",taskId:"logical",generation:1,authoritySecret:"grant-secret",expiresAt:Date.now()+60000}}
+  const spec:InstanceSpec={taskId:"physical",image:"worker:test",desiredState:"Running",run:1,storage:{size:"1Gi"},deletionPolicy:"Retain",stages:[{id:"cognition",command:["node","/app/scripts/granted-instance-stage.ts"]}],activation:{grantId:"grant",taskId:"logical",generation:1,authoritySecret:"grant-secret",expiresAt:Date.now()+60000},inputSnapshot:{digest:"a".repeat(64),inputRefs:[],vector:[{entityId:"observed-input:tool:1",port:"tool",view:"runtime/v1",version:1,hash:"b".repeat(64)}]}}
   validateSpec(spec)
   assert.throws(()=>validateSpec({...spec,stages:[{id:"raw",command:["opencode","run","unbounded"]}]}),/fixed bounded adapter/)
   const pod=podFor({metadata:{name:"instance",uid:"uid",namespace:"test"},spec})
   assert.ok(pod.spec.activeDeadlineSeconds>0&&pod.spec.activeDeadlineSeconds<=60)
   assert.deepEqual(pod.spec.containers[0].envFrom,[{secretRef:{name:"grant-secret"}}])
   assert.notEqual(stageKey(spec,spec.stages[0]!,{}),stageKey({...spec,activation:{...spec.activation!,grantId:"new"}},spec.stages[0]!,{}))
+  assert.throws(()=>validateSpec({...spec,inputSnapshot:{...spec.inputSnapshot!,vector:[{...spec.inputSnapshot!.vector![0]!,hash:"unmeasured"}]}}),/exact input vector/)
   const dir=mkdtempSync(join(tmpdir(),"expired-pod-"))
   try{await assert.rejects(runInstance({...spec,activation:{...spec.activation!,expiresAt:1}},dir,"uid"),/expired before execution or restore/)}finally{rmSync(dir,{recursive:true,force:true})}
 })

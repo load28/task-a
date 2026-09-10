@@ -7,7 +7,7 @@ import { AuthorityHttpServer } from "../../task-control/src/authority-http.ts"
 import { CognitiveGateway } from "../../task-control/src/gateway.ts"
 import { GuardAuthority } from "../../task-control/src/guard-authority.ts"
 import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
-import { attemptInputVector } from "../../task-control/src/completion.ts"
+import { attemptInputVector,currentInputVector } from "../../task-control/src/completion.ts"
 import { withTaskAdmission } from "../../task-control/src/task-admission.ts"
 import type { ActivationGrant, AgentOutput, ContextManifest, RoleVersion } from "../../task-cognition/src/model.ts"
 import { OpenCodeConnection } from "./index.ts"
@@ -117,7 +117,7 @@ export class GrantedOpenCodeExecutor {
       if(grant.executionMode==="task")withTaskAdmission(engine,grant.id,session,()=>scheduler.claim(grant.taskId,{agent:"opencode-granted",sessionId:session}))
       else if(grant.writeScopes.length)throw new Error("A cognition-only grant cannot write task files")
       const current=engine.signals.capture(grant.taskId)
-      const inputs=grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):[{entityId:grant.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:current.digest}]
+      const inputs=grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):currentInputVector(engine,grant.taskId)
       this.runtime.admission.claim(grant.id,{worker:session,specHash:current.specHash,inputVector:inputs,graphHash:this.runtime.graph.hash(),generation:grant.generation,now:Date.now()})
       this.authority.bind(session,grant.id)
     })

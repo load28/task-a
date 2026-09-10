@@ -9,7 +9,7 @@ import { validatePredictionPolicy, type PredictionPolicy } from "../../task-caus
 import { decodeSemanticOutput } from "../../task-evidence/src/semantic-output.ts"
 import { controlledContext } from "../../task-context/src/controlled.ts"
 import { canonical, digest } from "./value.ts"
-import { controlCompletionMissing } from "./completion.ts"
+import { controlCompletionMissing,currentInputVector } from "./completion.ts"
 import { LocalRepairs } from "./local-repairs.ts"
 import { AdmissionBudgetUnavailableError } from "./admission.ts"
 import { INTEGRATION_DIMENSIONS } from "../../task-evidence/src/integration.ts"
@@ -360,7 +360,7 @@ export class RequestController {
   private assertPlannerInputsCurrent(request:ControlledRequest):void {
     const row=this.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)
     const grant=JSON.parse(String(row!.payload)) as ActivationGrant,snapshot=this.runtime.engine.signals.capture(request.taskId)
-    const current=[{entityId:request.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+    const current=currentInputVector(this.runtime.engine,request.taskId)
     if(grant.specHash!==snapshot.specHash||digest(grant.inputVector)!==digest(current))throw new Error("The plan was produced from stale inputs")
     this.runtime.files.assertObservedReadsCurrent(grant.id)
   }
@@ -385,7 +385,7 @@ export class RequestController {
     const entry=override??(precision?{...program.worker,profile:precision.profile}:program[kind]),role=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
     const snapshot=this.runtime.engine.signals.capture(taskId)
     this.runtime.drain()
-    const vector=[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+    const vector=currentInputVector(this.runtime.engine,taskId)
     const context=controlledContext(this.runtime,taskId,role,program.policy,entry.profile,[{id:`request-context:${taskId}`,version:1,kind:"task",content:canonical(precision?{request:content,reasoningSelection:precision}:content),required:true,depth:0,relevance:1,level:0,dependencies:vector,path:[request.id,taskId],evidence:[request.evidence,...(request.clarifications??[]).flatMap(item=>[item.source,item.evidence])]},...(request.clarifications??[]).map(item=>({id:item.source.id,version:item.source.version,kind:"evidence" as const,content:canonical(this.runtime.evidence.require(item.source)),required:true,depth:0,relevance:1,level:0 as const,dependencies:vector,path:[request.id,taskId],evidence:[item.source,item.evidence]}))])
     this.store.put("context_manifests",context.id,1,context)
     // The primary role discharges explicit user work; no artificial risk/failure

@@ -2,7 +2,7 @@ import type { TaskGraphEngine } from "../../task-engine/src/index.ts"
 import type { Observation, PredictionError, TaskExpectation, VersionVector,VersionRef } from "../../task-causality/src/model.ts"
 import type { PredictionPolicy, Stability } from "../../task-causality/src/prediction.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
-import { observedInputRefs,observedInputValid } from "./observed-inputs.ts"
+import { observedInputRefs,observedInputValid,observedInputVector } from "./observed-inputs.ts"
 import { decisionValid } from "./decisions.ts"
 import { integrationTuple } from "./boundary-validation.ts"
 import { digest } from "./value.ts"
@@ -10,11 +10,16 @@ import { digest } from "./value.ts"
 export interface PinnedExpectation extends TaskExpectation { predictionPolicy: PredictionPolicy; observationValidators?:string[] }
 export interface PredictionState { error: PredictionError; policy: PredictionPolicy; stability: Stability }
 
-/** The legacy snapshot remains explicitly coarse; it is never a locality proof. */
+export function currentInputVector(engine:TaskGraphEngine,taskId:string):VersionVector {
+  const snapshot=engine.signals.capture(taskId)
+  return [{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest},...observedInputVector(engine.store.control,taskId)]
+}
+/** The legacy snapshot remains explicitly coarse; registered external views are
+ * separate exact inputs and can therefore invalidate execution independently. */
 export function attemptInputVector(engine:TaskGraphEngine,taskId:string):VersionVector {
   const snapshot=engine.signals.pinned(taskId)
   if(!snapshot)throw new Error("Execution has no pinned input snapshot")
-  return [{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+  return [{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest},...observedInputVector(engine.store.control,taskId)]
 }
 
 export function observationInputVector(engine:TaskGraphEngine,taskId:string):VersionVector {

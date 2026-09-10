@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createGraphRuntime } from "../apps/task-agent/src/graph-runtime.ts"
 import { digest } from "../packages/task-control/src/value.ts"
-import { controlCompletionMissing } from "../packages/task-control/src/completion.ts"
+import { controlCompletionMissing,currentInputVector,attemptInputVector } from "../packages/task-control/src/completion.ts"
 import type { ObservedInputDefinition } from "../packages/task-control/src/observed-inputs.ts"
 
 function setup(r:ReturnType<typeof createGraphRuntime>,command?:string) {
@@ -18,6 +18,24 @@ function setup(r:ReturnType<typeof createGraphRuntime>,command?:string) {
   r.control.inputs.bind(a.id,[definition])
   return {definition,authorization,a,b}
 }
+
+test("코드·도구·환경·외부 값은 각각 독립된 실행 입력 view로 고정된다",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"observed-kinds-")),r=createGraphRuntime(":memory:")
+  try {
+    const content={authorize:"Observe every registered external input kind"},authorization=r.control.evidence.put({id:"all-input-kinds",version:1,type:"code",source:"test controller",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content,contentHash:digest(content),confidence:1,inputVector:[],expiresAt:null})
+    r.control.validators.register({id:"observe-kind",version:1,command:[process.execPath,"-e","console.log(JSON.stringify({status:'known',schemaVersion:'input/v1',value:{version:'pinned'}}))"],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[authorization]})
+    const definitions=(["code","tool","environment","external"] as const).map(kind=>({id:`${kind}-input`,version:1,kind,schemaVersion:"input/v1",validator:"observe-kind/v1",authorization:[authorization],maxAgeMs:60000}))
+    definitions.forEach(definition=>r.control.inputs.register(definition))
+    const task=r.engine.createTask({title:"all inputs",goal:"consume exact external views"})
+    r.control.inputs.bind(task.id,definitions);definitions.forEach(definition=>r.control.inputs.refresh(definition))
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000})
+    const current=currentInputVector(r.engine,task.id)
+    assert.deepEqual(current.slice(1).map(item=>item.port).sort(),["code","environment","external","tool"])
+    assert.ok(current.slice(1).every(item=>item.entityId.startsWith("observed-input:")&&item.view==="input/v1"))
+    r.engine.startTask(task.id)
+    assert.deepEqual(attemptInputVector(r.engine,task.id),current)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
 
 test("실제 환경·파일 관찰은 입력 digest와 필수 의무에 연결되고 변경은 등록 소비자만 fence한다",async()=>{
   const dir=mkdtempSync(join(tmpdir(),"observed-input-")),r=createGraphRuntime(":memory:")

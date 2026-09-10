@@ -2,6 +2,7 @@ import type { AgentOutput, ActivationGrant } from "../../task-cognition/src/mode
 import type { VersionRef } from "../../task-causality/src/model.ts"
 import type { ControlledRequest, ControllerProgram, RequestController } from "./requests.ts"
 import { canonical, digest } from "./value.ts"
+import { currentInputVector } from "./completion.ts"
 
 export interface RequestQuestion {
   id:string;requestId:string;sessionId:string;grantId:string;questions:string[]
@@ -77,7 +78,7 @@ export class RequestQuestions {
     const row=controller.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(question.grantId)
     const grant=row&&JSON.parse(String(row.payload)) as ActivationGrant|undefined
     const snapshot=controller.runtime.engine.signals.capture(request.taskId)
-    if(row?.state!=="completed"||!grant||grant.specHash!==snapshot.specHash||grant.inputVector[0]?.hash!==snapshot.digest)throw new Error("Question refers to stale planning inputs")
+    if(row?.state!=="completed"||!grant||grant.specHash!==snapshot.specHash||digest(grant.inputVector)!==digest(currentInputVector(controller.runtime.engine,request.taskId)))throw new Error("Question refers to stale planning inputs")
     return grant
   }
   history(requestId:string):RequestQuestion[] {

@@ -5,11 +5,12 @@ import { RELATIONS } from "../../task-causality/src/model.ts"
 import { buildTaskContext } from "./index.ts"
 import { budgetContext,ContextBudgetExceeded } from "./budget.ts"
 import { digest,canonical } from "../../task-control/src/value.ts"
+import { currentInputVector } from "../../task-control/src/completion.ts"
 
 /** Split facts before budgeting; history cannot hide inside a single task item. */
 export function controlledContext(runtime:ControlRuntime,taskId:string,role:RoleVersion,policy:VersionRef,profile:ReasoningProfile,extra:ContextItem[]=[]) {
-  const source=buildTaskContext(runtime.engine,taskId,false),snapshot=runtime.engine.signals.capture(taskId)
-  const dependencies=[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+  const source=buildTaskContext(runtime.engine,taskId,false)
+  const dependencies=currentInputVector(runtime.engine,taskId)
   const {architectureDecisions,inputArtifacts,verifiedBundles,contracts,learnings,recentHistory,...core}=source
   const items:ContextItem[]=[{id:`task:${taskId}`,version:1,kind:"task",content:canonical(core),required:true,depth:0,relevance:1,level:0,dependencies,path:[taskId],evidence:[]},...extra]
   const append=(id:string,kind:ContextItem["kind"],content:unknown,required:boolean,depth:number,version=1)=>items.push({id,version,kind,content:canonical(content),required,depth,relevance:required?1:.5,level:depth?1:0,dependencies,path:[taskId,id],evidence:[]})
