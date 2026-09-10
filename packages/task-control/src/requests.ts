@@ -23,7 +23,7 @@ import type { RoutineProposalItem,RoutineUse } from "./routines.ts"
 import { inputBoundaryEvidence } from "./input-boundary.ts"
 import { RequestPermissions } from "./request-permissions.ts"
 
-export interface PermissionTransition {id:string;permission:string;patterns:string[];program:VersionRef;authorization:VersionRef[]}
+export interface PermissionTransition {id:string;kind:"capability"|"quota";permission:string;patterns:string[];program:VersionRef;authorization:VersionRef[]}
 
 export interface ControllerProgram {
   id:string; version:number; authorization:VersionRef[]; policy:VersionRef
@@ -90,9 +90,13 @@ export class RequestController {
   register(program:ControllerProgram):void {
     if(new Set((program.permissionTransitions??[]).map(item=>item.id)).size!==(program.permissionTransitions??[]).length)throw new Error("Permission transition identities must be unique")
     for(const transition of program.permissionTransitions??[]) {
-      if(!transition.id||!transition.permission||!transition.patterns.length||transition.patterns.some(pattern=>!pattern.trim())||!transition.authorization.length)throw new Error("Permission transition must be explicit and bounded")
+      if(!transition.id||!["capability","quota"].includes(transition.kind)||!transition.permission||!transition.patterns.length||transition.patterns.some(pattern=>!pattern.trim())||!transition.authorization.length)throw new Error("Permission transition must be explicit and bounded")
       transition.authorization.forEach(ref=>{if(!["user","code"].includes(this.runtime.evidence.require(ref).type))throw new Error("Permission transition requires operator authorization")})
-      if(!this.store.get("controller_programs",transition.program.id,transition.program.version))throw new Error("Permission transition target must be registered first")
+      const target=this.store.get<ControllerProgram>("controller_programs",transition.program.id,transition.program.version)
+      if(!target)throw new Error("Permission transition target must be registered first")
+      if(transition.kind==="quota") {
+        if(target.account!==program.account||target.tokenLimit<=program.tokenLimit||digest(target.policy)===digest(program.policy))throw new Error("Quota transition requires a higher limit under a new registered policy for the same account")
+      } else if(target.tokenLimit>program.tokenLimit)throw new Error("Capability transition cannot increase the account quota")
     }
     if(program.deterministicPreflight&&(!Number.isSafeInteger(program.deterministicPreflight.maxAgeMs)||program.deterministicPreflight.maxAgeMs<1||program.worker.profile.level===5))throw new Error("Deterministic preflight requires a finite observation lifetime and cannot bypass L5 review")
     if(program.fileObservation&&![program.fileObservation.maxFiles,program.fileObservation.maxBytes].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Native input observation needs explicit finite budgets")
@@ -270,7 +274,7 @@ export class RequestController {
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
-      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availableRoutines:this.runtime.routines.available(),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availablePermissionTransitions:(program.permissionTransitions??[]).map(({id,kind,permission,patterns,program})=>({id,kind,permission,patterns,program})),availableRoutines:this.runtime.routines.available(),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability or quota transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
       if(request.inputReplan)request.inputReplan.pending=false
       request.state="planning";delete request.reason;this.save(request);return
     }

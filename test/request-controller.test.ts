@@ -561,9 +561,9 @@ test("권한 응답은 사전 등록된 프로그램 전이만 선택하고 재�
     const base=install(r),authorization=base.authorization
     const target:ControllerProgram={...base,id:"permission-target",version:1,writeScopes:[...base.writeScopes,"approved.txt"]}
     r.control.requests.register(target)
-    const source:ControllerProgram={...base,id:"permission-source",version:1,permissionTransitions:[{id:"approved-write",permission:"write",patterns:["approved.txt"],program:{id:target.id,version:target.version},authorization}]}
+    const source:ControllerProgram={...base,id:"permission-source",version:1,permissionTransitions:[{id:"approved-write",kind:"capability",permission:"write",patterns:["approved.txt"],program:{id:target.id,version:target.version},authorization}]}
     r.control.requests.register(source)
-    assert.throws(()=>r.control.requests.register({...base,id:"invalid-transition",version:1,permissionTransitions:[{id:"missing",permission:"write",patterns:["missing.txt"],program:{id:"missing",version:1},authorization}]}),/target must be registered first/)
+    assert.throws(()=>r.control.requests.register({...base,id:"invalid-transition",version:1,permissionTransitions:[{id:"missing",kind:"capability",permission:"write",patterns:["missing.txt"],program:{id:"missing",version:1},authorization}]}),/target must be registered first/)
     await transport.submit(binding,"Write done",false)
     const first=r.control.requests.get(binding.messageID)!.plannerGrant!
     accept(r,first,[],{requiresEscalation:true,unresolvedQuestions:[{kind:"permission",transitionId:"approved-write"}]})
@@ -588,6 +588,35 @@ test("권한 응답은 사전 등록된 프로그램 전이만 선택하고 재�
     const context=JSON.parse(String(r.store.db.prepare("SELECT payload FROM context_manifests WHERE id=(SELECT json_extract(payload,'$.context.id') FROM activation_grants WHERE id=?)").get(second)!.payload))
     assert.ok(context.included.some((item:any)=>item.evidence.some((ref:any)=>ref.id===`permission-reply:${permission.id}`)))
   }finally{await transport.close();r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+test("quota 증액은 같은 계정의 더 높은 한도와 새 정책을 가진 등록 프로그램으로만 전이한다",()=>{
+  const r=createGraphRuntime(":memory:")
+  try {
+    const base=install(r),authorization=base.authorization
+    r.store.control.put("policy_versions","operator-policy",2,{id:"operator-policy",version:2,authorization})
+    const target:ControllerProgram={...base,id:"quota-target",version:1,policy:{id:"operator-policy",version:2},tokenLimit:200000}
+    r.control.requests.register(target)
+    const transition={id:"more-tokens",kind:"quota" as const,permission:"quota",patterns:["test:200000"],program:{id:target.id,version:target.version},authorization}
+    const source:ControllerProgram={...base,id:"quota-source",version:1,permissionTransitions:[transition]}
+    r.control.requests.register(source)
+    assert.throws(()=>r.control.requests.register({...base,id:"quota-without-policy",version:1,permissionTransitions:[{...transition,program:{id:base.id,version:base.version}}]}),/higher limit under a new registered policy/)
+    assert.throws(()=>r.control.requests.register({...base,id:"capability-quota",version:1,permissionTransitions:[{...transition,kind:"capability",program:{id:target.id,version:target.version}}]}),/cannot increase/)
+    r.control.requests.submit({id:"quota-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:source.id,version:source.version}})
+    r.control.requests.tick()
+    const first=r.control.requests.get("quota-request")!.plannerGrant!
+    const firstGrant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(first)!.payload)) as ActivationGrant
+    assert.ok(JSON.stringify(r.store.control.get("context_manifests",firstGrant.context.id,firstGrant.context.version)).includes("more-tokens"))
+    accept(r,first,[],{requiresEscalation:true,unresolvedQuestions:[{kind:"permission",transitionId:"more-tokens"}]})
+    r.control.requests.tick()
+    const permission=r.control.requests.permissions.pending("quota-request")[0]!
+    r.control.requests.permissions.answer("quota-request","user",permission.id,"once")
+    r.control.requests.tick()
+    const request=r.control.requests.get("quota-request")!,second=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)!.payload)) as ActivationGrant
+    assert.deepEqual(request.program,{id:target.id,version:target.version})
+    assert.deepEqual(second.policy,{id:"operator-policy",version:2})
+    assert.equal(second.profile.maxInputTokens+second.profile.maxOutputTokens<=target.tokenLimit,true)
+  }finally{r.close()}
 })
 
 
