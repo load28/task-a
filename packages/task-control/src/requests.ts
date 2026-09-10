@@ -21,6 +21,9 @@ import { RegionalRepairs } from "./regional-repairs.ts"
 import { assertControlledPlanActivation } from "./plan-admission.ts"
 import type { RoutineProposalItem,RoutineUse } from "./routines.ts"
 import { inputBoundaryEvidence } from "./input-boundary.ts"
+import { RequestPermissions } from "./request-permissions.ts"
+
+export interface PermissionTransition {id:string;permission:string;patterns:string[];program:VersionRef;authorization:VersionRef[]}
 
 export interface ControllerProgram {
   id:string; version:number; authorization:VersionRef[]; policy:VersionRef
@@ -37,6 +40,7 @@ export interface ControllerProgram {
   maxClarifications?:number
   maxInputReplans?:number
   deterministicPreflight?:{maxAgeMs:number}
+  permissionTransitions?:PermissionTransition[]
   maxLocalRepairs?:number
   replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number;selection?:{validator:string;candidateLimit:number;evaluationBudget:number;costUnit:string}}
 }
@@ -47,6 +51,7 @@ export interface ControlledRequest {
   evidence:VersionRef; state:"pending"|"resuming"|"planning"|"validating"|"executing"|"waiting"|"completed"|"failed"|"cancelled"
   reason?:string; plannerGrant?:string; planId?:string; obligationId?:string; proposal?:ProposedTask[]
   clarifications?:Array<{questionId:string;questions:string[];answers:string[][];evidence:VersionRef;source:VersionRef}>
+  permissionChanges?:Array<{permissionId:string;from:VersionRef;to:VersionRef;reply:"once"|"reject";evidence:VersionRef;source:VersionRef}>
   parentId?:string; amendments?:Array<{text:string;evidence:VersionRef}>
   inputReplan?:{cause:string;evidence:VersionRef;previousGrant:string;generation:number;pending:boolean;superseded:string[]}
   routineUses?:RoutineUse[]
@@ -61,6 +66,7 @@ export class RequestController {
   readonly repairs:LocalRepairs
   readonly regional:RegionalRepairs
   readonly questions:RequestQuestions
+  readonly permissions:RequestPermissions
   readonly workerQuestions:WorkerQuestions
   readonly specialistQuestions:SpecialistQuestions
   constructor(runtime:ControlRuntime) {
@@ -74,6 +80,7 @@ export class RequestController {
       CREATE INDEX IF NOT EXISTS request_draft_replacement_obligation ON request_draft_replacements(old_obligation_id);
       CREATE INDEX IF NOT EXISTS request_draft_replacement_pending ON request_draft_replacements(request_id,new_plan_id);`)
     this.questions=new RequestQuestions(this)
+    this.permissions=new RequestPermissions(this)
     this.workerQuestions=new WorkerQuestions(this)
     this.specialistQuestions=new SpecialistQuestions(this)
     this.repairs=new LocalRepairs(this)
@@ -81,6 +88,12 @@ export class RequestController {
   }
   get store(){return this.runtime.store}
   register(program:ControllerProgram):void {
+    if(new Set((program.permissionTransitions??[]).map(item=>item.id)).size!==(program.permissionTransitions??[]).length)throw new Error("Permission transition identities must be unique")
+    for(const transition of program.permissionTransitions??[]) {
+      if(!transition.id||!transition.permission||!transition.patterns.length||transition.patterns.some(pattern=>!pattern.trim())||!transition.authorization.length)throw new Error("Permission transition must be explicit and bounded")
+      transition.authorization.forEach(ref=>{if(!["user","code"].includes(this.runtime.evidence.require(ref).type))throw new Error("Permission transition requires operator authorization")})
+      if(!this.store.get("controller_programs",transition.program.id,transition.program.version))throw new Error("Permission transition target must be registered first")
+    }
     if(program.deterministicPreflight&&(!Number.isSafeInteger(program.deterministicPreflight.maxAgeMs)||program.deterministicPreflight.maxAgeMs<1||program.worker.profile.level===5))throw new Error("Deterministic preflight requires a finite observation lifetime and cannot bypass L5 review")
     if(program.fileObservation&&![program.fileObservation.maxFiles,program.fileObservation.maxBytes].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Native input observation needs explicit finite budgets")
     if(program.maxClarifications!==undefined&&(!Number.isSafeInteger(program.maxClarifications)||program.maxClarifications<0))throw new Error("Clarification quota must be explicit and nonnegative")
@@ -201,6 +214,7 @@ export class RequestController {
     request.inputReplan={cause,evidence,previousGrant:request.plannerGrant,generation,pending:true,superseded:[...new Set([...(previous?.superseded??[]),request.plannerGrant])]}
     this.runtime.admission.fence(request.taskId)
     this.questions.supersedeForChange(request.id,cause,true)
+    this.permissions.supersedeForChange(request.id,cause)
     // Reload question changes before storing the recovery state.
     const current=this.get(id)!
     current.inputReplan=request.inputReplan
@@ -244,17 +258,19 @@ export class RequestController {
         if(recovery.generation>(program.maxInputReplans??0))throw new Error("Input replanning quota exhausted")
       }
       if(request.state==="resuming") {
-        this.questions.assertCurrent(request,request.clarifications!.at(-1)!.questionId)
+        const permission=request.permissionChanges?.at(-1)
+        if(permission?.reply==="once"&&digest(permission.to)===digest(request.program))this.permissions.assertCurrent(request,permission.permissionId)
+        else this.questions.assertCurrent(request,request.clarifications!.at(-1)!.questionId)
         if(this.deliveryPending(request))return
-        const question=this.questions.get(request.clarifications!.at(-1)!.questionId)!
-        if(question.target) {
+        const question=request.clarifications?.length?this.questions.get(request.clarifications.at(-1)!.questionId):undefined
+        if(question?.target) {
           if(question.target.kind==="regional")this.regional.resume(request,program,question)
           else if(question.target.kind==="specialist") {if(!this.specialistQuestions.resume(request,program,question))return}
           else if(!this.workerQuestions.resume(request,program,question))return
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
-      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],availableRoutines:this.runtime.routines.available(),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Answers never extend registered capabilities. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availableRoutines:this.runtime.routines.available(),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
       if(request.inputReplan)request.inputReplan.pending=false
       request.state="planning";delete request.reason;this.save(request);return
     }
@@ -265,18 +281,21 @@ export class RequestController {
       if(row?.state!=="completed")return
       this.assertPlannerInputsCurrent(request)
       const output=JSON.parse(String(row.payload)).output as AgentOutput
+      if(output.requiresEscalation) {
+        this.permissions.ask(request,program,output)
+        request.state="waiting";request.reason="등록된 권한 전이에 대한 사용자 응답을 기다리고 있습니다.";this.save(request);return
+      }
       if(output.unresolvedQuestions.length) {
         this.questions.ask(request,program,output)
         request.state="waiting";request.reason="계획에 필요한 사용자 답변을 기다리고 있습니다.";this.save(request);return
       }
-      if(output.requiresEscalation)throw new Error("Planner escalation requires supporting evidence and scoped policy review")
       const expanded=this.runtime.routines.expand(output.proposedTasks as RoutineProposalItem[],request.text,request.id),proposal=expanded.proposal
       this.validateProposal(proposal,program)
       const plan=engine.createDraftPlan({title:request.text.slice(0,160),goal:request.text,requestText:request.text,summary:"Controller-validated structured proposal",nodes:proposal.map(item=>item.node)})
       request.proposal=proposal;request.routineUses=expanded.uses;request.planId=plan.planId
       this.store.db.prepare("INSERT INTO controlled_plans VALUES(?,1)").run(plan.planId)
       this.store.db.prepare("INSERT INTO request_plan_admissions VALUES(?,?,'validating')").run(plan.planId,request.id)
-      const content={request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],planId:plan.planId,proposal}
+      const content={request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],planId:plan.planId,proposal}
       const planner=JSON.parse(String(this.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)!.payload)) as ActivationGrant
       const tuple=[...planner.inputVector,{entityId:plan.planId,port:"proposal",view:"request-plan",version:1,hash:digest(content)}]
       const reason=this.runtime.evidence.put({id:`proposal:${request.id}:${plan.planId}`,version:1,type:"agent",source:request.plannerGrant!,producer:program.planner.role.id,validatorVersion:"structured-proposal/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:planner.inputVector,confidence:output.confidence,expiresAt:null})
@@ -389,7 +408,7 @@ export class RequestController {
     const snapshot=this.runtime.engine.signals.capture(taskId)
     this.runtime.drain()
     const vector=currentInputVector(this.runtime.engine,taskId)
-    const context=controlledContext(this.runtime,taskId,role,program.policy,entry.profile,[{id:`request-context:${taskId}`,version:1,kind:"task",content:canonical(precision?{request:content,reasoningSelection:precision}:content),required:true,depth:0,relevance:1,level:0,dependencies:vector,path:[request.id,taskId],evidence:[request.evidence,...(request.clarifications??[]).flatMap(item=>[item.source,item.evidence])]},...(request.clarifications??[]).map(item=>({id:item.source.id,version:item.source.version,kind:"evidence" as const,content:canonical(this.runtime.evidence.require(item.source)),required:true,depth:0,relevance:1,level:0 as const,dependencies:vector,path:[request.id,taskId],evidence:[item.source,item.evidence]}))])
+    const context=controlledContext(this.runtime,taskId,role,program.policy,entry.profile,[{id:`request-context:${taskId}`,version:1,kind:"task",content:canonical(precision?{request:content,reasoningSelection:precision}:content),required:true,depth:0,relevance:1,level:0,dependencies:vector,path:[request.id,taskId],evidence:[request.evidence,...(request.clarifications??[]).flatMap(item=>[item.source,item.evidence]),...(request.permissionChanges??[]).flatMap(item=>[item.source,item.evidence])]},...(request.clarifications??[]).map(item=>({id:item.source.id,version:item.source.version,kind:"evidence" as const,content:canonical(this.runtime.evidence.require(item.source)),required:true,depth:0,relevance:1,level:0 as const,dependencies:vector,path:[request.id,taskId],evidence:[item.source,item.evidence]})),...(request.permissionChanges??[]).map(item=>({id:item.source.id,version:item.source.version,kind:"evidence" as const,content:canonical(this.runtime.evidence.require(item.source)),required:true,depth:0,relevance:1,level:0 as const,dependencies:vector,path:[request.id,taskId],evidence:[item.source,item.evidence]}))])
     this.store.put("context_manifests",context.id,1,context)
     // The primary role discharges explicit user work; no artificial risk/failure
     // signal is manufactured to cross an optional specialist threshold.
@@ -403,6 +422,7 @@ export class RequestController {
       if(!request||request.state==="completed"||request.state==="cancelled")return
       for(const taskId of [request.taskId,...this.tasks(id)])this.runtime.admission.fence(taskId)
       this.questions.cancel(request.id)
+      this.permissions.cancel(request.id)
       request.state="cancelled";this.save(request)
       this.store.event({id:randomUUID(),type:"RequestCancelled",entityId:request.taskId,correlationId:id,schemaVersion:1,timestamp:Date.now(),payload:{requestId:id}})
     })

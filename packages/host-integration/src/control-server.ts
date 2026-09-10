@@ -43,12 +43,12 @@ export class ControlServer implements HarnessServer {
     const request=controller.get(binding.messageID)
     if(!request)return {state:"interrupted",text:"제어 이벤트를 찾을 수 없습니다.",questions:[],permissions:[],activity:[]}
     const state:ServerState["state"]=request.state==="cancelled"?"interrupted":["completed","failed","waiting"].includes(request.state)?request.state as ServerState["state"]:"running"
-    return {state,text:request.reason??(state==="completed"?(request.planOnly?"계획 제안 검증을 완료했습니다.":"등록된 검증기로 실행 결과를 확인했습니다."):`제어 요청 상태: ${request.state}`),executionTaskIds:controller.tasks(request.id),questions:controller.questions.pending(request.id).map(question=>({id:question.id,sessionID:question.sessionId,questions:question.questions.map(text=>({question:text,header:"계획 확인",options:[],custom:true}))})),permissions:[],activity:[]}
+    return {state,text:request.reason??(state==="completed"?(request.planOnly?"계획 제안 검증을 완료했습니다.":"등록된 검증기로 실행 결과를 확인했습니다."):`제어 요청 상태: ${request.state}`),executionTaskIds:controller.tasks(request.id),questions:controller.questions.pending(request.id).map(question=>({id:question.id,sessionID:question.sessionId,questions:question.questions.map(text=>({question:text,header:"계획 확인",options:[],custom:true}))})),permissions:controller.permissions.pending(request.id).map(item=>({id:item.id,sessionID:item.sessionId,permission:item.transition.permission,patterns:item.transition.patterns,metadata:{transitionId:item.transition.id},always:[]})),activity:[]}
   }
   async reply(binding:ServerBinding,input:Parameters<HarnessServer["reply"]>[1]):Promise<void> {
-    if(input.kind!=="question")throw new Error("Permission replies cannot expand a registered controller program")
     const controller=this.controller(binding.workspace)
-    controller.questions.answer(binding.messageID,binding.sessionID,input.requestID,input.answers)
+    if(input.kind==="permission")controller.permissions.answer(binding.messageID,binding.sessionID,input.requestID,input.reply)
+    else controller.questions.answer(binding.messageID,binding.sessionID,input.requestID,input.answers)
     controller.tick()
   }
   async cancel(binding:ServerBinding):Promise<void> {

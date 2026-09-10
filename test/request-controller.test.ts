@@ -550,6 +550,46 @@ for(const mode of ["resume","budget","budget-stale","cancel","stale","quota","un
   }finally{await transport.close();r.close();rmSync(dir,{recursive:true,force:true})}
 })
 
+test("권한 응답은 사전 등록된 프로그램 전이만 선택하고 재시작 뒤 새 계획 grant로 재개한다",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"permission-resume-")),database=join(dir,"graph.db")
+  let r=createGraphRuntime(database)
+  const binding={workspace:dir,sessionID:"user",messageID:"permission-request"}
+  const config={version:1 as const,directory:dir,database,socket:join(dir,"host.sock"),workspaces:[{path:dir}],autoContinue:false,maxRuns:1,controlProgram:{id:"permission-source",version:1}}
+  const server=()=>new ControlServer(config,()=>r.control,async()=>({stopped:true,evidence:"fixture"}))
+  let transport=server()
+  try {
+    const base=install(r),authorization=base.authorization
+    const target:ControllerProgram={...base,id:"permission-target",version:1,writeScopes:[...base.writeScopes,"approved.txt"]}
+    r.control.requests.register(target)
+    const source:ControllerProgram={...base,id:"permission-source",version:1,permissionTransitions:[{id:"approved-write",permission:"write",patterns:["approved.txt"],program:{id:target.id,version:target.version},authorization}]}
+    r.control.requests.register(source)
+    assert.throws(()=>r.control.requests.register({...base,id:"invalid-transition",version:1,permissionTransitions:[{id:"missing",permission:"write",patterns:["missing.txt"],program:{id:"missing",version:1},authorization}]}),/target must be registered first/)
+    await transport.submit(binding,"Write done",false)
+    const first=r.control.requests.get(binding.messageID)!.plannerGrant!
+    accept(r,first,[],{requiresEscalation:true,unresolvedQuestions:[{kind:"permission",transitionId:"approved-write"}]})
+    let view=await transport.inspect(binding)
+    assert.equal(view.state,"waiting")
+    assert.equal(view.questions.length,0)
+    assert.equal(view.permissions.length,1)
+    assert.deepEqual(view.permissions[0]!.patterns,["approved.txt"])
+    const permission=view.permissions[0]!
+    await transport.close();r.close();r=createGraphRuntime(database);transport=server()
+    view=await transport.inspect(binding)
+    assert.deepEqual(view.permissions,[permission])
+    await assert.rejects(transport.reply({...binding,sessionID:"foreign"},{kind:"permission",requestID:permission.id,reply:"once"}),/session/)
+    await assert.rejects(transport.reply(binding,{kind:"question",requestID:permission.id,answers:[["once"]]}),/Question/)
+    await transport.reply(binding,{kind:"permission",requestID:permission.id,reply:"once"})
+    await transport.reply(binding,{kind:"permission",requestID:permission.id,reply:"once"})
+    const resumed=r.control.requests.get(binding.messageID)!,second=resumed.plannerGrant!
+    assert.deepEqual(resumed.program,{id:target.id,version:target.version})
+    assert.notEqual(second,first)
+    assert.equal(r.control.requests.permissions.get(permission.id)!.state,"approved")
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='RequestPermissionApproved'").get()!.n,1)
+    const context=JSON.parse(String(r.store.db.prepare("SELECT payload FROM context_manifests WHERE id=(SELECT json_extract(payload,'$.context.id') FROM activation_grants WHERE id=?)").get(second)!.payload))
+    assert.ok(context.included.some((item:any)=>item.evidence.some((ref:any)=>ref.id===`permission-reply:${permission.id}`)))
+  }finally{await transport.close();r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
 
 for(const mode of ["resume","budget","stale","cancel","quota"] as const)test(`worker 질문의 기대치 보존 재개: ${mode}`,async()=>{
   const dir=mkdtempSync(join(tmpdir(),"worker-question-")),database=join(dir,"graph.db")
