@@ -146,11 +146,14 @@ export class PolicyMeasurements {
         if(store.db.prepare("SELECT 1 FROM policy_measurement_pairs WHERE episode=?").get(pair.episode))throw new Error("Measured episodes cannot be reused for a new policy study")
         const a=grant(store,pair.baseline),b=grant(store,pair.candidate)
         for(const g of [a,b]) {
-          const state=store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(g.id)!.state
-          // Even an already failed result cannot be selected retrospectively.
-          if(state!=="issued"||store.db.prepare("SELECT 1 FROM agent_runs WHERE grant_id=?").get(g.id))throw new Error("Enroll both arms before execution begins")
-          if(g.executionMode==="task"||g.writeScopes.length||g.allowedTools.some(tool=>tool!=="task_graph_cognitive_context"))throw new Error("Paired policy measurement requires cognition over a frozen context without external reads")
           if((g.profile.provider==="test"?"synthetic":"observed")!==study.sampleType)throw new Error("Synthetic measurements cannot be relabeled observed")
+          const state=store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(g.id)!.state
+          const run=store.db.prepare("SELECT state,payload FROM agent_runs WHERE grant_id=?").get(g.id)
+          // Grant issuance creates an inert candidate lifecycle record. Enrollment
+          // remains prospective until that record becomes active or terminal.
+          const candidate=run&&run.state==="candidate"&&digest(JSON.parse(String(run.payload)).grant)===digest(g)
+          if(state!=="issued"||run&&!candidate)throw new Error("Enroll both arms before execution begins")
+          if(g.executionMode==="task"||g.writeScopes.length||g.allowedTools.some(tool=>tool!=="task_graph_cognitive_context"))throw new Error("Paired policy measurement requires cognition over a frozen context without external reads")
         }
         const owner=store.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(a.taskId)
         if(pair.episode!==String(owner?.request_id??a.taskId))throw new Error("Episode identity must follow the actual request or standalone task")

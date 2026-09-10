@@ -23,6 +23,7 @@ import { ObservedInputs } from "./observed-inputs.ts"
 import { FileObservations } from "./file-observations.ts"
 import { RoleRouter } from "./role-router.ts"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
+import { RoutineRegistry } from "./routines.ts"
 import { digest } from "./value.ts"
 import type { SystemEvent } from "./store.ts"
 import { randomUUID } from "node:crypto"
@@ -38,6 +39,7 @@ export class ControlRuntime {
   readonly preflight:TaskPreflight
   readonly admission:Admission
   readonly roleLifecycle:RoleRegistry
+  readonly routines:RoutineRegistry
   readonly assumptions:AssumptionLedger
   readonly decisions:DecisionLedger
   readonly validators:ValidatorRegistry
@@ -65,6 +67,7 @@ export class ControlRuntime {
     this.validators=new ValidatorRegistry(engine.store.control)
     this.replanning=new ScopedReplanning(engine)
     this.inputs=new ObservedInputs(this)
+    this.routines=new RoutineRegistry(this)
     this.requests=new RequestController(this)
     this.roles=new RoleRouter(this)
     this.files=new FileObservations(this.store,(taskId,input,evidence)=>{

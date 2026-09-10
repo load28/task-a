@@ -19,6 +19,7 @@ import { WorkerQuestions } from "./worker-questions.ts"
 import { RequestQuestions } from "./request-questions.ts"
 import { RegionalRepairs } from "./regional-repairs.ts"
 import { assertControlledPlanActivation } from "./plan-admission.ts"
+import type { RoutineProposalItem,RoutineUse } from "./routines.ts"
 
 export interface ControllerProgram {
   id:string; version:number; authorization:VersionRef[]; policy:VersionRef
@@ -47,6 +48,7 @@ export interface ControlledRequest {
   clarifications?:Array<{questionId:string;questions:string[];answers:string[][];evidence:VersionRef;source:VersionRef}>
   parentId?:string; amendments?:Array<{text:string;evidence:VersionRef}>
   inputReplan?:{cause:string;evidence:VersionRef;previousGrant:string;generation:number;pending:boolean;superseded:string[]}
+  routineUses?:RoutineUse[]
 }
 const allowedTools=new Set(["task_graph_cognitive_context","task_graph_cognitive_read","task_graph_cognitive_write"])
 const validScope=(scope:string)=>scope==="."||!!scope&&!scope.startsWith("/")&&!scope.includes("\\")&&!scope.includes("\0")&&!scope.split("/").some(p=>["",".","..",".git",".codex",".agents",".task-agent"].includes(p))
@@ -158,7 +160,7 @@ export class RequestController {
       const request=this.submit(input)
       request.parentId=parentId;request.text=parent.text;if(parent.clarifications)request.clarifications=parent.clarifications;request.amendments=[...(parent.amendments??[]),{text:input.text,evidence:request.evidence}]
       if(parent.planId&&!input.planOnly) {
-        request.planId=parent.planId;request.proposal=parent.proposal;request.obligationId=parent.obligationId
+        request.planId=parent.planId;request.proposal=parent.proposal;request.routineUses=parent.routineUses;request.obligationId=parent.obligationId
         request.state="executing"
         this.store.db.prepare("INSERT INTO control_request_tasks SELECT ?,task_id,node_id FROM control_request_tasks WHERE request_id=?").run(request.id,parent.id)
         this.store.db.prepare("UPDATE request_plan_admissions SET request_id=? WHERE plan_id=?").run(request.id,parent.planId)
@@ -187,7 +189,7 @@ export class RequestController {
       const revision=this.runtime.engine.store.findPlanRevision(plan.id,1)!
       this.runtime.engine.store.updatePlanRevision({...revision,state:"superseded"})
       this.store.db.prepare("UPDATE request_plan_admissions SET state='superseded' WHERE plan_id=?").run(plan.id)
-      delete request.planId;delete request.obligationId;delete request.proposal
+      delete request.planId;delete request.obligationId;delete request.proposal;delete request.routineUses
       this.save(request)
       this.store.event({id:`draft-retired:${plan.id}`,type:"RequestDraftSuperseded",entityId:request.taskId,correlationId:id,causationId:cause,schemaVersion:1,timestamp:Date.now(),payload:{requestId:id,planId:plan.id,cause,evidence}})
     }
@@ -251,7 +253,7 @@ export class RequestController {
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
-      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Answers never extend registered capabilities. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],availableRoutines:this.runtime.routines.available(),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Answers never extend registered capabilities. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
       if(request.inputReplan)request.inputReplan.pending=false
       request.state="planning";delete request.reason;this.save(request);return
     }
@@ -267,20 +269,21 @@ export class RequestController {
         request.state="waiting";request.reason="계획에 필요한 사용자 답변을 기다리고 있습니다.";this.save(request);return
       }
       if(output.requiresEscalation)throw new Error("Planner escalation requires supporting evidence and scoped policy review")
-      const proposal=output.proposedTasks as ProposedTask[]
+      const expanded=this.runtime.routines.expand(output.proposedTasks as RoutineProposalItem[],request.text,request.id),proposal=expanded.proposal
       this.validateProposal(proposal,program)
       const plan=engine.createDraftPlan({title:request.text.slice(0,160),goal:request.text,requestText:request.text,summary:"Controller-validated structured proposal",nodes:proposal.map(item=>item.node)})
-      request.proposal=proposal;request.planId=plan.planId
+      request.proposal=proposal;request.routineUses=expanded.uses;request.planId=plan.planId
       this.store.db.prepare("INSERT INTO controlled_plans VALUES(?,1)").run(plan.planId)
       this.store.db.prepare("INSERT INTO request_plan_admissions VALUES(?,?,'validating')").run(plan.planId,request.id)
       const content={request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],planId:plan.planId,proposal}
       const reason=this.runtime.evidence.put({id:`proposal:${request.id}:${plan.planId}`,version:1,type:"agent",source:request.plannerGrant!,producer:program.planner.role.id,validatorVersion:"structured-proposal/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:output.confidence,expiresAt:null})
-      const obligation=this.runtime.evidence.createObligation({entityId:request.taskId,tuple:[{entityId:plan.planId,port:"proposal",view:"request-plan",version:1,hash:digest(content)}],kind:"request-plan",mandatory:true,validators:program.planValidators,reason:[request.evidence,...(request.clarifications??[]).map(item=>item.evidence),reason]})
+      const obligation=this.runtime.evidence.createObligation({entityId:request.taskId,tuple:[{entityId:plan.planId,port:"proposal",view:"request-plan",version:1,hash:digest(content)}],kind:"request-plan",mandatory:true,validators:program.planValidators,reason:[request.evidence,...(request.clarifications??[]).map(item=>item.evidence),...this.runtime.routines.evidenceFor(request.routineUses??[]),reason]})
       this.store.db.prepare("UPDATE request_draft_replacements SET new_plan_id=?,new_obligation_id=? WHERE request_id=? AND new_plan_id IS NULL").run(plan.planId,obligation.id,request.id)
       request.obligationId=obligation.id;request.state="validating";this.save(request);return
     }
     if(request.state==="validating") {
       this.assertPlannerInputsCurrent(request)
+      this.runtime.routines.evidenceFor(request.routineUses??[])
       const obligation=this.runtime.evidence.obligation(request.obligationId!)!
       if(!this.runtime.evidence.independentlySatisfied(obligation))return
       const plan=engine.store.findWorkPlan(request.planId!)!
