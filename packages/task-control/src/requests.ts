@@ -30,8 +30,11 @@ export interface ControllerProgram {
   workerPrecision?:{profiles:ReasoningProfile[];failureThresholds:Array<{minimumFailures:number;profileId:string}>}
   adversarialValidator?:string
   integrationValidators?:Record<typeof INTEGRATION_DIMENSIONS[number],string>
+  observedInputs?:VersionRef[]
   fileObservation?:{maxFiles:number;maxBytes:number}
   maxClarifications?:number
+  maxInputReplans?:number
+  deterministicPreflight?:{maxAgeMs:number}
   maxLocalRepairs?:number
   replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number;selection?:{validator:string;candidateLimit:number;evaluationBudget:number;costUnit:string}}
 }
@@ -43,6 +46,7 @@ export interface ControlledRequest {
   reason?:string; plannerGrant?:string; planId?:string; obligationId?:string; proposal?:ProposedTask[]
   clarifications?:Array<{questionId:string;questions:string[];answers:string[][];evidence:VersionRef;source:VersionRef}>
   parentId?:string; amendments?:Array<{text:string;evidence:VersionRef}>
+  inputReplan?:{cause:string;evidence:VersionRef;previousGrant:string;generation:number;pending:boolean;superseded:string[]}
 }
 const allowedTools=new Set(["task_graph_cognitive_context","task_graph_cognitive_read","task_graph_cognitive_write"])
 const validScope=(scope:string)=>scope==="."||!!scope&&!scope.startsWith("/")&&!scope.includes("\\")&&!scope.includes("\0")&&!scope.split("/").some(p=>["",".","..",".git",".codex",".agents",".task-agent"].includes(p))
@@ -60,8 +64,12 @@ export class RequestController {
     this.runtime=runtime
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS control_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,task_id TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS control_request_session ON control_requests(session_id);
+      CREATE INDEX IF NOT EXISTS control_request_task ON control_requests(task_id);
       CREATE TABLE IF NOT EXISTS control_request_tasks(request_id TEXT NOT NULL,task_id TEXT NOT NULL,node_id TEXT NOT NULL,PRIMARY KEY(request_id,task_id));`)
     this.store.db.exec("CREATE TABLE IF NOT EXISTS request_plan_admissions(plan_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,state TEXT NOT NULL)")
+    this.store.db.exec(`CREATE TABLE IF NOT EXISTS request_draft_replacements(old_plan_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,old_obligation_id TEXT NOT NULL,new_plan_id TEXT,new_obligation_id TEXT,cause TEXT NOT NULL,evidence TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS request_draft_replacement_obligation ON request_draft_replacements(old_obligation_id);
+      CREATE INDEX IF NOT EXISTS request_draft_replacement_pending ON request_draft_replacements(request_id,new_plan_id);`)
     this.questions=new RequestQuestions(this)
     this.workerQuestions=new WorkerQuestions(this)
     this.specialistQuestions=new SpecialistQuestions(this)
@@ -70,14 +78,17 @@ export class RequestController {
   }
   get store(){return this.runtime.store}
   register(program:ControllerProgram):void {
+    if(program.deterministicPreflight&&(!Number.isSafeInteger(program.deterministicPreflight.maxAgeMs)||program.deterministicPreflight.maxAgeMs<1||program.worker.profile.level===5))throw new Error("Deterministic preflight requires a finite observation lifetime and cannot bypass L5 review")
     if(program.fileObservation&&![program.fileObservation.maxFiles,program.fileObservation.maxBytes].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Native input observation needs explicit finite budgets")
     if(program.maxClarifications!==undefined&&(!Number.isSafeInteger(program.maxClarifications)||program.maxClarifications<0))throw new Error("Clarification quota must be explicit and nonnegative")
+    if(program.maxInputReplans!==undefined&&(!Number.isSafeInteger(program.maxInputReplans)||program.maxInputReplans<0))throw new Error("Input replanning quota must be explicit and nonnegative")
     if(program.maxLocalRepairs!==undefined&&(!Number.isSafeInteger(program.maxLocalRepairs)||program.maxLocalRepairs<0))throw new Error("Local repair quota must be explicit and nonnegative")
     if(program.replanner&&(!Number.isSafeInteger(program.replanner.maxAttempts)||program.replanner.maxAttempts<1||!program.replanner.validators.length||program.maxLocalRepairs===undefined))throw new Error("Regional repair requires explicit local/region quotas and validators")
     if(program.replanner?.selection) {
       const selection=program.replanner.selection
       if(!selection.costUnit||![selection.candidateLimit,selection.evaluationBudget].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Region selection requires explicit finite budgets and a common cost unit")
     }
+    for(const ref of program.observedInputs??[])this.runtime.inputs.definition(ref)
     validatePredictionPolicy(program.predictionPolicy)
     if(!program.id||!Number.isSafeInteger(program.version)||program.version<1||!program.authorization.length||!program.planValidators.length||!program.observationValidators.length||!program.account||!Number.isSafeInteger(program.tokenLimit)||program.tokenLimit<1||!Number.isSafeInteger(program.maxTasks)||program.maxTasks<1||!Number.isSafeInteger(program.grantLifetimeMs)||program.grantLifetimeMs<1)throw new Error("Incomplete controller program")
     if([...program.readScopes,...program.writeScopes].some(scope=>!validScope(scope)))throw new Error("Invalid program file scope")
@@ -158,6 +169,43 @@ export class RequestController {
     })
   }
   private save(request:ControlledRequest):void {this.store.db.prepare("UPDATE control_requests SET state=?,payload=? WHERE id=?").run(request.state,canonical(request),request.id)}
+  /** A changed observed input authorizes only a bounded new planning episode.
+   * It is not a retry of a transport failure or permission to reuse a stale plan. */
+  observedInputChanged(id:string,cause:string,evidence:VersionRef):void {
+    this.store.atomic(()=>this.changeObservedInput(id,cause,evidence))
+  }
+  private changeObservedInput(id:string,cause:string,evidence:VersionRef):void {
+    const request=this.get(id)
+    if(!request?.plannerGrant||!["planning","validating","waiting","pending"].includes(request.state))return
+    if(request.planId) {
+      const plan=this.runtime.engine.store.findWorkPlan(request.planId)
+      if(!plan||plan.activeRevision||plan.rootTaskId||plan.state!=="awaiting_approval"||plan.currentRevision!==1||!request.obligationId)return
+      if(this.runtime.engine.store.planLinks(plan.id,1).length)return
+      this.runtime.evidence.require(evidence)
+      this.store.db.prepare("INSERT INTO request_draft_replacements VALUES(?,?,?,NULL,NULL,?,?)").run(plan.id,id,request.obligationId,cause,canonical(evidence))
+      this.runtime.engine.store.updateWorkPlan({...plan,state:"cancelled",updatedAt:new Date().toISOString()})
+      const revision=this.runtime.engine.store.findPlanRevision(plan.id,1)!
+      this.runtime.engine.store.updatePlanRevision({...revision,state:"superseded"})
+      this.store.db.prepare("UPDATE request_plan_admissions SET state='superseded' WHERE plan_id=?").run(plan.id)
+      delete request.planId;delete request.obligationId;delete request.proposal
+      this.save(request)
+      this.store.event({id:`draft-retired:${plan.id}`,type:"RequestDraftSuperseded",entityId:request.taskId,correlationId:id,causationId:cause,schemaVersion:1,timestamp:Date.now(),payload:{requestId:id,planId:plan.id,cause,evidence}})
+    }
+    const program=request.program&&this.store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version),previous=request.inputReplan
+    if(previous?.cause===cause)return
+    this.runtime.evidence.require(evidence)
+    const generation=previous?.pending?previous.generation:(previous?.generation??0)+1
+    request.inputReplan={cause,evidence,previousGrant:request.plannerGrant,generation,pending:true,superseded:[...new Set([...(previous?.superseded??[]),request.plannerGrant])]}
+    this.runtime.admission.fence(request.taskId)
+    this.questions.supersedeForChange(request.id,cause,true)
+    // Reload question changes before storing the recovery state.
+    const current=this.get(id)!
+    current.inputReplan=request.inputReplan
+    current.state=program&&program.authorization.every(ref=>this.runtime.evidence.valid(ref))&&generation<=(program.maxInputReplans??0)?"pending":"waiting"
+    current.reason=current.state==="pending"?"Changed input requires a fresh bounded plan":"Input replanning quota exhausted"
+    this.save(current)
+    this.store.event({id:`input-plan-recovery:${digest({id,cause})}`,type:"InputPlanReplanningRequested",entityId:request.taskId,correlationId:id,causationId:cause,schemaVersion:1,timestamp:Date.now(),payload:{requestId:id,...current.inputReplan,state:current.state}})
+  }
   tasks(id:string):string[]{return this.store.db.prepare("SELECT task_id FROM control_request_tasks WHERE request_id=?").all(id).map(row=>String(row.task_id))}
   tick():void {
     this.runtime.roles.retry()
@@ -166,7 +214,7 @@ export class RequestController {
         const request=this.get(String(row.id))!
         try {this.store.atomic(()=>this.advance(request))} catch(error) {
           const unchanged=this.get(request.id)!
-          if(unchanged.state!=="resuming"||!(error instanceof AdmissionBudgetUnavailableError))unchanged.state="waiting";unchanged.reason=error instanceof Error?error.message:"Control evaluation failed";this.save(unchanged)
+          if(!(error instanceof AdmissionBudgetUnavailableError)||unchanged.state!=="resuming"&&!unchanged.inputReplan?.pending)unchanged.state="waiting";unchanged.reason=error instanceof Error?error.message:"Control evaluation failed";this.save(unchanged)
         }
       })
     }
@@ -179,7 +227,19 @@ export class RequestController {
   }
   private advance(request:ControlledRequest):void {
     const program=this.program(request),engine=this.runtime.engine
+    this.runtime.inputs.bind(request.taskId,program.observedInputs??[])
+    if(!this.runtime.inputs.ensure(program.observedInputs??[]))return
     if(request.state==="pending"||request.state==="resuming") {
+      if(request.inputReplan?.pending) {
+        const recovery=request.inputReplan
+        this.runtime.evidence.require(recovery.evidence)
+        const previous=this.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(recovery.previousGrant)
+        const prior=previous&&JSON.parse(String(previous.payload)) as ActivationGrant|undefined
+        const hasDispatch=this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()
+        const delivery=hasDispatch&&this.store.db.prepare("SELECT state FROM grant_dispatches WHERE grant_id=?").get(recovery.previousGrant)
+        if(delivery&&!['failed','cancelled','completed'].includes(String(delivery.state))||prior?.worker&&!delivery&&previous?.state!=="completed")return
+        if(recovery.generation>(program.maxInputReplans??0))throw new Error("Input replanning quota exhausted")
+      }
       if(request.state==="resuming") {
         this.questions.assertCurrent(request,request.clarifications!.at(-1)!.questionId)
         if(this.deliveryPending(request))return
@@ -191,7 +251,8 @@ export class RequestController {
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
-      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Answers never extend registered capabilities. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Answers never extend registered capabilities. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      if(request.inputReplan)request.inputReplan.pending=false
       request.state="planning";delete request.reason;this.save(request);return
     }
     if(request.state==="planning") {
@@ -199,6 +260,7 @@ export class RequestController {
       const state=this.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(request.plannerGrant!)?.state
       if(state==="fenced")throw new Error("Planning grant was fenced; automatic model retry is prohibited")
       if(row?.state!=="completed")return
+      this.assertPlannerInputsCurrent(request)
       const output=JSON.parse(String(row.payload)).output as AgentOutput
       if(output.unresolvedQuestions.length) {
         this.questions.ask(request,program,output)
@@ -212,13 +274,15 @@ export class RequestController {
       this.store.db.prepare("INSERT INTO controlled_plans VALUES(?,1)").run(plan.planId)
       this.store.db.prepare("INSERT INTO request_plan_admissions VALUES(?,?,'validating')").run(plan.planId,request.id)
       const content={request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],planId:plan.planId,proposal}
-      const reason=this.runtime.evidence.put({id:`proposal:${request.id}`,version:1,type:"agent",source:request.plannerGrant!,producer:program.planner.role.id,validatorVersion:"structured-proposal/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:output.confidence,expiresAt:null})
+      const reason=this.runtime.evidence.put({id:`proposal:${request.id}:${plan.planId}`,version:1,type:"agent",source:request.plannerGrant!,producer:program.planner.role.id,validatorVersion:"structured-proposal/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:output.confidence,expiresAt:null})
       const obligation=this.runtime.evidence.createObligation({entityId:request.taskId,tuple:[{entityId:plan.planId,port:"proposal",view:"request-plan",version:1,hash:digest(content)}],kind:"request-plan",mandatory:true,validators:program.planValidators,reason:[request.evidence,...(request.clarifications??[]).map(item=>item.evidence),reason]})
+      this.store.db.prepare("UPDATE request_draft_replacements SET new_plan_id=?,new_obligation_id=? WHERE request_id=? AND new_plan_id IS NULL").run(plan.planId,obligation.id,request.id)
       request.obligationId=obligation.id;request.state="validating";this.save(request);return
     }
     if(request.state==="validating") {
+      this.assertPlannerInputsCurrent(request)
       const obligation=this.runtime.evidence.obligation(request.obligationId!)!
-      if(!this.runtime.evidence.satisfied(obligation))return
+      if(!this.runtime.evidence.independentlySatisfied(obligation))return
       const plan=engine.store.findWorkPlan(request.planId!)!
       if(plan.currentRevision!==1||plan.state!=="awaiting_approval"||digest(engine.store.planNodes(plan.id,1))!==digest(request.proposal!.map(item=>item.node)))throw new Error("Validated proposal changed before activation")
       if(request.planOnly){if(this.deliveryPending(request))return;this.finish(request);return}
@@ -233,6 +297,7 @@ export class RequestController {
         this.store.db.prepare("INSERT OR IGNORE INTO controlled_tasks VALUES(?,?)").run(link.taskId,request.id)
         // Group nodes derive completion from their children; only leaves execute.
         if(engine.store.childTasks(link.taskId).length)continue
+        this.runtime.inputs.bind(link.taskId,program.observedInputs??[])
         this.runtime.pinExpectation({...proposed.expectation,id:link.taskId,taskId:link.taskId,version:1,specHash:engine.signals.capture(link.taskId).specHash,evidence:obligation.evidence},program.predictionPolicy,program.observationValidators)
       }
       this.registerIntegration(request,program)
@@ -252,7 +317,13 @@ export class RequestController {
         if(this.repairs.advance(request,program,id))continue
         const existing=this.store.db.prepare("SELECT state FROM activation_grants WHERE task_id=?").all(id)
         if(existing.some(row=>row.state==="fenced"))throw new Error("Worker grant was fenced; scoped recovery is required")
-        if(task.status==="ready"&&!existing.length)this.issue(request,program,id,"worker",{request:request.text,questionContract:"For missing user information return unresolvedQuestions as {kind: user, question: string} and requiresEscalation=false; do not claim completion.",task:engine.requireTask(id),expectation:this.store.get("task_expectations",id,this.store.head("task_expectations",id))})
+        if(task.status==="ready"&&!existing.length) {
+          const preflight=this.runtime.preflight.check(id,program)
+          if(preflight.state==="pending")continue
+          if(preflight.state==="solved"&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_reservations'").get()&&this.store.db.prepare("SELECT 1 FROM task_reservations LIMIT 1").get())continue
+          const grant=this.issue(request,program,id,"worker",{request:request.text,questionContract:"For missing user information return unresolvedQuestions as {kind: user, question: string} and requiresEscalation=false; do not claim completion.",task:engine.requireTask(id),expectation:this.store.get("task_expectations",id,this.store.head("task_expectations",id))},undefined,undefined,Infinity,preflight.state==="solved"?preflight.id:undefined)
+          if(grant.profile.level===1)this.runtime.preflight.execute(grant)
+        }
       }
       const ids=this.tasks(request.id)
       if(ids.length&&ids.every(id=>["verified","integrated"].includes(engine.requireTask(id).status))&&!controlCompletionMissing(engine,ids).length&&!this.runtime.evidence.unresolved(request.taskId).length&&!this.deliveryPending(request)) {
@@ -279,9 +350,16 @@ export class RequestController {
   }
   private deliveryPending(request:ControlledRequest):boolean {
     if(!this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get())return false
-    const rows=this.store.db.prepare("SELECT d.state FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE g.task_id=? OR g.task_id IN (SELECT task_id FROM control_request_tasks WHERE request_id=?)").all(request.taskId,request.id)
+    const rows=this.store.db.prepare("SELECT d.state,g.id FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE g.task_id=? OR g.task_id IN (SELECT task_id FROM control_request_tasks WHERE request_id=?)").all(request.taskId,request.id).filter(row=>!request.inputReplan?.superseded.includes(String(row.id))||!["failed","cancelled"].includes(String(row.state)))
     if(rows.some(row=>["failed","cancelled"].includes(String(row.state))))throw new Error("An execution delivery failed; verified model output does not prove workspace publication")
     return rows.some(row=>row.state!=="completed")
+  }
+  private assertPlannerInputsCurrent(request:ControlledRequest):void {
+    const row=this.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)
+    const grant=JSON.parse(String(row!.payload)) as ActivationGrant,snapshot=this.runtime.engine.signals.capture(request.taskId)
+    const current=[{entityId:request.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+    if(grant.specHash!==snapshot.specHash||digest(grant.inputVector)!==digest(current))throw new Error("The plan was produced from stale inputs")
+    this.runtime.files.assertObservedReadsCurrent(grant.id)
   }
   validateProposal(proposal:ProposedTask[],program:ControllerProgram):void {
     if(!Array.isArray(proposal)||!proposal.length||proposal.length>program.maxTasks)throw new Error("Proposal task count exceeds the program")
@@ -299,7 +377,7 @@ export class RequestController {
   issueReplanner(request:ControlledRequest,program:ControllerProgram,content:unknown,causeId:string,deadline?:number):ActivationGrant {
     return this.issue(request,program,request.taskId,"planner",content,causeId,program.replanner!,deadline)
   }
-  private issue(request:ControlledRequest,program:ControllerProgram,taskId:string,kind:"planner"|"worker",content:unknown,causeId?:string,override?:ControllerProgram["planner"],deadline=Infinity):ActivationGrant {
+  private issue(request:ControlledRequest,program:ControllerProgram,taskId:string,kind:"planner"|"worker",content:unknown,causeId?:string,override?:ControllerProgram["planner"],deadline=Infinity,preflightId?:string):ActivationGrant {
     const precision=kind==="worker"&&!override&&program.workerPrecision?selectWorkerPrecision(this.store,program,taskId):undefined
     const entry=override??(precision?{...program.worker,profile:precision.profile}:program[kind]),role=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
     const snapshot=this.runtime.engine.signals.capture(taskId)
@@ -311,7 +389,7 @@ export class RequestController {
     // signal is manufactured to cross an optional specialist threshold.
     const decision=this.runtime.admission.record({id:randomUUID(),eventId:causeId??`${request.id}:${taskId}:${kind}`,taskId,role:entry.role,policy:program.policy,signals:{...Object.fromEntries(FEATURES.map(feature=>[feature,null])),...(causeId&&kind==="worker"&&!causeId.startsWith("answer:")?{failure:1}:{})} as Signals,score:0,hard:[],action:"activate",reasons:[causeId?.startsWith("answer:")?"explicit user clarification under unchanged validated scope":override?"evidence-bound scoped planning":causeId?"measured leaf failure under unchanged validated goal":kind==="planner"?"explicit request interpretation":"validated request plan leaf"],timestamp:Date.now()})
     const generation=Number(this.store.db.prepare("SELECT coalesce(max(json_extract(payload,'$.generation')),0)+1 n FROM activation_grants WHERE task_id=?").get(taskId)!.n)
-    return this.runtime.admission.issue({taskId,decisionId:decision.id,specHash:snapshot.specHash,inputVector:vector,graphHash:this.runtime.graph.hash(),role:entry.role,policy:program.policy,context:{id:context.id,version:1},contextHash:context.hash,profile:entry.profile,writeScopes:kind==="worker"?(this.runtime.engine.requireTask(taskId).writeScopes??[]):[],readScopes:program.readScopes,allowedTools:role.allowedTools.filter(tool=>kind==="worker"||tool!=="task_graph_cognitive_write"),obligations:request.obligationId?[request.obligationId]:[],expiresAt:Math.min(deadline,Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs)),generation,executionMode:kind==="worker"?"task":"cognition"},program.account,program.tokenLimit)
+    return this.runtime.admission.issue({taskId,decisionId:decision.id,specHash:snapshot.specHash,inputVector:vector,graphHash:this.runtime.graph.hash(),role:entry.role,policy:program.policy,context:{id:context.id,version:1},contextHash:context.hash,profile:entry.profile,...(preflightId?{preflight:{id:preflightId,requestedProfile:entry.profile}}:{}),writeScopes:kind==="worker"?(this.runtime.engine.requireTask(taskId).writeScopes??[]):[],readScopes:program.readScopes,allowedTools:role.allowedTools.filter(tool=>kind==="worker"||tool!=="task_graph_cognitive_write"),obligations:request.obligationId?[request.obligationId]:[],expiresAt:Math.min(deadline,Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs)),generation,executionMode:kind==="worker"?"task":"cognition"},program.account,program.tokenLimit)
   }
   cancel(id:string):void {
     this.store.atomic(()=>{

@@ -1,3 +1,5 @@
+import { observedInputRefs,observedInputCurrent,observedInputValid } from "../../task-control/src/observed-inputs.ts"
+import { installInputIndex,inputConsumers } from "./input-index.ts"
 import { randomUUID } from "node:crypto"
 import { controlCompletionMissing } from "../../task-control/src/completion.ts"
 import { fingerprint } from "./revisions.ts"
@@ -16,7 +18,7 @@ const refKey = (ref: ArtifactVersionRef) => `${ref.artifactId}@${ref.version}`
 export class SignalCoordinator {
   readonly engine: TaskGraphEngine
   private flushing = false
-  constructor(engine: TaskGraphEngine) { this.engine = engine }
+  constructor(engine: TaskGraphEngine) { this.engine = engine; this.store.transaction(()=>installInputIndex(this.store.db)) }
   get store() { return this.engine.store }
   list(): InputSignal[] { return this.store.db.prepare("SELECT payload FROM task_input_signals").all().map(r => JSON.parse(String(r.payload))) }
   stops(): SignalStop[] { return this.store.db.prepare("SELECT payload FROM task_input_stops").all().map(r => JSON.parse(String(r.payload))) }
@@ -73,13 +75,14 @@ export class SignalCoordinator {
       ...this.dependencies(taskId).flatMap(id => this.engine.requireTask(id).outputArtifactRefs)].map(r => [refKey(r), r])).values()]
     const signatures = inputRefs.map(r => this.signature(r)).sort((a, b) => JSON.stringify(a.value).localeCompare(JSON.stringify(b.value)))
     const plan = this.store.findWorkPlanByRootTask(this.engine.rootOf(taskId).id)
-    const specs = plan ? this.store.planNodes(plan.id, this.store.activePlanVersion(plan.id)).filter(n => this.store.planLinks(plan.id, this.store.activePlanVersion(plan.id)).some(l => l.nodeId === n.nodeId && [taskId, ...ancestors.map(a => a.id)].includes(l.taskId))).map(n => n.taskSpec) : []
+    const specs = plan ? this.store.db.prepare("SELECT n.task_spec_json FROM plan_task_links l JOIN plan_revision_nodes n ON n.plan_id=l.plan_id AND n.revision=l.revision AND n.node_id=l.node_id WHERE l.task_id IN (SELECT value FROM json_each(?)) AND l.plan_id=? AND l.revision=? ORDER BY n.rowid").all(JSON.stringify([taskId,...ancestors.map(a=>a.id)]),plan.id,this.store.activePlanVersion(plan.id)).map(row=>JSON.parse(String(row.task_spec_json))) : []
     const specHash = fingerprint([t.goal, t.category, t.acceptanceCriteria.map(c => c.description), t.contextPolicy, t.assignedRole, t.integrationPolicy,
       this.store.contractsFor(taskId).map(c => [c.id, c.version]),
       ancestors.map(a => a.goal), this.store.requirementsOf([taskId, ...ancestors.map(a => a.id)]).map(r => [r.description, r.kind, r.version]), specs,
       this.store.db.prepare("SELECT digest FROM task_environments WHERE task_id=?").get(taskId)?.digest ?? fingerprint([process.versions.node, process.platform, process.arch])])
-    return { specHash, inputRefs, signatures: signatures.map(s => s.value), reusable: signatures.every(s => s.reusable),
-      digest: fingerprint([specHash, signatures.map(s => s.value)]) }
+    const observed=observedInputRefs(this.store.control,taskId).map(ref=>({ref,current:observedInputCurrent(this.store.control,ref),valid:observedInputValid(this.store.control,ref)}))
+    const values=[...signatures.map(s=>s.value),...observed.map(item=>({registeredInput:item.ref,hash:item.current?.hash??null,valid:item.valid}))]
+    return { specHash, inputRefs, signatures:values, reusable:signatures.every(s=>s.reusable)&&observed.every(item=>item.valid),digest:fingerprint([specHash,values]) }
   }
   pin(taskId: string, attemptId: string) {
     const snapshot = this.capture(taskId)
@@ -103,14 +106,15 @@ export class SignalCoordinator {
     if (!this.store.executionAllowed(taskId)) return
     const task = this.engine.requireTask(taskId)
     if (task.childIds.length) { for (const id of task.childIds) this.invalidate(id, cause); return }
-    const prior = this.list().find(s => s.taskId === taskId)
+    const priorRow=this.store.db.prepare("SELECT payload FROM task_input_signals WHERE task_id=?").get(taskId)
+    const prior=priorRow?JSON.parse(String(priorRow.payload)) as InputSignal:undefined
     const signal: InputSignal = { taskId, generation: (prior?.generation ?? 0) + 1, causes: [...new Set([...(prior?.causes ?? []), cause])], updatedAt: new Date().toISOString() }
     this.store.db.prepare("INSERT INTO task_input_signals VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET payload=excluded.payload").run(taskId, JSON.stringify(signal))
     const attempt = this.store.currentAttempt(taskId)
     const reserved = this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_reservations'").get() && this.store.db.prepare("SELECT 1 FROM task_reservations WHERE task_id=?").get(taskId)
     if (attempt && (attempt.state === "running" || reserved)) {
       this.store.saveAttempt({ ...attempt, state: "fenced" })
-      if (!this.stops().some(s => s.taskId === taskId && s.token === attempt.token)) {
+      if (!this.store.db.prepare("SELECT 1 FROM task_input_stops WHERE json_extract(payload,'$.taskId')=? AND json_extract(payload,'$.token')=?").get(taskId,attempt.token)) {
         const stop: SignalStop = { id: randomUUID(), taskId, token: attempt.token, state: "requested" }
         this.store.db.prepare("INSERT INTO task_input_stops VALUES(?,?)").run(stop.id, JSON.stringify(stop))
       }
@@ -125,30 +129,23 @@ export class SignalCoordinator {
     const latest = this.engine.requireArtifactVersion(ref)
     if (ref.version > 1 && fingerprint(this.signature(ref).value) === fingerprint(this.signature({ ...ref, version: ref.version - 1 }).value)) return false
     const invalid = new Set([ref.artifactId])
-    let expanded = true
-    while (expanded) {
-      expanded = false
-      for (const bundle of this.store.validBundles()) if (bundle.memberRefs.some(r => invalid.has(r.artifactId))) {
-        this.store.markBundleStale(bundle.artifactId, bundle.version)
-        this.store.markArtifactVersionStale(bundle.artifactId, bundle.version)
-        if (!invalid.has(bundle.artifactId)) { invalid.add(bundle.artifactId); expanded = true }
-      }
+    const queue=[ref.artifactId]
+    for(let i=0;i<queue.length;i++)for(const row of this.store.db.prepare("SELECT b.artifact_id,b.version FROM signal_bundle_members m JOIN verified_bundles b ON b.artifact_id=m.artifact_id AND b.version=m.version WHERE m.member_id=? AND b.status='valid'").all(queue[i]!)) {
+      const id=String(row.artifact_id),version=Number(row.version)
+      this.store.markBundleStale(id,version);this.store.markArtifactVersionStale(id,version)
+      if(!invalid.has(id)){invalid.add(id);queue.push(id)}
     }
-    for (const set of this.store.integrationSets()) if (set.memberRefs.some(r => invalid.has(r.artifactId)))
-      this.store.updateIntegrationSet({ ...set, status: "stale", updatedAt: new Date().toISOString() })
-    for (const row of this.store.db.prepare("SELECT id FROM tasks").all()) {
-      const id = String(row.id)
-      if (id === latest.producerTaskId || !this.store.executionAllowed(id)) continue
-      const task = this.engine.requireTask(id), pinned = this.pinned(id)
-      const consumes = (r: ArtifactVersionRef): boolean => r.artifactId === ref.artifactId || this.engine.requireArtifactVersion(r).type === "bundle" && this.engine.requireArtifactVersion(r).inputs.some(consumes)
-      const refs = pinned?.inputRefs ?? task.inputArtifactRefs
-      if (refs.some(consumes) || this.dependencies(id).some(d => this.engine.requireTask(d).outputArtifactRefs.some(r => r.artifactId === ref.artifactId))) this.invalidate(id, refKey(ref))
+    const integrations=new Map(queue.flatMap(id=>this.store.integrationSetsByMember(id)).map(set=>[set.id,set]))
+    for(const set of integrations.values())this.store.updateIntegrationSet({...set,status:"stale",updatedAt:new Date().toISOString()})
+    for(const id of inputConsumers(this.store.db,ref.artifactId)) {
+      if(id!==latest.producerTaskId&&this.store.executionAllowed(id))this.invalidate(id,refKey(ref))
     }
     return true
   }
   stopped(id: string, token: string, evidence: string) {
     return this.engine.atomic(() => {
-      const stop = this.stops().find(s => s.id === id)
+      const row=this.store.db.prepare("SELECT payload FROM task_input_stops WHERE id=?").get(id)
+      const stop=row?JSON.parse(String(row.payload)) as SignalStop:undefined
       if (!stop || stop.token !== token || !evidence.trim()) throw new Error("Exact stopped attempt and evidence required")
       this.store.db.prepare("UPDATE task_input_stops SET payload=? WHERE id=?").run(JSON.stringify({ ...stop, state: "stopped", evidence }), id)
       if (this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_reservations'").get()) this.store.db.prepare("DELETE FROM task_reservations WHERE task_id=?").run(stop.taskId)
@@ -156,7 +153,7 @@ export class SignalCoordinator {
     })
   }
   prepare(taskId: string) {
-    if (!this.dirty(taskId) || !this.store.executionAllowed(taskId) || this.stops().some(s => s.taskId === taskId && s.state === "requested") || !this.settled(taskId)) return
+    if (!this.dirty(taskId) || !this.store.executionAllowed(taskId) || this.store.db.prepare("SELECT 1 FROM task_input_stops WHERE json_extract(payload,'$.taskId')=? AND json_extract(payload,'$.state')='requested'").get(taskId) || !this.settled(taskId)) return
     const t = this.engine.requireTask(taskId)
     if (t.status === "stale") this.store.updateTask({ ...t, status: "ready" })
   }

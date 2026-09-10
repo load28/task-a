@@ -1,3 +1,5 @@
+import { cachedResult } from "./cognitive-cache.ts"
+import { preflightResult } from "./task-preflight.ts"
 import { randomUUID } from "node:crypto"
 import { Ajv } from "ajv"
 import { ControlStore } from "./store.ts"
@@ -20,6 +22,7 @@ export class Admission {
   }
   issue(input:Omit<ActivationGrant,"id">,account:string,limit:number):ActivationGrant {
     return this.store.atomic(()=>{
+      if(input.reuse||input.profile.level<2)throw new Error("Non-model execution must be selected from a validated controller record")
       const decisionRow=this.store.db.prepare("SELECT payload FROM activation_decisions WHERE id=?").get(input.decisionId)
       if(!decisionRow) throw new Error("Unknown activation decision")
       const decision=JSON.parse(String(decisionRow.payload)) as ActivationDecision
@@ -46,11 +49,14 @@ export class Admission {
         const head=lease&&this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(lease.planId)
         if(!lease||plan?.root_task_id!==input.taskId||head?.generation!==lease.generation||lease.expiresAt<input.expiresAt)throw new Error("Replanning tool requires a current lease bound to the plan root")
       }
-      const reserved=input.profile.maxInputTokens+input.profile.maxOutputTokens
+      const cached=cachedResult(this.store,input)
+      if(input.preflight&&(digest(input.preflight.requestedProfile)!==digest(input.profile)||!preflightResult(this.store,input.preflight.id,input)))throw new Error("No current deterministic task proof")
+      const selected=input.preflight?{...input,profile:{...input.profile,id:`preflight:${input.profile.id}`,level:1 as const,maxToolCalls:0},allowedTools:[]}:cached?{...input,profile:{...input.profile,id:`cache:${input.profile.id}`,level:0 as const,maxToolCalls:0},reuse:{record:cached.record,requestedProfile:input.profile,accountLimit:limit}}:input
+      const reserved=cached||input.preflight?0:input.profile.maxInputTokens+input.profile.maxOutputTokens
       positive(limit,"Account token limit")
       const used=Number(this.store.db.prepare("SELECT coalesce(sum(CASE WHEN state='reserved' THEN reserved ELSE coalesce(spent,reserved) END),0) AS total FROM budget_reservations WHERE account=?").get(account)?.total??0)
       if(used+reserved>limit) throw new AdmissionBudgetUnavailableError("Budget unavailable; obligations remain pending")
-      const grant={...input,id:randomUUID()}
+      const grant={...selected,id:randomUUID()}
       this.store.db.prepare("INSERT INTO activation_grants VALUES(?,?,?,?,?)").run(grant.id,grant.decisionId,grant.taskId,"issued",canonical(grant))
       this.store.db.prepare("INSERT INTO budget_reservations VALUES(?,?,?,NULL,'reserved')").run(grant.id,account,reserved)
       return grant

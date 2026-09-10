@@ -3,7 +3,7 @@ import type { PlanNode } from "#task-domain"
 import type { TaskGraphEngine, ReviseWorkPlanInput } from "../../task-engine/src/index.ts"
 import { CausalGraph } from "../../task-causality/src/graph.ts"
 import { ReplanLeases, validateScopedPatch, type ReplanPatch, type ScopedPlanNode } from "../../task-causality/src/replan.ts"
-import type { ReplanLease, VersionVector } from "../../task-causality/src/model.ts"
+import type { ReplanLease, VersionVector, VersionRef } from "../../task-causality/src/model.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { decisionValid } from "./decisions.ts"
 import { canonical, digest } from "./value.ts"
@@ -32,26 +32,55 @@ export class ScopedReplanning {
   private inputs(planId:string,revision:number):VersionVector {
     return this.engine.store.planLinks(planId,revision).map(link=>({entityId:link.taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:this.engine.signals.capture(link.taskId).digest})).sort((a,b)=>a.entityId.localeCompare(b.entityId))
   }
-  issue(input:Omit<ReplanLease,"id"|"baseRevision"|"graphHash"|"inputVector"|"generation"> & {validators:string[]}):ReplanLease {
+  /** Revision numbers never rewind. A retired, unactivated head may be replaced
+   * from the still active execution graph, with a distinct CAS head revision. */
+  sourceRevision(planId:string):number {
+    const plan=this.engine.store.findWorkPlan(planId)
+    if(!plan)throw new Error("Unknown replanning plan")
+    const active=this.engine.store.activePlanVersion(planId)
+    if(active===plan.currentRevision)return active
+    const retired=this.store.get<{stageId:string;sourceRevision:number}>("replan_supersessions",planId,plan.currentRevision)
+    if(!active||!retired||retired.sourceRevision!==active)throw new Error("Replanning needs a settled active plan revision or a retired pending revision")
+    const stage=this.describe(retired.stageId)
+    if(stage.result?.revision.version!==plan.currentRevision||stage.binding.lease.planId!==planId)throw new Error("Invalid retired revision lineage")
+    return active
+  }
+  supersedeCommitted(stageId:string,evidence:VersionRef[]):void {
+    this.engine.atomic(()=>{
+      const row=this.store.db.prepare("SELECT state FROM scoped_replan_stages WHERE id=?").get(stageId),stage=this.describe(stageId)
+      const plan=this.engine.store.findWorkPlan(stage.binding.lease.planId)!,version=stage.result?.revision.version,sourceRevision=this.engine.store.activePlanVersion(plan.id)
+      if(row?.state!=="committed"||!version||version!==plan.currentRevision||version===sourceRevision||!evidence.length)throw new Error("Only a committed pending revision can be superseded by evidence")
+      evidence.forEach(ref=>this.evidence.require(ref))
+      if(this.store.get("replan_supersessions",plan.id,version))return
+      this.store.put("replan_supersessions",plan.id,version,{stageId,sourceRevision,evidence})
+      const revision=this.engine.store.findPlanRevision(plan.id,version)!
+      this.engine.store.updatePlanRevision({...revision,state:"superseded"})
+      this.store.db.prepare("UPDATE controlled_plans SET generation=generation+1 WHERE plan_id=? AND generation=?").run(plan.id,stage.binding.lease.generation)
+      this.event("PendingScopedRevisionSuperseded",plan.id,{stageId,revision:version,sourceRevision,evidence})
+    })
+  }
+  issue(input:Omit<ReplanLease,"id"|"baseRevision"|"graphHash"|"inputVector"|"generation"|"sourceRevision"> & {validators:string[]}):ReplanLease {
     return this.engine.atomic(()=>{
       const plan=this.engine.store.findWorkPlan(input.planId)
-      if(!plan||this.engine.store.activePlanVersion(plan.id)!==plan.currentRevision)throw new Error("Replanning needs a settled active plan revision")
+      if(!plan)throw new Error("Unknown replanning plan")
+      const sourceRevision=this.sourceRevision(plan.id)
+      if(sourceRevision!==plan.currentRevision&&this.engine.revisions.transitions(plan.id).some(t=>t.state==="waiting"&&t.stops.some(stop=>stop.state!=="stopped")))throw new Error("Replanning waits for confirmed execution stops")
       if(!input.validators.length||new Set(input.validators).size!==input.validators.length||!input.evidence.length||input.expiresAt<=Date.now())throw new Error("Lease needs validation, invalidation evidence and a deadline")
       input.evidence.forEach(ref=>this.evidence.require(ref))
-      const planNodes=this.engine.store.planNodes(plan.id,plan.currentRevision),ids=new Set(planNodes.map(n=>n.nodeId))
+      const planNodes=this.engine.store.planNodes(plan.id,sourceRevision),ids=new Set(planNodes.map(n=>n.nodeId))
       for(const list of [input.boundary,input.changedNodes,input.invalidatedNodes,input.preservedNodes])if(new Set(list).size!==list.length||list.some(id=>!ids.has(id)))throw new Error("Lease references unknown or duplicate plan nodes")
       if(!input.boundary.length||input.changedNodes.some(id=>!input.boundary.includes(id))||input.invalidatedNodes.some(id=>!input.boundary.includes(id))||input.preservedNodes.some(id=>input.invalidatedNodes.includes(id)))throw new Error("Invalid mutable boundary")
-      const prior=this.store.db.prepare("SELECT payload FROM scoped_revision_bindings WHERE plan_id=? AND version=?").get(plan.id,plan.currentRevision)
+      const prior=this.store.db.prepare("SELECT payload FROM scoped_revision_bindings WHERE plan_id=? AND version=?").get(plan.id,sourceRevision)
       const nodes:ScopedPlanNode[]=prior?JSON.parse(String(prior.payload)):planNodes.map(n=>({id:n.nodeId,parent:n.parentNodeId,dependencies:n.dependsOnNodeIds,objective:n.taskSpec.goal||n.outcome,expectedOutcome:n.outcome,decisionRefs:[]}))
       if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='decision_task_consumers'").get())for(const node of nodes) {
-        const link=this.engine.store.planLinks(plan.id,plan.currentRevision).find(link=>link.nodeId===node.id)
+        const link=this.engine.store.planLinks(plan.id,sourceRevision).find(link=>link.nodeId===node.id)
         if(link)for(const row of this.store.db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(link.taskId)) {
           const ref={id:String(row.id),version:Number(row.version)}
           if(!node.decisionRefs.some(existing=>digest(existing)===digest(ref)))node.decisionRefs.push(ref)
         }
       }
       if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='assumption_task_consumers'").get())for(const node of nodes) {
-        const link=this.engine.store.planLinks(plan.id,plan.currentRevision).find(link=>link.nodeId===node.id)
+        const link=this.engine.store.planLinks(plan.id,sourceRevision).find(link=>link.nodeId===node.id)
         if(link)for(const row of this.store.db.prepare("SELECT id,version FROM assumption_task_consumers WHERE task_id=?").all(link.taskId)) {
           const ref={id:String(row.id),version:Number(row.version)}
           node.assumptionRefs??=[]
@@ -62,12 +91,12 @@ export class ScopedReplanning {
       for(const ref of input.immutableDecisions)if(!nodes.some(n=>n.decisionRefs.some(r=>digest(r)===digest(ref))))throw new Error("Unknown immutable decision binding")
       const generation=Number(this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation??0)+1
       const {validators,...fields}=input
-      const lease:ReplanLease={...fields,immutableAssumptions,id:randomUUID(),baseRevision:plan.currentRevision,graphHash:new CausalGraph(this.store).hash(),inputVector:this.inputs(plan.id,plan.currentRevision),generation}
+      const lease:ReplanLease={...fields,immutableAssumptions,id:randomUUID(),baseRevision:plan.currentRevision,...(sourceRevision===plan.currentRevision?{}:{sourceRevision}),graphHash:new CausalGraph(this.store).hash(),inputVector:this.inputs(plan.id,sourceRevision),generation}
       this.assertManagedBindings(lease)
       this.leases.issue(lease)
       this.store.db.prepare("INSERT INTO controlled_plans VALUES(?,?) ON CONFLICT(plan_id) DO UPDATE SET generation=excluded.generation").run(plan.id,generation)
       this.store.db.prepare("UPDATE scoped_replan_stages SET state='fenced' WHERE plan_id=? AND state IN ('lease','staged')").run(plan.id)
-      const binding:LeaseBinding={lease,validators,nodes,planNodes,contextHash:digest(this.engine.revisions.context(plan.id,plan.currentRevision))}
+      const binding:LeaseBinding={lease,validators,nodes,planNodes,contextHash:digest(this.engine.revisions.context(plan.id,sourceRevision))}
       this.store.db.prepare("INSERT INTO scoped_replan_stages VALUES(?,?,?,'lease',?)").run(lease.id,plan.id,generation,canonical(binding))
       this.event("ReplanLeaseIssued",plan.id,{leaseId:lease.id,generation})
       return lease
@@ -87,8 +116,8 @@ export class ScopedReplanning {
     if(!row||row.state!=="lease")throw new Error("Lease is unknown, fenced or already staged")
     const binding=JSON.parse(String(row.payload)) as LeaseBinding,lease=binding.lease
     const plan=this.engine.store.findWorkPlan(lease.planId)
-    if(!plan||plan.currentRevision!==lease.baseRevision||this.engine.store.activePlanVersion(plan.id)!==lease.baseRevision||lease.expiresAt<=Date.now()||this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation!==lease.generation||new CausalGraph(this.store).hash()!==lease.graphHash)throw new Error("Replanning lease is stale or expired")
-    if(digest(this.inputs(plan.id,lease.baseRevision))!==digest(lease.inputVector)||digest(this.engine.revisions.context(plan.id,lease.baseRevision))!==binding.contextHash)throw new Error("Replanning inputs changed")
+    if(!plan||plan.currentRevision!==lease.baseRevision||this.engine.store.activePlanVersion(plan.id)!==(lease.sourceRevision??lease.baseRevision)||lease.expiresAt<=Date.now()||this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation!==lease.generation||new CausalGraph(this.store).hash()!==lease.graphHash)throw new Error("Replanning lease is stale or expired")
+    if(digest(this.inputs(plan.id,lease.sourceRevision??lease.baseRevision))!==digest(lease.inputVector)||digest(this.engine.revisions.context(plan.id,lease.sourceRevision??lease.baseRevision))!==binding.contextHash)throw new Error("Replanning inputs changed")
     this.assertManagedBindings(lease)
     lease.evidence.forEach(ref=>this.evidence.require(ref))
     return lease
@@ -97,7 +126,8 @@ export class ScopedReplanning {
     const lease=binding.lease
     this.assertManagedBindings(lease)
     const plan=this.engine.store.findWorkPlan(lease.planId)!
-    if(digest(this.inputs(plan.id,lease.baseRevision))!==digest(lease.inputVector)||digest(this.engine.revisions.context(plan.id,lease.baseRevision))!==binding.contextHash)throw new Error("Replanning inputs changed")
+    if(this.engine.store.activePlanVersion(plan.id)!==(lease.sourceRevision??lease.baseRevision))throw new Error("Replanning execution revision changed")
+    if(digest(this.inputs(plan.id,lease.sourceRevision??lease.baseRevision))!==digest(lease.inputVector)||digest(this.engine.revisions.context(plan.id,lease.sourceRevision??lease.baseRevision))!==binding.contextHash)throw new Error("Replanning inputs changed")
     return validateScopedPatch(lease,patch,{revision:plan.currentRevision,graphHash:new CausalGraph(this.store).hash(),generation:Number(this.store.db.prepare("SELECT generation FROM controlled_plans WHERE plan_id=?").get(plan.id)?.generation),nodes:binding.nodes,now:Date.now(),validEvidence:ref=>this.evidence.valid(ref)})
   }
   stage(leaseId:string,patch:ReplanPatch,specifications:PlanNode[],summary:string,metadata?:unknown):{id:string;obligationId:string;tuple:VersionVector} {
@@ -118,7 +148,7 @@ export class ScopedReplanning {
         const spec=structuredClone(specs.get(n.id)??binding.planNodes.find(p=>p.nodeId===n.id)!)
         return {...spec,nodeId:id(spec.nodeId),parentNodeId:spec.parentNodeId?id(spec.parentNodeId):undefined,dependsOnNodeIds:spec.dependsOnNodeIds.map(id)}
       })
-      const revisionInput:ReviseWorkPlanInput={planId:binding.lease.planId,baseVersion:binding.lease.baseRevision,summary,nodes}
+      const revisionInput:ReviseWorkPlanInput={planId:binding.lease.planId,baseVersion:binding.lease.baseRevision,summary,nodes,...(binding.lease.sourceRevision?this.engine.revisions.context(binding.lease.planId,binding.lease.sourceRevision):{})}
       // Use the same engine validation in a rollback-only savepoint. No candidate
       // revision, supersession, stop, or projection is visible before validation.
       const stageId=randomUUID()
@@ -153,7 +183,7 @@ export class ScopedReplanning {
       if(row.state!=="staged")throw new Error("Staged revision was fenced")
       const next=this.check(stage.binding,stage.patch)
       const obligation=this.evidence.obligation(stage.obligationId)
-      if(!obligation||!this.evidence.satisfied(obligation))throw new Error("Staged revision validation is pending or expired")
+      if(!obligation||!this.evidence.independentlySatisfied(obligation))throw new Error("Staged revision validation is pending or expired")
       this.store.db.prepare("UPDATE scoped_replan_stages SET state='committing' WHERE id=?").run(stageId)
       const result=this.engine.reviseWorkPlan(stage.revisionInput)
       const actual=this.engine.store.planNodes(stage.revisionInput.planId,result.revision.version)

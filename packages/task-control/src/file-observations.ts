@@ -7,12 +7,46 @@ import type { ActivationGrant } from "../../task-cognition/src/model.ts"
 import type { ControlStore } from "./store.ts"
 import { canonical,digest } from "./value.ts"
 
+/** Re-observe the exact reads of a reusable cognition. A Pod-local path is not
+ * a host source attestation. Unknown, oversized and aliased inputs cannot hit. */
+export function observedReadsReusable(store:ControlStore,grantId:string):boolean {
+  const evidence=new EvidenceStore(store)
+  const rows=store.db.prepare("SELECT r.evidence,v.payload FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version WHERE r.grant_id=?").all(grantId)
+  let remaining=4*1024*1024
+  for(const row of rows)try {
+    const proof=evidence.require(JSON.parse(String(row.evidence)))
+    if(proof.source!=="native cognitive gateway")return false
+    const input=JSON.parse(String(row.payload)) as {workspace:string;path:string;hash:string}
+    if(isAbsolute(input.path)||input.path.split(/[\\/]/).some(part=>["",".","..",".git",".codex",".agents",".task-agent"].includes(part)))return false
+    const root=realpathSync(input.workspace)
+    if(root!==input.workspace)return false
+    let file=root
+    for(const part of input.path.split("/")){file=join(file,part);if(lstatSync(file).isSymbolicLink())return false}
+    const stat=lstatSync(file)
+    if(!stat.isFile()||stat.size>remaining)return false
+    const fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW)
+    try {
+      const buffer=Buffer.alloc(Math.min(remaining+1,65536)),chunks:Buffer[]=[]
+      for(;;){
+        const size=readSync(fd,buffer,0,Math.min(buffer.length,remaining+1),null)
+        if(!size)break
+        remaining-=size;if(remaining<0)return false
+        chunks.push(Buffer.from(buffer.subarray(0,size)))
+      }
+      if(digest(new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks)))!==input.hash)return false
+    }finally{closeSync(fd)}
+  }catch{return false}
+  return true
+}
+
 /** Exact UTF-8 observations attest one file view, never all process inputs. */
 export class FileObservations {
   readonly store:ControlStore
   private invalidated?:(taskId:string,input:DependencyVersion,evidence:VersionRef[])=>void
-  constructor(store:ControlStore,invalidated?:(taskId:string,input:DependencyVersion,evidence:VersionRef[])=>void) {
+  private cognitionInvalidated?:(grantId:string,input:DependencyVersion,evidence:VersionRef[],cause:string)=>void
+  constructor(store:ControlStore,invalidated?:(taskId:string,input:DependencyVersion,evidence:VersionRef[])=>void,cognitionInvalidated?:(grantId:string,input:DependencyVersion,evidence:VersionRef[],cause:string)=>void) {
     this.invalidated=invalidated
+    this.cognitionInvalidated=cognitionInvalidated
     this.store=store
     store.db.exec(`CREATE TABLE IF NOT EXISTS observed_file_versions(id TEXT NOT NULL,version INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(id,version));
       CREATE TABLE IF NOT EXISTS observed_file_heads(id TEXT PRIMARY KEY,version INTEGER NOT NULL);
@@ -117,11 +151,18 @@ export class FileObservations {
     })
   }
   ingest():number {
-    return this.store.consume("file-read-projection/v1","accepted-read-binding/v1",event=>{
-      if(event.type==="FileVersionObserved"&&this.invalidated) {
+    return this.store.consume("file-read-projection/v2","accepted-read-and-planner-binding/v2",event=>{
+      if(event.type==="FileVersionObserved"&&(this.invalidated||this.cognitionInvalidated)) {
         const change=event.payload as {before:unknown;after:{id:string;version:number;hash:string};evidence?:VersionRef}
         if(!change.before)return
         const latest=change.after
+        if(this.store.db.prepare("SELECT version FROM observed_file_heads WHERE id=?").get(latest.id)?.version!==latest.version)return
+        if(this.cognitionInvalidated)for(const row of this.store.db.prepare("SELECT g.id,min(r.evidence) AS evidence FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version JOIN activation_grants g ON g.id=r.grant_id WHERE r.file_id=? AND g.state IN ('claimed','completed') AND json_extract(g.payload,'$.executionMode')='cognition' AND json_extract(v.payload,'$.hash')<>? GROUP BY g.id").all(latest.id,latest.hash)) {
+          const fresh=this.store.db.prepare("SELECT evidence FROM observed_file_reads WHERE file_id=? AND version=? ORDER BY rowid DESC LIMIT 1").get(latest.id,latest.version)
+          const proof=change.evidence??(fresh?JSON.parse(String(fresh.evidence)) as VersionRef:undefined)
+          if(proof)this.cognitionInvalidated(String(row.id),{entityId:latest.id,port:"content",view:"utf8-exact",version:latest.version,hash:latest.hash},[JSON.parse(String(row.evidence)),proof],event.id)
+        }
+        if(!this.invalidated)return
         const rows=this.store.db.prepare("SELECT g.task_id,g.payload AS grant_payload,r.evidence FROM observed_file_reads r JOIN observed_file_versions v ON v.id=r.file_id AND v.version=r.version JOIN activation_grants g ON g.id=r.grant_id WHERE r.file_id=? AND g.state='completed' AND json_extract(g.payload,'$.executionMode')='task' AND json_extract(v.payload,'$.hash')<>?").all(latest.id,latest.hash)
         const seen=new Set<string>()
         for(const row of rows) {

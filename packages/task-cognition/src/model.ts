@@ -31,6 +31,8 @@ export interface ActivationGrant {
   writeScopes:string[]; allowedTools:string[]; obligations:string[]; expiresAt:number; generation:number; worker?:string
   readScopes?:string[]
   executionMode?:"cognition"|"task"
+  reuse?:{record:VersionRef;requestedProfile:ReasoningProfile;accountLimit:number}
+  preflight?:{id:string;requestedProfile:ReasoningProfile}
   replanLease?:VersionRef
 }
 export interface AgentOutput { taskId:string; findings:unknown[]; decisions:unknown[]; risks:unknown[]; unresolvedQuestions:unknown[]; evidence:VersionRef[]; proposedTasks:unknown[]; confidence:number; requiresEscalation:boolean }

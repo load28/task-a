@@ -217,6 +217,8 @@ hysteresis state는 boundary별 stable/replanning/stabilizing으로 영속화한
 
 변경 도중 더 새로운 event가 오면 오래된 lease에 새 결과를 커밋하지 않는다. 동일 episode로 coalesce하거나 lease generation을 fence하고 새 closure를 계산한다. 영향을 받지 않은 native/Pod worker는 계속 실행한다. 영향받은 worker는 기존 stop protocol을 통해 실제 종료를 확인한 후 대체 실행한다. stop 요청만으로 lock을 반환하지 않는다. stale/late result는 격리 저장하고 현행 plan을 완료시키지 못한다.
 
+구현상 미활성 revision이 이미 저장된 뒤 supersede될 수 있다. 이때 `baseRevision`은 단조 증가하는 저장 head의 CAS 번호로 유지하고 `sourceRevision`은 실제 활성 실행 그래프의 번호로 별도 고정한다. 불변 폐기 기록이 있는 head에서만 이 분리를 허용한다. source의 노드·입력·context를 사용해 새 계획을 검증하고 head+1로 저장한다. 기존 중단 전이는 실제 종료 확인까지 보존하며, 폐기된 target의 활성화는 영구 차단한다. 동일 source의 추가 변경은 새 lease generation과 closure에 병합한다.
+
 ### 7.3 Committed prefix와 immutable decision
 
 verified/executed이면서 변경 dependency와 무관하고 실제 artifact가 유지된 node·decision은 immutable set에 들어간다. 시간상 과거라는 이유만으로 항상 유효한 것은 아니다. 나중에 발견된 security/assumption/requirement evidence가 있으면 명시적 invalidation record를 만들어 재개할 수 있다. `reopenTask(taskId, reason: string)` 단독 경로는 evidence-based invalidation API로 교체한다.

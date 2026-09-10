@@ -24,15 +24,16 @@ function fixture(database=":memory:") {
   const issue=()=>r.control.replanning.issue({planId,boundary:["a"],changedNodes:["a"],invalidatedNodes:["a"],preservedNodes:["b"],immutableDecisions:[],invalidAssumptions:[],predictionErrors:[],violatedInvariants:["request changed"],evidence:[reason],expiresAt:Date.now()+60000,validators:["coverage/v1"]})
   const spec={...nodes[0]!,outcome:"updated a",taskSpec:{...nodes[0]!.taskSpec,goal:"update a"}}
   const patch:ReplanPatch={revisedTasks:[{id:"a",dependencies:[],objective:spec.taskSpec.goal,expectedOutcome:spec.outcome,decisionRefs:[]}],newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:[],invalidatedAssumptions:[],expectedOutcomes:[{taskId:"a",value:spec.outcome}],confidence:.8}
-  const satisfy=(obligationId:string)=>{
-    const obligation=r.control.evidence.obligation(obligationId)!,content={passed:true}
-    const ref=r.control.evidence.put({id:obligationId,version:1,type:"test",source:"scoped revision acceptance fixture",confidence:1,timestamp:Date.now(),contentHash:digest(content),content,inputVector:obligation.tuple,producer:"test runner",validatorVersion:"coverage/v1",expiresAt:null})
-    r.control.evidence.resolve(obligationId,[ref])
+  const authority=r.control.evidence.put({id:"validator-authority",version:1,type:"code",source:"registered coverage validator",confidence:1,timestamp:Date.now(),contentHash:digest({allow:"coverage"}),content:{allow:"coverage"},inputVector:[],producer:"fixture",validatorVersion:"authority/v1",expiresAt:null})
+  r.control.validators.register({id:"coverage",version:1,command:[process.execPath,"-e",`const fs=require('node:fs'),input=JSON.parse(fs.readFileSync(0,'utf8')),p=input.evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;const a=p.revisionInput.nodes.find(n=>n.nodeId==='a'),b=p.revisionInput.nodes.find(n=>n.nodeId==='b'),prior=p.baseNodes.find(n=>n.nodeId==='b');process.exit(a.taskSpec.goal==='update a'&&a.outcome==='updated a'&&JSON.stringify(b)===JSON.stringify(prior)&&p.lease.boundary.length===1&&p.lease.boundary[0]==='a'?0:2)`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[authority]})
+  const satisfy=async(obligationId:string)=>{
+    await r.control.validators.run(process.cwd(),{maxJobs:10,maxDurationMs:10000})
+    assert.equal(r.control.evidence.independentlySatisfied(r.control.evidence.obligation(obligationId)!),true)
   }
-  return {r,nodes,planId,issue,spec,patch,satisfy}
+  return {r,nodes,planId,issue,spec,patch,satisfy,authority,reason}
 }
 
-test("임시 patch는 실제 revision을 노출하지 않고 검증 후 한 번만 커밋하며 무관한 worker를 보존한다",()=>{
+test("임시 patch는 실제 revision을 노출하지 않고 검증 후 한 번만 커밋하며 무관한 worker를 보존한다",async()=>{
   const f=fixture(),{r}=f
   try {
     const b=r.store.planLinks(f.planId,1).find(n=>n.nodeId==="b")!.taskId
@@ -42,7 +43,7 @@ test("임시 patch는 실제 revision을 노출하지 않고 검증 후 한 번�
     assert.equal(r.store.findPlanRevision(f.planId,2),undefined)
     assert.throws(()=>r.control.replanning.commit(staged.id),/pending or expired/)
     assert.throws(()=>r.engine.reviseWorkPlan({planId:f.planId,baseVersion:1,nodes:f.nodes,summary:"bypass"}),/validated scoped commit/)
-    f.satisfy(staged.obligationId)
+    await f.satisfy(staged.obligationId)
     const result=r.control.replanning.commit(staged.id)
     assert.equal(result.revision.version,2)
     assert.deepEqual(r.control.replanning.commit(staged.id),result)
@@ -75,15 +76,15 @@ test("범위 밖 spec·암묵적 dependency 변경과 expectation 불일치는 �
   } finally {r.close()}
 })
 
-test("새 generation과 변경된 입력은 검증된 과거 patch의 커밋도 차단한다",()=>{
+test("새 generation과 변경된 입력은 검증된 과거 patch의 커밋도 차단한다",async()=>{
   const f=fixture(),{r}=f
   try {
     const staged=r.control.replanning.stage(f.issue().id,f.patch,[f.spec],"old")
-    f.satisfy(staged.obligationId)
+    await f.satisfy(staged.obligationId)
     const lease=f.issue()
     assert.throws(()=>r.control.replanning.commit(staged.id),/fenced/)
     const next=r.control.replanning.stage(lease.id,f.patch,[f.spec],"new")
-    f.satisfy(next.obligationId)
+    await f.satisfy(next.obligationId)
     const a=r.store.planLinks(f.planId,1).find(n=>n.nodeId==="a")!.taskId
     r.engine.addRequirement(a,"new explicit constraint","constraint")
     assert.throws(()=>r.control.replanning.commit(next.id),/inputs changed/)
@@ -91,12 +92,12 @@ test("새 generation과 변경된 입력은 검증된 과거 patch의 커밋도 
   } finally {r.close()}
 })
 
-test("재시작 후 staged revision과 검증 대기를 복구하며 실패한 커밋은 원자적으로 롤백한다",()=>{
+test("재시작 후 staged revision과 검증 대기를 복구하며 실패한 커밋은 원자적으로 롤백한다",async()=>{
   const dir=mkdtempSync(join(tmpdir(),"scoped-replan-")),database=join(dir,"graph.db"),f=fixture(database)
   let r=f.r
   try {
     const stage=r.control.replanning.stage(f.issue().id,f.patch,[f.spec],"durable")
-    f.satisfy(stage.obligationId)
+    await f.satisfy(stage.obligationId)
     r.close();r=createGraphRuntime(database)
     r.store.db.exec("CREATE TRIGGER reject_scoped_commit BEFORE INSERT ON event_outbox WHEN NEW.type='ScopedReplanCommitted' BEGIN SELECT RAISE(ABORT,'commit fault'); END")
     assert.throws(()=>r.control.replanning.commit(stage.id),/commit fault/)
@@ -146,4 +147,94 @@ test("인지 전용 MCP는 raw graph와 Pod 도구를 광고하거나 실행하�
     }
     assert.equal(r.store.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n,0)
   } finally {r.close()}
+})
+
+for(const mode of ["fabricated","authority-withdrawn","receipt-withdrawn"] as const)test(`지역 계획 커밋은 현재 권한의 실제 독립 검증을 요구한다: ${mode}`,async()=>{
+  const f=fixture(),{r}=f
+  try {
+    const stage=r.control.replanning.stage(f.issue().id,f.patch,[f.spec],"validate current authority")
+    const obligation=r.control.evidence.obligation(stage.obligationId)!
+    if(mode==="fabricated") {
+      const content={passed:true}
+      const proof=r.control.evidence.put({id:"claimed-pass",version:1,type:"test",source:"claimed result",confidence:1,timestamp:Date.now(),contentHash:digest(content),content,inputVector:obligation.tuple,producer:"unexecuted validator",validatorVersion:"coverage/v1",expiresAt:null})
+      r.control.evidence.resolve(obligation.id,[proof])
+      assert.equal(r.control.evidence.satisfied(r.control.evidence.obligation(obligation.id)!),true)
+    }else {
+      await f.satisfy(obligation.id)
+      r.control.evidence.retract(mode==="authority-withdrawn"?f.authority:r.control.evidence.obligation(obligation.id)!.evidence[0]!,[f.reason],"withdraw the validation authority or receipt")
+    }
+    assert.throws(()=>r.control.replanning.commit(stage.id),/pending or expired/)
+    assert.equal(r.store.findWorkPlan(f.planId)!.currentRevision,1)
+    assert.equal(r.store.findPlanRevision(f.planId,2),undefined)
+    assert.equal(r.store.db.prepare("SELECT state FROM scoped_replan_stages WHERE id=?").get(stage.id)!.state,"staged")
+  }finally{r.close()}
+})
+
+for(const mode of ["authority","receipt"] as const)test(`저장된 scoped revision도 승인 직전 검증 근거 철회를 재검사한다: ${mode}`,async()=>{
+  const f=fixture(),{r}=f
+  try {
+    const stage=r.control.replanning.stage(f.issue().id,f.patch,[f.spec],"commit before withdrawal")
+    await f.satisfy(stage.obligationId)
+    r.control.replanning.commit(stage.id)
+    const ref=mode==="authority"?f.authority:r.control.evidence.obligation(stage.obligationId)!.evidence[0]!
+    r.control.evidence.retract(ref,[f.reason],"withdraw before activating the committed revision")
+    assert.throws(()=>r.engine.approveWorkPlan({planId:f.planId,version:2,approvalSource:"user"}),/Regional activation validation/)
+    assert.equal(r.store.activePlanVersion(f.planId),1)
+    assert.deepEqual(r.store.planLinks(f.planId,2),[])
+    assert.equal(r.store.db.prepare("SELECT state FROM scoped_replan_stages WHERE id=?").get(stage.id)!.state,"committed","The immutable validated proposal remains historical evidence")
+  }finally{r.close()}
+})
+
+test("worker 중단 대기 뒤의 scoped 활성화도 철회된 검증을 채택하지 않는다",async()=>{
+  const f=fixture(),{r}=f
+  try {
+    const taskId=r.store.planLinks(f.planId,1).find(n=>n.nodeId==='a')!.taskId
+    r.engine.startTask(taskId,{agent:"native",sessionId:"await-stop"})
+    const stage=r.control.replanning.stage(f.issue().id,f.patch,[f.spec],"wait for previous execution")
+    await f.satisfy(stage.obligationId)
+    r.control.replanning.commit(stage.id)
+    const transition=r.engine.approveWorkPlan({planId:f.planId,version:2,approvalSource:"user"}).transition!
+    assert.equal(transition.state,"waiting")
+    r.control.evidence.retract(f.authority,[f.reason],"validator authority withdrawn while the previous worker terminates")
+    const stop=transition.stops.find(stop=>stop.taskId===taskId)!
+    r.engine.revisions.confirmStopped(transition.id,taskId,stop.token,"confirmed terminated")
+    assert.throws(()=>r.engine.reconcilePlanTransition(transition.id),/Regional activation validation/)
+    assert.equal(r.store.activePlanVersion(f.planId),1)
+    assert.deepEqual(r.store.planLinks(f.planId,2),[])
+    assert.equal(r.engine.revisions.transitions(f.planId).find(t=>t.id===transition.id)!.stops[0]!.state,"stopped")
+  }finally{r.close()}
+})
+
+test("미활성 revision의 폐기와 중단 확인은 원자적으로 보존하며 head를 되감지 않는다",async()=>{
+  const f=fixture(),{r}=f
+  try {
+    const taskId=r.store.planLinks(f.planId,1).find(n=>n.nodeId==='a')!.taskId
+    r.engine.startTask(taskId,{agent:"native",sessionId:"retire-stop"})
+    const stage=r.control.replanning.stage(f.issue().id,f.patch,[f.spec],"pending revision")
+    await f.satisfy(stage.obligationId);r.control.replanning.commit(stage.id)
+    const transition=r.engine.approveWorkPlan({planId:f.planId,version:2,approvalSource:"user"}).transition!
+    assert.throws(()=>f.issue(),/settled active/)
+    r.store.db.exec("CREATE TRIGGER reject_retirement BEFORE INSERT ON event_outbox WHEN NEW.type='PendingScopedRevisionSuperseded' BEGIN SELECT RAISE(ABORT,'retirement fault'); END")
+    assert.throws(()=>r.control.replanning.supersedeCommitted(stage.id,[f.reason]),/retirement fault/)
+    assert.equal(r.store.control.get("replan_supersessions",f.planId,2),undefined)
+    assert.equal(r.store.findPlanRevision(f.planId,2)!.state,"approved")
+    r.store.db.exec("DROP TRIGGER reject_retirement")
+    r.control.replanning.supersedeCommitted(stage.id,[f.reason])
+    r.control.replanning.supersedeCommitted(stage.id,[f.reason])
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='PendingScopedRevisionSuperseded'").get()!.n,1)
+    assert.throws(()=>f.issue(),/confirmed execution stops/)
+    assert.throws(()=>r.engine.approveWorkPlan({planId:f.planId,version:2,approvalSource:"user"}),/not awaiting approval/)
+    for(const stop of transition.stops)r.engine.revisions.confirmStopped(transition.id,stop.taskId,stop.token,"fixture terminated")
+    assert.equal(r.engine.reconcilePlanTransition(transition.id).activated,undefined)
+    const lease=f.issue()
+    assert.equal(lease.baseRevision,2);assert.equal(lease.sourceRevision,1)
+    assert.equal(r.control.replanning.assertCurrent(lease.id).id,lease.id)
+    const replacement=r.control.replanning.stage(lease.id,f.patch,[f.spec],"replacement after confirmed stop")
+    await f.satisfy(replacement.obligationId)
+    assert.equal(r.control.replanning.commit(replacement.id).revision.version,3)
+    assert.equal(r.engine.approveWorkPlan({planId:f.planId,version:3,approvalSource:"user"}).transition!.state,"applied")
+    assert.deepEqual(r.store.planLinks(f.planId,2),[])
+    assert.equal(r.store.activePlanVersion(f.planId),3)
+    assert.throws(()=>r.control.replanning.supersedeCommitted(replacement.id,[f.reason]),/Only a committed pending/)
+  }finally{r.close()}
 })

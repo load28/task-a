@@ -5,17 +5,21 @@ import { predictionError, nextStability, validatePredictionPolicy, type Predicti
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { ValidatorRegistry,type RegisteredValidator } from "../../task-evidence/src/registry.ts"
 import { decodeSemanticOutput,aggregateSemanticOutputs } from "../../task-evidence/src/semantic-output.ts"
+import { CognitiveResultCache } from "./cognitive-cache.ts"
+import { TaskPreflight } from "./task-preflight.ts"
 import { CognitiveMemory } from "../../task-context/src/memory.ts"
 import { DecisionLedger } from "./decisions.ts"
 import { AssumptionLedger } from "./assumptions.ts"
 import { Admission } from "./admission.ts"
 import { ScopedReplanning } from "./replanning.ts"
 import { RequestController } from "./requests.ts"
+import { PolicyMeasurements } from "../../task-policy/src/measurement.ts"
 import { PolicyRegression } from "../../task-policy/src/regression.ts"
 import { PolicyReplay } from "../../task-policy/src/replay.ts"
 import { AdversarialReview } from "./adversarial-review.ts"
 import { OutcomeRecorder } from "./outcomes.ts"
 import { BoundaryValidation } from "./boundary-validation.ts"
+import { ObservedInputs } from "./observed-inputs.ts"
 import { FileObservations } from "./file-observations.ts"
 import { RoleRouter } from "./role-router.ts"
 import { digest } from "./value.ts"
@@ -29,6 +33,8 @@ export class ControlRuntime {
   readonly graph:CausalGraph
   readonly evidence:EvidenceStore
   readonly memory:CognitiveMemory
+  readonly cognitiveCache:CognitiveResultCache
+  readonly preflight:TaskPreflight
   readonly admission:Admission
   readonly assumptions:AssumptionLedger
   readonly decisions:DecisionLedger
@@ -37,11 +43,13 @@ export class ControlRuntime {
   readonly requests:RequestController
   readonly roles:RoleRouter
   readonly files:FileObservations
+  readonly inputs:ObservedInputs
   readonly boundaries:BoundaryValidation
   readonly adversarial:AdversarialReview
   readonly outcomes:OutcomeRecorder
   readonly policyReplay:PolicyReplay
   readonly policyRegression:PolicyRegression
+  readonly policyMeasurements:PolicyMeasurements
   private draining=false
   constructor(engine:TaskGraphEngine) {
     this.engine=engine
@@ -49,8 +57,11 @@ export class ControlRuntime {
     this.evidence=new EvidenceStore(engine.store.control)
     this.memory=new CognitiveMemory(engine.store.control)
     this.admission=new Admission(engine.store.control)
+    this.cognitiveCache=new CognitiveResultCache(this)
+    this.preflight=new TaskPreflight(this)
     this.validators=new ValidatorRegistry(engine.store.control)
     this.replanning=new ScopedReplanning(engine)
+    this.inputs=new ObservedInputs(this)
     this.requests=new RequestController(this)
     this.roles=new RoleRouter(this)
     this.files=new FileObservations(this.store,(taskId,input,evidence)=>{
@@ -64,12 +75,22 @@ export class ControlRuntime {
         this.store.event({id:causeId,type:"InputObservationChanged",entityId:taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{taskIds:[taskId],reason:"observed input change",input,evidence}})
         this.requests.questions.supersedeForChange(request.id,causeId)
       }
+    },(grantId,input,evidence,cause)=>{
+      const row=this.store.db.prepare("SELECT task_id FROM activation_grants WHERE id=?").get(grantId)
+      const owner=row&&this.store.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(String(row.task_id))
+      const request=owner&&this.requests.get(String(owner.request_id))
+      if(!request||request.plannerGrant!==grantId||request.planId&&engine.store.findWorkPlan(request.planId)?.activeRevision)return
+      this.memory.invalidate(input.entityId,input.port,input.view,input.hash,cause)
+      const content={requestId:request.id,grantId,input,cause,evidence}
+      const proof=this.evidence.put({id:`planner-file-change:${grantId}:${cause}`,version:1,type:"runtime",source:"changed observed planner file",producer:"file-observations",validatorVersion:"planner-file-invalidation/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[input],confidence:1,expiresAt:null})
+      this.requests.observedInputChanged(request.id,cause,proof)
     })
     this.boundaries=new BoundaryValidation(this)
     this.adversarial=new AdversarialReview(this)
     this.outcomes=new OutcomeRecorder(this)
     this.policyReplay=new PolicyReplay(this)
     this.policyRegression=new PolicyRegression(this)
+    this.policyMeasurements=new PolicyMeasurements(this)
     this.assumptions=new AssumptionLedger(this)
     this.decisions=new DecisionLedger(this)
     engine.store.beforeCommit(()=>{
@@ -79,11 +100,14 @@ export class ControlRuntime {
       while(this.adversarial.ingest()===1000){ /* require L5 reviews before semantic completion can be adopted */ }
       while(this.ingestObservations()===1000){ /* adopt only current exact-input validator observations */ }
       while(this.boundaries.ingest()===1000){ /* measured tuples require seven independent obligations */ }
+      while(this.inputs.ingest()===1000){ /* registered external views invalidate only bound consumers */ }
       while(this.files.ingest()===1000){ /* observed file ports bind only accepted role results */ }
       while(this.roles.ingest()===1000){ /* only measured evidence activates optional roles */ }
+      while(this.cognitiveCache.ingest()===1000){ /* only independently validated cognition can become L0 reuse */ }
       while(this.adversarial.ingest()===1000){ /* L5 requires separate reviewers and a joint independent verdict */ }
       while(this.outcomes.ingest()===1000){ /* accepted costs retain unknown usefulness labels */ }
       while(this.policyReplay.ingest()===1000){ /* shadow decisions never authorize production effects */ }
+      while(this.policyMeasurements.ingest()===1000){ /* paired outcomes retain frozen attribution and cost units */ }
       while(this.policyRegression.ingest()===1000){ /* only pinned validator verdicts can move a current policy head */ }
       while(this.assumptions.ingest()===1000){ /* independent proposition validation and source invalidation */ }
       while(this.decisions.ingest()===1000){ /* validated decisions retain their source and assumption lineage */ }

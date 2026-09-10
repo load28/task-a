@@ -129,6 +129,7 @@ export class RevisionCoordinator {
     if (t.state !== "waiting" || t.stops.some(s => s.state !== "stopped")) return
     const plan = this.store.findWorkPlan(t.planId)!
     if (plan.currentRevision !== t.toVersion || this.store.activePlanVersion(plan.id) !== t.fromVersion) return
+    if(this.store.control.get("replan_supersessions",plan.id,t.toVersion))return
     assertControlledPlanActivation(this.engine,plan.id,t.toVersion)
     const impact = this.analyze(plan.id, t.toVersion, t.fromVersion), context = this.context(plan.id, t.toVersion)
     const priorDescendants = new Set(this.store.planLinks(plan.id, t.fromVersion).flatMap(l => [...this.engine.subtreeIds(l.taskId)]))

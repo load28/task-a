@@ -105,6 +105,8 @@ export class EvidenceStore {
   /** An attempt-scoped observation is replaced only by a mandatory obligation
    * atomically pinned for the current attempt. Historical failures remain stored. */
   applicable(obligation:Obligation):boolean {
+    if(obligation.kind==="request-plan"&&this.validatedDraftReplacement(obligation))return false
+    if(obligation.kind==="role-output"&&this.validatedPlannerReplacement(obligation))return false
     if(obligation.kind==="role-output"&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='specialist_question_resumptions'").get()) {
       const resumed=this.store.db.prepare("WITH RECURSIVE chain(decision_id,grant_id) AS (SELECT decision_id,new_grant FROM specialist_question_resumptions WHERE old_obligation=? UNION SELECT r.decision_id,r.new_grant FROM specialist_question_resumptions r JOIN chain c ON r.old_grant=c.grant_id AND r.decision_id=c.decision_id) SELECT 1 FROM chain c JOIN specialist_demands d ON d.decision_id=c.decision_id AND d.grant_id=c.grant_id WHERE d.mandatory=1").get(obligation.id)
       if(resumed)return false
@@ -126,6 +128,66 @@ export class EvidenceStore {
       const replacement=JSON.parse(String(row.payload)) as Obligation
       return replacement.kind===obligation.kind&&replacement.tuple.some(v=>v.entityId===obligation.entityId&&v.port==="validation-attempt"&&v.view==="attempt"&&v.hash===digest({attemptId:String(current.id)}))
     })
+  }
+  independentlySatisfied(obligation:Obligation):boolean {
+    if(!obligation.mandatory||!this.satisfied(obligation))return false
+    for(const validator of obligation.validators) {
+      const match=/^([a-z][a-z0-9-]*)\/v([1-9][0-9]*)$/.exec(validator)
+      const spec=match&&this.store.get<{authorization:VersionRef[]}>("validator_versions",match[1]!,Number(match[2]))
+      if(!spec||spec.authorization.some(ref=>!this.valid(ref)))return false
+    }
+    const jobs=this.store.db.prepare("SELECT state,payload FROM validation_jobs WHERE obligation_id=?").all(obligation.id)
+    return jobs.length===obligation.validators.length&&jobs.every(job=>job.state==="passed"&&obligation.evidence.some(ref=>digest(ref)===digest(JSON.parse(String(job.payload)).evidence)))
+  }
+  private validatedPlannerReplacement(original:Obligation):boolean {
+    const db=this.store.db
+    if(!db.prepare("SELECT 1 FROM sqlite_master WHERE name='control_requests'").get())return false
+    const old=original.tuple.find(input=>input.port==="role-result"&&input.view==="structured-output")?.entityId
+    if(!old)return false
+    for(const row of db.prepare("SELECT payload FROM control_requests WHERE task_id=?").all(original.entityId)) {
+      const request=JSON.parse(String(row.payload)),recovery=request.inputReplan
+      if(!recovery?.superseded?.includes(old)||recovery.pending||!request.planId||!request.plannerGrant||!this.valid(recovery.evidence)||!["observed-inputs","file-observations"].includes(this.require(recovery.evidence).producer))continue
+      const plan=this.obligation(request.obligationId)
+      if(!plan||plan.entityId!==original.entityId||plan.kind!=="request-plan"||!plan.tuple.some(input=>input.entityId===request.planId&&input.port==="proposal")||!this.independentlySatisfied(plan))continue
+      const previous=db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(old),current=db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant)
+      if(!previous||!current)continue
+      const a=JSON.parse(String(previous.payload)),b=JSON.parse(String(current.payload))
+      if(a.executionMode!=="cognition"||b.executionMode!=="cognition"||digest(a.role)!==digest(b.role))continue
+      for(const candidate of db.prepare("SELECT payload FROM validation_obligations WHERE entity_id=? AND mandatory=1").all(original.entityId)) {
+        const replacement=JSON.parse(String(candidate.payload)) as Obligation
+        if(replacement.kind===original.kind&&digest(replacement.validators)===digest(original.validators)&&replacement.tuple.some(input=>input.entityId===request.plannerGrant&&input.port==="role-result"&&input.view==="structured-output")&&this.independentlySatisfied(replacement))return true
+      }
+    }
+    return false
+  }
+  /** Retiring an unactivated draft does not discharge its obligations. Only a
+   * live independently validated successor for the same request can replace it. */
+  private validatedDraftReplacement(original:Obligation):boolean {
+    const db=this.store.db
+    if(!db.prepare("SELECT 1 FROM sqlite_master WHERE name='request_draft_replacements'").get())return false
+    let row=db.prepare("SELECT * FROM request_draft_replacements WHERE old_obligation_id=?").get(original.id)
+    if(!row||!original.tuple.some(input=>input.entityId===row!.old_plan_id&&input.port==="proposal"&&input.view==="request-plan"))return false
+    const owner=db.prepare("SELECT payload FROM control_requests WHERE id=?").get(String(row.request_id))
+    const request=owner&&JSON.parse(String(owner.payload))
+    if(!request?.planId||request.taskId!==original.entityId)return false
+    const seen=new Set<string>()
+    while(row) {
+      const old=String(row.old_plan_id)
+      if(seen.has(old)||row.request_id!==request.id||!row.new_plan_id||!row.new_obligation_id)return false
+      seen.add(old)
+      const proof=JSON.parse(String(row.evidence)) as VersionRef
+      if(!this.valid(proof)||!["observed-inputs","file-observations"].includes(this.require(proof).producer))return false
+      const retired=db.prepare("SELECT state FROM request_plan_admissions WHERE plan_id=? AND request_id=?").get(old,request.id)
+      if(retired?.state!=="superseded")return false
+      if(row.new_plan_id===request.planId) {
+        if(row.new_obligation_id!==request.obligationId)return false
+        const replacement=this.obligation(String(row.new_obligation_id))
+        if(!replacement?.mandatory||replacement.entityId!==original.entityId||replacement.kind!==original.kind||!replacement.tuple.some(input=>input.entityId===request.planId&&input.port==="proposal"&&input.view==="request-plan")||!this.satisfied(replacement))return false
+        return this.independentlySatisfied(replacement)
+      }
+      row=db.prepare("SELECT * FROM request_draft_replacements WHERE old_plan_id=? AND old_obligation_id=?").get(String(row.new_plan_id),String(row.new_obligation_id))
+    }
+    return false
   }
   /** Satisfaction is a live evidence predicate, not a permanent status bit. */
   satisfied(obligation:Obligation,now=Date.now()):boolean {

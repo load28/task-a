@@ -174,13 +174,13 @@ test("측정된 leaf 실패는 원래 기대치를 보존한 새 허가로 복�
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })
 
-for(const questionMode of ["none","input-change","coalesced-input","question-input","assumption-loss","preserve-assumption","decision-loss","preserve-decision","selection","selection-unknown","resume","budget","budget-stale","stale","expired","generation"] as const)test(`국소 복구 소진의 검증된 scoped revision과 질문 재개: ${questionMode}`,async(t)=>{
+for(const questionMode of ["none","input-change","coalesced-input","question-input","assumption-loss","preserve-assumption","decision-loss","preserve-decision","selection","selection-unknown","selection-keep","resume","budget","budget-stale","stale","expired","generation"] as const)test(`국소 복구 소진의 검증된 scoped revision과 질문 재개: ${questionMode}`,async(t)=>{
   const dir=mkdtempSync(join(tmpdir(),"regional-repair-")),database=join(dir,"graph.db")
   let r=createGraphRuntime(database)
   try {
     const baseline=install(r)
     r.control.validators.register({id:"repair",version:1,command:[process.execPath,"-e",`let text='';for await(const chunk of process.stdin)text+=chunk;const input=JSON.parse(text);const p=input.evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;if(p.metadata.clarifications?.length&&p.metadata.clarifications[0].answers[0][0]!=='UTF-8로 검증해 주세요')process.exit(1);if(p.metadata.goal!=='Write done'||p.metadata.expectations[0].expectation.expectedArtifacts['result.txt']!=='done'||p.patch.revisedTasks[0].objective!=='Write done with verified encoding')process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
-    if(questionMode.startsWith("selection"))r.control.validators.register({id:"region-cost",version:1,command:[process.execPath,"-e",`let text='';for await(const chunk of process.stdin)text+=chunk;const input=JSON.parse(text);const candidate=input.evidence.find(e=>e.validatorVersion==='region-candidate/v1').content;if(candidate.context.goal!=='Write done'||candidate.required.some(id=>!candidate.candidate.nodes.includes(id)))process.exit(1);console.log(JSON.stringify({feasible:${questionMode==="selection"?'true':'"unknown"'},costUnit:'work-units',costs:{planning:1,reasoning:2,context:3,reexecution:4,integration:5,expectedFailure:6},reason:'registered structural fixture evaluator'}));`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
+    if(questionMode.startsWith("selection"))r.control.validators.register({id:"region-cost",version:1,command:[process.execPath,"-e",`let text='';for await(const chunk of process.stdin)text+=chunk;const input=JSON.parse(text);const candidate=input.evidence.find(e=>e.validatorVersion==='region-candidate/v1').content;if(candidate.context.goal!=='Write done'||candidate.required.some(id=>!candidate.candidate.nodes.includes(id)))process.exit(1);console.log(JSON.stringify({feasible:${questionMode==="selection-unknown"?'"unknown"':'true'},costUnit:'work-units',costs:{planning:1,reasoning:2,context:3,reexecution:4,integration:5,expectedFailure:6},switching:{currentValid:${questionMode==="selection-keep"},keep:{estimate:${questionMode==="selection-keep"?1:20},lower:${questionMode==="selection-keep"?1:18},upper:${questionMode==="selection-keep"?2:22}},newFailure:{estimate:6,lower:5,upper:7}},reason:'registered structural fixture evaluator'}));`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[{id:"operator",version:1}]})
     const program={...baseline,version:2,fileObservation:{maxFiles:10,maxBytes:10000},maxLocalRepairs:1,maxClarifications:1,tokenLimit:questionMode.startsWith("budget")?33012:100000,replanner:{...baseline.planner,validators:["repair/v1"],maxAttempts:["coalesced-input","question-input"].includes(questionMode)?2:1,...(questionMode.startsWith("selection")?{selection:{validator:"region-cost/v1",candidateLimit:10,evaluationBudget:5,costUnit:"work-units"}}:{})}};r.control.requests.register(program)
     r.control.requests.submit({id:"regional",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
     r.control.requests.tick();accept(r,r.control.requests.get("regional")!.plannerGrant!,proposal);r.control.requests.tick()
@@ -226,6 +226,19 @@ for(const questionMode of ["none","input-change","coalesced-input","question-inp
       assert.ok(r.store.db.prepare("SELECT count(*) n FROM region_candidate_evaluations").get()!.n as number>0)
       await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
       if(questionMode==="selection-unknown") {
+        assert.equal(r.control.requests.get("regional")!.state,"waiting")
+        assert.match(r.control.requests.get("regional")!.reason!,/No proven feasible region/)
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0)
+        return
+      }
+      if(questionMode==="selection-keep") {
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_keeps").get()!.n,1,JSON.stringify({request:r.control.requests.get("regional"),evaluations:r.store.db.prepare("SELECT * FROM region_candidate_evaluations").all(),jobs:r.store.db.prepare("SELECT state,payload FROM validation_jobs WHERE validator='region-cost/v1'").all()}))
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0)
+        for(let i=0;i<3;i++)r.control.requests.tick()
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_keeps").get()!.n,1)
+        const receipt=JSON.parse(String(r.store.db.prepare("SELECT payload FROM validation_jobs WHERE validator='region-cost/v1' AND state='passed' LIMIT 1").get()!.payload)).evidence
+        r.control.evidence.retract(receipt,[{id:"operator",version:1}],"switching estimate receipt withdrawn")
+        r.control.requests.tick()
         assert.equal(r.control.requests.get("regional")!.state,"waiting")
         assert.match(r.control.requests.get("regional")!.reason!,/No proven feasible region/)
         assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0)
@@ -668,8 +681,9 @@ test("질문 전에 실제로 읽은 파일이 바뀌면 원래 계획 답변을
     const question=r.control.requests.questions.pending("question")[0]!
     writeFileSync(join(dir,"result.txt"),"different premise")
     r.control.files.refreshNative(dir,{maxFiles:10,maxBytes:1000})
-    assert.throws(()=>r.control.requests.questions.answer("question","user",question.id,[["유지"]]),/stale observed file inputs/)
-    assert.equal(r.control.requests.questions.get(question.id)!.state,"pending")
+    assert.throws(()=>r.control.requests.questions.answer("question","user",question.id,[["유지"]]),/no longer pending/)
+    assert.equal(r.control.requests.questions.get(question.id)!.state,"superseded")
+    assert.equal(r.control.requests.get("question")!.state,"waiting","An unregistered input replan quota cannot authorize another call")
     assert.equal(r.store.db.prepare("SELECT count(*) n FROM activation_grants").get()!.n,1)
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })
@@ -824,5 +838,367 @@ for(const mode of ["pass","conflict","question","repair","adaptive"] as const)te
       assert.equal(decision.signals.failure,null)
       assert.ok(decision.reasons.includes("registered mandatory review"))
     }
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+test("등록 입력은 계획 호출 전에 관찰되고 worker까지 고정되며 변경된 입력의 grant는 거절된다",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"request-observed-input-")),r=createGraphRuntime(":memory:")
+  try {
+    const baseline=install(r),authorization=[{id:"operator",version:1}]
+    writeFileSync(join(dir,"config.txt"),"before")
+    r.control.validators.register({id:"request-config",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');console.log(JSON.stringify({status:'known',schemaVersion:'config/v1',value:fs.readFileSync('config.txt','utf8')}))`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
+    const input={id:"config",version:1,kind:"environment" as const,schemaVersion:"config/v1",validator:"request-config/v1",authorization,maxAgeMs:60000}
+    r.control.inputs.register(input)
+    r.control.requests.register({...baseline,version:2,observedInputs:[input]})
+    r.control.requests.submit({id:"input-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:baseline.id,version:2}})
+    r.control.requests.tick()
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM activation_grants").get()!.n,0)
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+    r.control.requests.tick()
+    const request=r.control.requests.get("input-request")!,planner=request.plannerGrant!
+    assert.ok(planner)
+    accept(r,planner,proposal);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    const taskId=r.control.requests.tasks(request.id)[0]!
+    assert.deepEqual(r.control.inputs.taskValues(taskId).map(value=>value.value),["before"])
+    const row=r.store.db.prepare("SELECT id,payload FROM activation_grants WHERE task_id=? AND state='issued'").get(taskId)!
+    assert.ok(row)
+    const grant=JSON.parse(String(row.payload)) as ActivationGrant
+    const context=r.store.control.get<import("../packages/task-cognition/src/model.ts").ContextManifest>("context_manifests",grant.context.id,1)!
+    assert.ok(context.included.some(item=>item.required&&JSON.stringify(item.content).includes("before")))
+    writeFileSync(join(dir,"config.txt"),"after")
+    r.control.inputs.refresh(input)
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+    assert.equal(r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(String(row.id))!.state,"fenced")
+    assert.throws(()=>r.control.admission.claim(String(row.id),{worker:"late",specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()}),/fenced/)
+    assert.equal(r.engine.requireTask(request.taskId).goal,"Write done")
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["issued","claimed","quota","validation-stale","authorization"] as const)test(`계획 입력 변경은 원인을 병합하고 중단 확인·한도·기존 계획 검증을 보존한다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"plan-input-recovery-")),database=join(dir,"graph.db")
+  let r=createGraphRuntime(database)
+  try {
+    const baseline=install(r),authorization=[{id:"operator",version:1}]
+    writeFileSync(join(dir,"config.txt"),"one")
+    r.control.validators.register({id:"planning-config",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');console.log(JSON.stringify({status:'known',schemaVersion:'config/v1',value:fs.readFileSync('config.txt','utf8')}))`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
+    const input={id:"planning-input",version:1,kind:"environment" as const,schemaVersion:"config/v1",validator:"planning-config/v1",authorization,maxAgeMs:60000}
+    r.control.inputs.register(input)
+    r.control.requests.register({...baseline,version:2,maxInputReplans:mode==="quota"?0:1,observedInputs:[input]})
+    r.control.requests.submit({id:"recovery",sessionId:"user",text:"Write done",planOnly:false,program:{id:baseline.id,version:2}})
+    r.control.requests.tick();await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    const first=r.control.requests.get("recovery")!.plannerGrant!
+    if(mode==="authorization") {
+      const content={authorization:"withdraw obsolete program authorization"}
+      const proof=r.control.evidence.put({id:"withdrawal",version:1,type:"user",source:"fixture operator",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:1,expiresAt:null})
+      r.control.evidence.retract(authorization[0]!,[proof],"program authority withdrawn")
+      assert.equal(r.control.evidence.valid(authorization[0]!),false)
+      assert.equal(r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(first)!.state,"fenced")
+      assert.equal(r.control.requests.get("recovery")!.state,"waiting")
+      return
+    }
+    if(mode==="claimed") {
+      const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(first)!.payload)) as ActivationGrant
+      r.control.admission.claim(first,{worker:"fixture-worker",specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()})
+      r.store.db.exec("CREATE TABLE grant_dispatches(grant_id TEXT PRIMARY KEY,state TEXT,owner TEXT,payload TEXT)")
+      r.store.db.prepare("INSERT INTO grant_dispatches VALUES(?,'stopping','fixture','{}')").run(first)
+    }
+    if(mode==="validation-stale"){accept(r,first,proposal);r.control.requests.tick()}
+    for(const value of ["two","three"]) {
+      writeFileSync(join(dir,"config.txt"),value);r.control.inputs.refresh(input)
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000})
+    }
+    if(mode!=="validation-stale")assert.equal(r.control.requests.get("recovery")!.inputReplan!.generation,1,"Changes before a new issuance belong to the same recovery episode")
+    r.close();r=createGraphRuntime(database)
+    r.control.requests.tick()
+    if(mode==="quota") {
+      assert.equal(r.control.requests.get("recovery")!.state,"waiting")
+      assert.equal(r.control.requests.get("recovery")!.plannerGrant,first)
+      assert.equal(r.control.requests.tasks("recovery").length,0)
+      return
+    }
+    if(mode==="claimed") {
+      assert.equal(r.control.requests.get("recovery")!.plannerGrant,first,"A fenced worker still needs stop confirmation")
+      r.store.db.prepare("UPDATE grant_dispatches SET state='failed',payload=? WHERE grant_id=?").run(JSON.stringify({stop:{stopped:true,evidence:"Fixture confirms previous worker stopped"}}),first)
+      r.control.requests.tick()
+    }
+    const second=r.control.requests.get("recovery")!.plannerGrant!
+    assert.notEqual(second,first)
+    assert.equal(r.control.requests.get("recovery")!.inputReplan!.pending,false)
+    const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(second)!.payload)) as ActivationGrant
+    assert.equal(grant.generation,2)
+    assert.equal(r.control.inputs.taskValues(grant.taskId)[0]!.value,"three")
+    writeFileSync(join(dir,"config.txt"),"four");r.control.inputs.refresh(input)
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    assert.equal(r.control.requests.get("recovery")!.state,"waiting")
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM activation_grants").get()!.n,2,"Input events cannot reset the registered replanning quota")
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["satisfied","mismatch","unknown","changed-after-preflight","expired","budget","retracted","restart"] as const)test(`L1 사전 검증은 충족된 leaf를 모델 없이 처리하고 불완전한 근거는 모델 판단으로 남긴다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"deterministic-preflight-")),database=join(dir,"graph.db")
+  let r=createGraphRuntime(database)
+  try {
+    const baseline=install(r)
+    writeFileSync(join(dir,"result.txt"),mode==="mismatch"?"wrong":"done")
+    if(mode==="unknown")rmSync(join(dir,"result.txt"))
+    r.control.requests.register({...baseline,version:2,tokenLimit:mode==="budget"?33000:baseline.tokenLimit,deterministicPreflight:{maxAgeMs:mode==="expired"?1:60000}})
+    r.control.requests.submit({id:"preflight-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:baseline.id,version:2}})
+    r.control.requests.tick();accept(r,r.control.requests.get("preflight-request")!.plannerGrant!,proposal);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    const taskId=r.control.requests.tasks("preflight-request")[0]!
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM activation_grants WHERE task_id=?").get(taskId)!.n,0,"Deterministic preflight precedes any worker model grant")
+    if(mode==="restart"){r.close();r=createGraphRuntime(database);r.control.requests.tick()}
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    const row=r.store.db.prepare("SELECT state,payload FROM activation_grants WHERE task_id=?").get(taskId)!
+    assert.ok(row,JSON.stringify(r.control.requests.get("preflight-request")))
+    const grant=JSON.parse(String(row.payload)) as ActivationGrant
+    if(mode==="mismatch"||mode==="unknown"||mode==="expired") {
+      assert.equal(grant.profile.level,3)
+      assert.equal(row.state,"issued")
+      assert.equal(r.engine.requireTask(taskId).status,"ready")
+      return
+    }
+    assert.equal(grant.profile.level,1)
+    assert.equal(row.state,"completed")
+    const run=JSON.parse(String(r.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)!.payload))
+    assert.equal(run.usage.inputTokens,0);assert.equal(run.usage.outputTokens,0)
+    assert.equal(r.store.db.prepare("SELECT spent FROM budget_reservations WHERE id=?").get(grant.id)!.spent,0)
+    assert.notEqual(r.control.requests.get("preflight-request")!.state,"completed","Final independent verification is still required")
+    if(mode==="changed-after-preflight")writeFileSync(join(dir,"result.txt"),"changed")
+    if(mode==="retracted") {
+      const preflight=JSON.parse(String(r.store.db.prepare("SELECT payload FROM task_preflights WHERE id=?").get(grant.preflight!.id)!.payload))
+      const evidence=r.control.evidence.obligation(preflight.obligationId)!.evidence[0]!
+      r.control.evidence.retract(evidence,[{id:"operator",version:1}],"withdraw deterministic observation")
+    }
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick()
+    assert.equal(r.control.requests.get("preflight-request")!.state==="completed",["satisfied","budget","restart"].includes(mode))
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM activation_grants WHERE task_id=? AND json_extract(payload,'$.profile.level')>=2").get(taskId)!.n,0)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["pass","new-fails","chain","receipt-withdrawn","quota","planner-role","validator-authorization"] as const)test(`검증 중 변경된 초안은 실제 검증된 대체 계획으로만 교체한다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"draft-replacement-")),database=join(dir,"graph.db")
+  let r=createGraphRuntime(database)
+  try {
+    const baseline=install(r),authorization=[{id:"operator",version:1}]
+    writeFileSync(join(dir,"config.txt"),"one");writeFileSync(join(dir,"plan-gate.txt"),"fail")
+    r.control.validators.register({id:"draft-input",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');console.log(JSON.stringify({status:'known',schemaVersion:'config/v1',value:fs.readFileSync('config.txt','utf8')}))`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
+    const validatorAuthorization=r.control.evidence.put({id:"draft-validator-authority",version:1,type:"code",source:"fixture registration",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content:{validator:"draft-plan/v1"},contentHash:digest({validator:"draft-plan/v1"}),inputVector:[],confidence:1,expiresAt:null})
+    r.control.validators.register({id:"draft-plan",version:1,command:[process.execPath,"-e",`const fs=require('node:fs'),data=JSON.parse(fs.readFileSync(0,'utf8')),proposal=data.evidence.find(e=>e.type==='agent').content;process.exit(fs.readFileSync('plan-gate.txt','utf8')==='pass'&&proposal.request==='Write done'&&proposal.proposal[0].node.taskSpec.goal==='Write done'?0:2)`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[validatorAuthorization]})
+    const input={id:"draft-config",version:1,kind:"environment" as const,schemaVersion:"config/v1",validator:"draft-input/v1",authorization,maxAgeMs:60000}
+    r.control.inputs.register(input)
+    if(mode==="planner-role") {
+      const role=r.store.control.get<RoleVersion>("role_versions",baseline.planner.role.id,1)!
+      r.control.validators.register({id:"draft-role",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');process.exit(fs.readFileSync('plan-gate.txt','utf8')==='pass'?0:2)`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
+      r.store.control.put("role_versions",role.id,2,{...role,version:2,validators:["draft-role/v1"]})
+      baseline.planner={...baseline.planner,role:{id:role.id,version:2}}
+    }
+    r.control.requests.register({...baseline,version:2,observedInputs:[input],planValidators:["draft-plan/v1"],maxInputReplans:mode==="quota"?0:2})
+    r.control.requests.submit({id:"draft-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:baseline.id,version:2}})
+    r.control.requests.tick();await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    accept(r,r.control.requests.get("draft-request")!.plannerGrant!,proposal);r.control.requests.tick()
+    const old=r.control.requests.get("draft-request")!,oldObligation=r.control.evidence.obligation(old.obligationId!)!
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+    assert.equal(r.control.evidence.satisfied(r.control.evidence.obligation(oldObligation.id)!),false)
+    writeFileSync(join(dir,"config.txt"),"two");r.control.inputs.refresh(input)
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+    assert.equal(r.engine.store.findWorkPlan(old.planId!)!.state,"cancelled")
+    assert.equal(r.control.evidence.applicable(oldObligation),true,"Retiring a draft cannot erase its failed validation")
+    assert.throws(()=>r.engine.approveWorkPlan({planId:old.planId!,version:1,approvalSource:"stale draft"}))
+    r.close();r=createGraphRuntime(database);r.control.requests.tick()
+    if(mode==="quota") {
+      assert.equal(r.control.requests.get("draft-request")!.state,"waiting")
+      assert.equal(r.control.requests.tasks("draft-request").length,0)
+      assert.equal(r.control.evidence.applicable(oldObligation),true)
+      return
+    }
+    accept(r,r.control.requests.get("draft-request")!.plannerGrant!,proposal);r.control.requests.tick()
+    let next=r.control.requests.get("draft-request")!
+    assert.notEqual(next.planId,old.planId)
+    assert.equal(r.control.evidence.applicable(oldObligation),true)
+    if(mode==="chain") {
+      writeFileSync(join(dir,"config.txt"),"three");r.control.inputs.refresh(input)
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick()
+      accept(r,r.control.requests.get("draft-request")!.plannerGrant!,proposal);r.control.requests.tick()
+      next=r.control.requests.get("draft-request")!
+    }
+    writeFileSync(join(dir,"plan-gate.txt"),mode==="new-fails"?"fail":"pass")
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000})
+    assert.equal(r.control.evidence.applicable(oldObligation),mode==="new-fails")
+    assert.equal(r.control.evidence.obligation(oldObligation.id)!.state,"failed","Historical failure is never rewritten into success")
+    if(mode==="validator-authorization") {
+      r.control.evidence.retract(validatorAuthorization,authorization,"withdraw validator authorization")
+      assert.equal(r.control.evidence.applicable(oldObligation),true)
+      assert.equal(r.control.evidence.independentlySatisfied(r.control.evidence.obligation(next.obligationId!)!),false)
+    }
+    if(mode==="receipt-withdrawn") {
+      r.control.evidence.retract(r.control.evidence.obligation(next.obligationId!)!.evidence[0]!,authorization,"withdraw replacement validation")
+      assert.equal(r.control.evidence.applicable(oldObligation),true)
+    }
+    r.control.requests.tick()
+    const success=mode==="pass"||mode==="chain"||mode==="planner-role"
+    assert.equal(r.control.requests.tasks("draft-request").length,success?1:0)
+    if(success) {
+      const id=r.control.requests.tasks("draft-request")[0]!,grant=r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='issued'").get(id)!
+      assert.ok(grant,JSON.stringify(r.control.requests.get("draft-request")))
+      writeFileSync(join(dir,"result.txt"),"done");accept(r,String(grant.id))
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick()
+      assert.equal(r.control.requests.get("draft-request")!.state,"completed")
+    }
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["planning","draft","question","claimed","historical"] as const)test(`native 파일 변경은 현재 계획의 실제 읽기에만 복구를 연결한다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"planner-file-change-")),r=createGraphRuntime(":memory:")
+  try {
+    const baseline=install(r)
+    r.control.requests.register({...baseline,version:2,readScopes:["config.txt","result.txt"],maxInputReplans:2,maxClarifications:2})
+    writeFileSync(join(dir,"config.txt"),"one")
+    r.control.requests.submit({id:"file-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:baseline.id,version:2}})
+    r.control.requests.tick()
+    const first=r.control.requests.get("file-request")!.plannerGrant!
+    const observed=(grant:ActivationGrant)=>{
+      r.control.files.read(grant,dir,"config.txt",digest(readFileSync(join(dir,"config.txt"),"utf8")),"read-1")
+      r.control.files.read(grant,dir,"config.txt",digest(readFileSync(join(dir,"config.txt"),"utf8")),"read-2")
+    }
+    if(mode==="claimed") {
+      const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(first)!.payload)) as ActivationGrant
+      r.control.admission.claim(first,{worker:"file-reader",specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()});observed(grant)
+    }else accept(r,first,proposal,mode==="question"?{unresolvedQuestions:[{kind:"user",question:"Which configuration applies?"}]}:{},observed)
+    if(mode==="draft"||mode==="question")r.control.requests.tick()
+    const old=r.control.requests.get("file-request")!
+    writeFileSync(join(dir,"config.txt"),"two")
+    assert.equal(r.control.files.refreshNative(dir,{maxFiles:10,maxBytes:10000}),1)
+    assert.equal(r.control.requests.get("file-request")!.state,"pending")
+    if(mode==="draft")assert.equal(r.engine.store.findWorkPlan(old.planId!)!.state,"cancelled")
+    if(mode==="question")assert.equal(r.control.requests.questions.history("file-request")[0]!.state,"superseded")
+    r.control.requests.tick()
+    if(mode==="claimed") {
+      assert.equal(r.control.requests.get("file-request")!.plannerGrant,first)
+      assert.equal(r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(first)!.state,"fenced")
+      return
+    }
+    const next=r.control.requests.get("file-request")!.plannerGrant!
+    assert.notEqual(next,first)
+    if(mode==="historical") {
+      writeFileSync(join(dir,"config.txt"),"three");r.control.files.refreshNative(dir,{maxFiles:10,maxBytes:10000})
+      assert.equal(r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(next)!.state,"issued","A prior planner's reads cannot fence the new planner before it reads")
+    }
+    accept(r,next,proposal,{},observed);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick()
+    const taskId=r.control.requests.tasks("file-request")[0]!
+    assert.ok(taskId,JSON.stringify(r.control.requests.get("file-request")))
+    assert.equal(r.control.requests.get("file-request")!.inputReplan!.generation,1)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
+for(const mode of ["change","equal-refresh","retracted-restored","unknown","superseded","legacy","activating","activating-quota","activating-coalesced"] as const)test(`등록 입력의 변경·유효성 복구가 실제 지역 재계획과 대체 worker까지 이어진다: ${mode}`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"registered-input-region-")),database=join(dir,"graph.db")
+  let r=createGraphRuntime(database)
+  try {
+    const base=install(r),authorization=[{id:"operator",version:1}]
+    r.control.validators.register({id:"region-input",version:1,command:[process.execPath,"-e",`const fs=require('node:fs'),value=fs.readFileSync('config.txt','utf8');console.log(JSON.stringify({status:value==='unknown'?'unknown':'known',schemaVersion:'config/v1',value:value==='unknown'?null:value}))`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
+    r.control.validators.register({id:"input-repair",version:1,command:[process.execPath,"-e",`const fs=require('node:fs'),input=JSON.parse(fs.readFileSync(0,'utf8')),p=input.evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;process.exit(p.metadata.goal==='Write done'&&p.metadata.expectations[0].expectation.expectedArtifacts['result.txt']==='done'&&p.patch.revisedTasks[0].objective==='Write done with current input'?0:2)`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
+    const ref={id:"runtime-config",version:1}
+    r.control.inputs.register({...ref,kind:"environment",schemaVersion:"config/v1",validator:"region-input/v1",authorization,maxAgeMs:60000})
+    r.control.requests.register({...base,version:2,tokenLimit:250000,maxLocalRepairs:0,observedInputs:[ref],replanner:{...base.planner,validators:["input-repair/v1"],maxAttempts:mode==="activating-quota"?1:2}})
+    writeFileSync(join(dir,"config.txt"),"one")
+    r.control.requests.submit({id:"registered-region",sessionId:"user",text:"Write done",planOnly:false,program:{id:base.id,version:2}})
+    r.control.requests.tick();await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    accept(r,r.control.requests.get("registered-region")!.plannerGrant!,proposal);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+    const oldTask=r.control.requests.tasks("registered-region")[0]!,plan=r.control.requests.get("registered-region")!.planId!
+    if(mode.startsWith("activating")) {
+      const row=r.store.db.prepare("SELECT payload FROM activation_grants WHERE task_id=? AND state='issued'").get(oldTask)!
+      const grant=JSON.parse(String(row.payload)) as ActivationGrant,worker="old-live-worker"
+      withTaskAdmission(r.engine,grant.id,worker,()=>new TaskScheduler(r.engine,1).claim(oldTask,{agent:"fixture",sessionId:worker}))
+      r.control.admission.claim(grant.id,{worker,specHash:grant.specHash,inputVector:grant.inputVector,graphHash:r.control.graph.hash(),generation:grant.generation,now:Date.now()})
+    }
+    if(mode==="retracted-restored") {
+      const current=r.control.inputs.current(ref)!
+      r.control.evidence.retract(r.control.evidence.obligation(current.obligationId)!.evidence[0]!,authorization,"withdraw stale input attestation")
+      r.control.requests.tick()
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0,"Unresolved input cannot produce a new model context")
+    }else writeFileSync(join(dir,"config.txt"),mode==="unknown"?"unknown":"two")
+    r.control.inputs.refresh(ref);await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+    if(mode==="unknown") {
+      r.control.requests.tick()
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,0)
+      writeFileSync(join(dir,"config.txt"),"two");r.control.inputs.refresh(ref)
+      await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+    }
+    if(mode==="equal-refresh") {
+      const old=r.control.inputs.current(ref)!
+      r.control.inputs.refresh(ref);await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000})
+      r.control.evidence.retract(r.control.evidence.obligation(old.obligationId)!.evidence[0]!,authorization,"retire the replaced observation")
+      assert.equal(r.control.inputs.valid(ref),true)
+    }
+    if(mode==="legacy") {
+      const source=JSON.parse(String(r.store.db.prepare("SELECT payload FROM event_outbox WHERE type='InputObservationChanged' AND entity_id=? ORDER BY sequence DESC LIMIT 1").get(oldTask)!.payload))
+      delete source.payload.registeredInput
+      r.engine.atomic(()=>r.store.control.event({...source,id:"legacy-registered-input"}))
+    }
+    r.close();r=createGraphRuntime(database);r.control.requests.tick()
+    let row=r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE state='planning'").get()
+    assert.ok(row,JSON.stringify(r.control.requests.get("registered-region")))
+    let repair=JSON.parse(String(row.payload))
+    if(mode==="legacy")assert.ok(repair.causes.includes("legacy-registered-input"))
+    if(mode==="superseded") {
+      const first=repair
+      writeFileSync(join(dir,"config.txt"),"three");r.control.inputs.refresh(ref)
+      await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick();r.control.requests.tick()
+      assert.equal(r.store.db.prepare("SELECT state FROM request_region_repairs WHERE id=?").get(first.id)!.state,"superseded")
+      row=r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE state='planning'").get()!
+      repair=JSON.parse(String(row.payload));assert.notEqual(repair.grantId,first.grantId)
+    }
+    assert.equal(r.control.inputs.taskValues(oldTask)[0]!.value,mode==="superseded"?"three":mode==="retracted-restored"?"one":"two")
+    const node={...proposal[0]!.node,taskSpec:{...proposal[0]!.node.taskSpec,goal:"Write done with current input"}}
+    const patch={revisedTasks:[{id:node.nodeId,dependencies:[],objective:node.taskSpec.goal,expectedOutcome:node.outcome,assumptionRefs:[],decisionRefs:[]}],newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:[],invalidatedAssumptions:[],expectedOutcomes:[{taskId:node.nodeId,value:node.outcome}],confidence:1}
+    accept(r,repair.grantId,[{patch,tasks:[{node,expectation:proposal[0]!.expectation}],summary:"Use the current registered input while preserving the requested outcome"}]);r.control.requests.tick()
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick();r.control.requests.tick()
+    if(mode.startsWith("activating")) {
+      assert.equal(r.store.db.prepare("SELECT state FROM request_region_repairs WHERE id=?").get(repair.id)!.state,"activating")
+      const transition=r.engine.revisions.transitions(plan).find(t=>t.toVersion===2)!
+      assert.equal(transition.state,"waiting");assert.equal(r.store.activePlanVersion(plan),1)
+      writeFileSync(join(dir,"config.txt"),"three");r.control.inputs.refresh(ref)
+      await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+      assert.equal(r.store.db.prepare("SELECT state FROM request_region_repairs WHERE id=?").get(repair.id)!.state,"superseded")
+      assert.equal(r.store.findPlanRevision(plan,2)!.state,"superseded")
+      r.close();r=createGraphRuntime(database);r.control.requests.tick()
+      assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,1,"No replacement grant before physical stop confirmation")
+      if(mode==="activating-coalesced") {
+        writeFileSync(join(dir,"config.txt"),"four");r.control.inputs.refresh(ref)
+        await r.control.validators.run(dir,{maxJobs:2,maxDurationMs:5000});r.control.requests.tick()
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,1)
+      }
+      for(const stop of r.engine.signals.stops().filter(stop=>stop.taskId===oldTask&&stop.state==="requested"))r.engine.signals.stopped(stop.id,stop.token,"actual fixture worker stopped")
+      for(const stop of transition.stops)r.engine.revisions.confirmStopped(transition.id,stop.taskId,stop.token,"actual fixture worker stopped")
+      assert.equal(r.engine.reconcilePlanTransition(transition.id).activated,undefined,"Stopped workers cannot activate the superseded revision")
+      r.control.requests.tick();r.control.requests.tick()
+      if(mode==="activating-quota") {
+        assert.match(r.control.requests.get("registered-region")!.reason!,/quota exhausted/)
+        assert.equal(r.store.db.prepare("SELECT count(*) n FROM request_region_repairs").get()!.n,1)
+        assert.equal(r.store.activePlanVersion(plan),1)
+        return
+      }
+      const nextRepair=JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE state='planning'").get()!.payload))
+      assert.equal(nextRepair.lease.baseRevision,2);assert.equal(nextRepair.lease.sourceRevision,1)
+      assert.notEqual(nextRepair.grantId,repair.grantId)
+      assert.equal(r.control.inputs.taskValues(oldTask)[0]!.value,mode==="activating-coalesced"?"four":"three")
+      accept(r,nextRepair.grantId,[{patch,tasks:[{node,expectation:proposal[0]!.expectation}],summary:"Replace the retired pending revision using the current execution inputs"}]);r.control.requests.tick()
+      await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick();r.control.requests.tick()
+      assert.equal(r.store.activePlanVersion(plan),3,r.control.requests.get("registered-region")!.reason)
+      assert.deepEqual(r.store.planLinks(plan,2),[])
+      assert.equal(r.engine.revisions.transitions(plan).find(t=>t.id===transition.id)!.state,"superseded")
+    }
+    assert.equal(r.store.findWorkPlan(plan)!.currentRevision,mode.startsWith("activating")?3:2,r.control.requests.get("registered-region")!.reason)
+    const next=r.control.requests.tasks("registered-region")[0]!
+    assert.notEqual(next,oldTask);assert.deepEqual(r.control.inputs.taskRefs(next),[ref])
+    const worker=r.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='issued'").get(next)!
+    assert.ok(worker,JSON.stringify(r.control.requests.get("registered-region")))
+    writeFileSync(join(dir,"result.txt"),"done");accept(r,String(worker.id))
+    await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000});r.control.requests.tick()
+    assert.equal(r.control.requests.get("registered-region")!.state,"completed",r.control.requests.get("registered-region")!.reason)
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })

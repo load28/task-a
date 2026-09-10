@@ -14,7 +14,7 @@ interface Repair {
   questionId?:string;causes:string[];lease:ReplanLease;grantId:string;stageId?:string;revision?:number;proposal?:Proposal
 }
 interface Proposal {patch:ReplanPatch;tasks:ProposedTask[];summary:string}
-interface Cause {adversarialReview?:{grantId:string};attemptId?:string;error?:PredictionError;evidence:VersionRef[];reason:string;taskIds?:string[];invalidAssumptions?:VersionRef[];invalidDecisions?:VersionRef[];input?:{entityId:string;version:number;hash:string};integrationBoundary?:{id:string;version:number;tupleHash:string}}
+interface Cause {adversarialReview?:{grantId:string};attemptId?:string;error?:PredictionError;evidence:VersionRef[];reason:string;taskIds?:string[];invalidAssumptions?:VersionRef[];invalidDecisions?:VersionRef[];input?:{entityId:string;version:number;hash:string};registeredInput?:{definition:VersionRef;token:string};integrationBoundary?:{id:string;version:number;tupleHash:string}}
 
 /** Local exhaustion is causal evidence, not permission to replace an entire plan.
  * Incomplete dependency observations force a conservative region and explicitly
@@ -25,7 +25,7 @@ export class RegionalRepairs {
   constructor(controller:RequestController) {
     this.controller=controller
     this.selection=new RegionSelection(controller.runtime)
-    controller.store.db.exec("CREATE TABLE IF NOT EXISTS request_region_repairs(id TEXT PRIMARY KEY,request_id TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS request_task_history(request_id TEXT NOT NULL,task_id TEXT NOT NULL,node_id TEXT NOT NULL,PRIMARY KEY(request_id,task_id))")
+    controller.store.db.exec("CREATE TABLE IF NOT EXISTS request_region_repairs(id TEXT PRIMARY KEY,request_id TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS request_region_keeps(id TEXT PRIMARY KEY,request_id TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS request_task_history(request_id TEXT NOT NULL,task_id TEXT NOT NULL,node_id TEXT NOT NULL,PRIMARY KEY(request_id,task_id))")
   }
   private save(repair:Repair):void {this.controller.store.db.prepare("UPDATE request_region_repairs SET state=?,payload=? WHERE id=?").run(repair.state,canonical(repair),repair.id)}
   advance(request:ControlledRequest,program:ControllerProgram):boolean {
@@ -33,14 +33,23 @@ export class RegionalRepairs {
     const runtime=this.controller.runtime,engine=runtime.engine,store=runtime.store,db=store.db
     const rows=db.prepare("SELECT payload FROM request_region_repairs WHERE request_id=? ORDER BY rowid").all(request.id)
     const repairs=rows.map(row=>JSON.parse(String(row.payload)) as Repair),active=repairs.find(item=>!["applied","rejected","superseded"].includes(item.state))
-    const used=new Set(repairs.filter(item=>item.state!=="superseded").flatMap(item=>item.causes))
+    const validKeeps=db.prepare("SELECT payload FROM request_region_keeps WHERE request_id=?").all(request.id).map(row=>JSON.parse(String(row.payload)) as {id:string;revision:number;causes:string[];selection:{region?:{id:string}}}).filter(keep=>{
+      if(engine.store.findWorkPlan(request.planId!)?.currentRevision!==keep.revision||!keep.selection.region)return false
+      const candidate=db.prepare("SELECT obligation_id FROM region_candidate_evaluations WHERE selection_id=? AND candidate_id=?").get(keep.id,keep.selection.region.id)
+      const obligation=candidate&&runtime.evidence.obligation(String(candidate.obligation_id))
+      return !!obligation&&runtime.evidence.independentlySatisfied(obligation)
+    })
+    const used=new Set([...repairs.filter(item=>item.state!=="superseded").flatMap(item=>item.causes),...validKeeps.flatMap(item=>item.causes)])
     const events=db.prepare("SELECT id,payload FROM event_outbox WHERE type IN ('LocalRepairExhausted','RequestChangeRequested','JointIntegrationFailed','InputObservationChanged','AssumptionValidityLost','DecisionValidityLost','AdversarialReviewFailed') AND correlation_id=? ORDER BY sequence").all(request.id)
       .filter(row=>!used.has(String(row.id)))
       .map(row=>({id:String(row.id),payload:JSON.parse(String(row.payload)).payload as Cause}))
         .filter(event=>event.payload.reason==="adversarial review failure"&&!!event.payload.adversarialReview&&(()=>{
           const review=db.prepare("SELECT * FROM adversarial_reviews WHERE source_grant=? AND state='failed'").get(event.payload.adversarialReview!.grantId)
           return !!review&&this.controller.tasks(request.id).includes(String(review.task_id))&&digest(JSON.parse(String(review.payload)).tuple)===digest(observationInputVector(engine,String(review.task_id)))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))
-        })()||event.payload.reason==="decision validity lost"&&!!event.payload.invalidDecisions?.length&&event.payload.invalidDecisions.every(ref=>!runtime.decisions.valid(ref))&&event.payload.taskIds?.every(id=>this.controller.tasks(request.id).includes(id))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))||event.payload.reason==="assumption validity lost"&&!!event.payload.invalidAssumptions?.length&&event.payload.invalidAssumptions.every(ref=>!runtime.assumptions.valid(ref))&&event.payload.taskIds?.every(id=>this.controller.tasks(request.id).includes(id))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))||event.payload.reason==="observed input change"&&!!event.payload.input&&(()=>{
+        })()||event.payload.reason==="decision validity lost"&&!!event.payload.invalidDecisions?.length&&event.payload.invalidDecisions.every(ref=>!runtime.decisions.valid(ref))&&event.payload.taskIds?.every(id=>this.controller.tasks(request.id).includes(id))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))||event.payload.reason==="assumption validity lost"&&!!event.payload.invalidAssumptions?.length&&event.payload.invalidAssumptions.every(ref=>!runtime.assumptions.valid(ref))&&event.payload.taskIds?.every(id=>this.controller.tasks(request.id).includes(id))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))||event.payload.reason==="observed input change"&&(()=>{
+        const change=runtime.inputs.validatedChange(event.payload.evidence,event.payload.registeredInput)
+        return !!change&&!!event.payload.taskIds?.length&&event.payload.taskIds.every(id=>this.controller.tasks(request.id).includes(id)&&runtime.inputs.taskRefs(id).some(ref=>canonical(ref)===canonical(change.definition)))
+      })()||event.payload.reason==="observed input change"&&!!event.payload.input&&(()=>{
         const input=event.payload.input!,head=db.prepare("SELECT version FROM observed_file_heads WHERE id=?").get(input.entityId)
         return head?.version===input.version&&event.payload.taskIds?.every(id=>this.controller.tasks(request.id).includes(id))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))
       })()||event.payload.reason==="joint integration failure"&&!!event.payload.integrationBoundary&&(()=>{
@@ -48,11 +57,12 @@ export class RegionalRepairs {
         return state?.version===boundary.version&&state?.tuple_hash===boundary.tupleHash&&event.payload.taskIds?.every(id=>this.controller.tasks(request.id).includes(id))&&event.payload.evidence.every(ref=>runtime.evidence.valid(ref))
       })()||event.payload.reason==="explicit user steering"||event.payload.reason==="local repair quota exhausted"&&this.controller.tasks(request.id).some(id=>engine.store.currentAttempt(id)?.id===event.payload.attemptId))
     if(active) {
-      if(events.length&&["planning","waiting","validating"].includes(active.state)) {
+      if(events.length&&(["planning","waiting","validating"].includes(active.state)||active.state==="activating"&&engine.store.activePlanVersion(active.lease.planId)!==active.revision)) {
         // A later measured episode cannot be folded into an already authorized
         // prompt. Retire its grant/lease and wait for the execution adapter to
         // acknowledge any live worker before issuing a replacement below.
         store.atomic(()=>{
+          if(active.state==="activating")runtime.replanning.supersedeCommitted(active.stageId!,events.flatMap(event=>event.payload.evidence))
           db.prepare("UPDATE activation_grants SET state='fenced' WHERE id=? AND state IN ('issued','claimed')").run(active.grantId)
           db.prepare("UPDATE scoped_replan_stages SET state='fenced' WHERE plan_id=? AND generation=? AND state IN ('lease','staged')").run(active.lease.planId,active.lease.generation)
           db.prepare("UPDATE controlled_plans SET generation=generation+1 WHERE plan_id=? AND generation=?").run(active.lease.planId,active.lease.generation)
@@ -71,23 +81,36 @@ export class RegionalRepairs {
       if(db.prepare("SELECT 1 FROM activation_grants WHERE task_id=? AND state IN ('issued','claimed')").get(id))return true
       if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()&&db.prepare("SELECT 1 FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE g.task_id=? AND d.state IN ('pending','dispatching','stopping')").get(id))return true
     }
-    const plan=engine.store.findWorkPlan(request.planId)!,links=engine.store.planLinks(plan.id,plan.currentRevision),nodes=engine.store.planNodes(plan.id,plan.currentRevision)
+    const plan=engine.store.findWorkPlan(request.planId)!,sourceRevision=runtime.replanning.sourceRevision(plan.id)
+    if(sourceRevision!==plan.currentRevision&&engine.revisions.transitions(plan.id).some(t=>t.state==="waiting"&&t.stops.some(stop=>stop.state!=="stopped")))return true
+    const links=engine.store.planLinks(plan.id,sourceRevision),nodes=engine.store.planNodes(plan.id,sourceRevision)
     const sources=links.filter(link=>events.some(event=>event.payload.taskIds?.includes(link.taskId)||!!event.payload.attemptId&&engine.store.currentAttempt(link.taskId)?.id===event.payload.attemptId)).map(link=>link.taskId)
-    const closure=propagate({sources,scopes:["implementation","behavior","contract","dependency","assumption","subgoal","goal"],graphComplete:false,universe:links.map(link=>link.taskId),outgoing:id=>runtime.graph.outgoing(id),threshold:()=>1,preserved:()=>false,sourceCritical:events.some(event=>(event.payload.error?.criticalViolations.length??0)>0)})
+    const scopes=["implementation","behavior","contract","dependency","assumption","subgoal","goal"] as const
+    const provenUniverse=runtime.boundaries.containment(sources,[...scopes],links.map(link=>link.taskId))
+    const closure=propagate({sources,scopes:[...scopes],graphComplete:false,universe:provenUniverse??links.map(link=>link.taskId),outgoing:id=>runtime.graph.outgoing(id),threshold:()=>1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:events.some(event=>(event.payload.error?.criticalViolations.length??0)>0)})
     let boundary=links.filter(link=>closure.affected.includes(link.taskId)).map(link=>link.nodeId),changed=links.filter(link=>sources.includes(link.taskId)).map(link=>link.nodeId)
     const evidence=[...new Map(events.flatMap(event=>event.payload.evidence).map(ref=>[canonical(ref),ref])).values()]
     const cause=digest({requestId:request.id,events:events.map(event=>event.id),revision:plan.currentRevision})
     const domain=connectedRegionDomain(nodes.map(node=>({id:node.nodeId,nodes:[node.nodeId]})),nodes.flatMap(node=>[...node.dependsOnNodeIds.map(id=>[id,node.nodeId] as [string,string]),...(node.parentNodeId?[[node.parentNodeId,node.nodeId] as [string,string]]:[])]),program.replanner.selection?.candidateLimit??1024)
     const candidateDomain=[...domain.candidates.map(candidate=>candidate.nodes),boundary]
-    const evaluated=program.replanner.selection?this.selection.choose({id:cause,required:boundary,candidates:candidateDomain,domainComplete:domain.complete,context:{planId:plan.id,revision:plan.currentRevision,graphHash:runtime.graph.hash(),inputs:links.map(link=>engine.signals.capture(link.taskId)),goal:request.text,nodes,expectations:request.proposal,evidence},evidence},program.replanner.selection):undefined
+    const evaluated=program.replanner.selection?this.selection.choose({id:cause,required:boundary,candidates:candidateDomain,domainComplete:domain.complete,context:{planId:plan.id,revision:plan.currentRevision,sourceRevision,graphHash:runtime.graph.hash(),inputs:links.map(link=>engine.signals.capture(link.taskId)),goal:request.text,nodes,expectations:request.proposal,evidence},evidence},program.replanner.selection):undefined
     if(program.replanner.selection&&!evaluated)return true
     if(evaluated) {
       if(!evaluated.region)throw new Error("No proven feasible region within the registered selection budget")
       boundary=evaluated.region.nodes
     }
-    const selection={sources,closure,boundary,candidateDomain,candidateDomainComplete:domain.complete,optimalityScope:"registered finite domain constrained by conservative closure",evaluation:evaluated??null,minimumProven:evaluated?.minimumProven??false,reason:"process/read completeness is not attested; conservative containing region requires independent feasibility validation"}
+    const selection={sources,closure,boundary,candidateDomain,candidateDomainComplete:domain.complete,optimalityScope:"registered finite domain constrained by conservative closure",evaluation:evaluated??null,minimumProven:evaluated?.minimumProven??false,containment:provenUniverse?"actual binding and seven-dimension preservation proof":"whole active plan",reason:provenUniverse?"all members of the smallest verified containing boundary remain conservative; its complete exits are currently preserved":"process/read completeness is not attested; conservative containing region requires independent feasibility validation"}
     const selectionRef=runtime.evidence.put({id:`region-selection:${cause}`,version:1,type:"runtime",source:"causal propagation with unknown completeness",producer:"regional-repairs",validatorVersion:"region-selection/v1",timestamp:Date.now(),content:selection,contentHash:digest(selection),inputVector:[],confidence:1,expiresAt:null})
-    const prior=db.prepare("SELECT payload FROM scoped_revision_bindings WHERE plan_id=? AND version=?").get(plan.id,plan.currentRevision)
+    const criticalInvalid=events.some(event=>(event.payload.error?.criticalViolations.length??0)>0)
+    if(evaluated?.switchDecision&&!evaluated.switchDecision.switch&&!criticalInvalid) {
+      const keep={id:cause,requestId:request.id,causes:events.map(event=>event.id),revision:plan.currentRevision,selection:evaluated,evidence:[...evidence,selectionRef],timestamp:Date.now()}
+      store.atomic(()=>{
+        db.prepare("INSERT OR IGNORE INTO request_region_keeps VALUES(?,?,?)").run(cause,request.id,canonical(keep))
+        store.event({id:`regional-kept:${cause}`,type:"RegionalPlanKept",entityId:request.taskId,correlationId:request.id,schemaVersion:1,timestamp:keep.timestamp,payload:keep})
+      })
+      return true
+    }
+    const prior=db.prepare("SELECT payload FROM scoped_revision_bindings WHERE plan_id=? AND version=?").get(plan.id,sourceRevision)
     const previousDecisions:VersionRef[]=prior?(JSON.parse(String(prior.payload)) as Array<{decisionRefs:VersionRef[];assumptionRefs?:VersionRef[]}>).flatMap(node=>node.decisionRefs):[]
     const boundDecisions=links.flatMap(link=>db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(link.taskId).map(row=>({id:String(row.id),version:Number(row.version)})))
     const invalidDecisions=events.flatMap(event=>event.payload.invalidDecisions??[])
@@ -114,7 +137,7 @@ export class RegionalRepairs {
   resume(request:ControlledRequest,program:ControllerProgram,question:RequestQuestion):void {
     const repair=this.assertQuestion(request,question),runtime=this.controller.runtime
     if(question.state!=="answered"||!program.replanner)throw new Error("Regional resume requires an answered question and registered replanner")
-    const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease:repair.lease,assumptions:this.assumptionContext(repair.lease),decisions:this.decisionContext([...repair.lease.immutableDecisions,...(repair.lease.invalidDecisions??[])]),region:runtime.engine.store.planNodes(repair.lease.planId,repair.lease.baseRevision).filter(node=>repair.lease.boundary.includes(node.nodeId)),expectations:request.proposal,failures:repair.lease.evidence.map(ref=>runtime.evidence.require(ref)),contract:"Continue the scoped repair using the original lease, goal, preserved nodes, immutable decisions and invariants. Return one proposedTasks item {patch: ReplanPatch,tasks:[{node:PlanNode,expectation:six dimensions}],summary}. Answers do not extend scope or relax expected outcomes."},`answer:${question.id}`,repair.lease.expiresAt)
+    const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease:repair.lease,assumptions:this.assumptionContext(repair.lease),decisions:this.decisionContext([...repair.lease.immutableDecisions,...(repair.lease.invalidDecisions??[])]),region:runtime.engine.store.planNodes(repair.lease.planId,repair.lease.sourceRevision??repair.lease.baseRevision).filter(node=>repair.lease.boundary.includes(node.nodeId)),expectations:request.proposal,failures:repair.lease.evidence.map(ref=>runtime.evidence.require(ref)),contract:"Continue the scoped repair using the original lease, goal, preserved nodes, immutable decisions and invariants. Return one proposedTasks item {patch: ReplanPatch,tasks:[{node:PlanNode,expectation:six dimensions}],summary}. Answers do not extend scope or relax expected outcomes."},`answer:${question.id}`,repair.lease.expiresAt)
     repair.grantId=grant.id;repair.state="planning";delete repair.questionId;this.save(repair)
   }
   private progress(repair:Repair,request:ControlledRequest,program:ControllerProgram):void {
@@ -143,7 +166,7 @@ export class RegionalRepairs {
     }
     if(repair.state==="validating") {
       const stage=runtime.replanning.describe(repair.stageId!),obligation=runtime.evidence.obligation(stage.obligationId)!
-      if(!runtime.evidence.satisfied(obligation))return
+      if(!runtime.evidence.independentlySatisfied(obligation))return
       const result=runtime.replanning.commit(repair.stageId!)
       repair.revision=result.revision.version;repair.state="activating";this.save(repair)
       engine.approveWorkPlan({planId:repair.lease.planId,version:repair.revision,approvalSource:`validated regional repair:${repair.id}`})
@@ -151,7 +174,7 @@ export class RegionalRepairs {
     if(repair.state==="activating") {
       if(engine.store.activePlanVersion(repair.lease.planId)!==repair.revision)return
       const stage=runtime.replanning.describe(repair.stageId!),proof=runtime.evidence.obligation(stage.obligationId)!
-      if(!runtime.evidence.satisfied(proof))throw new Error("Regional validation expired before expectation activation")
+      if(!runtime.evidence.independentlySatisfied(proof))throw new Error("Regional validation expired before expectation activation")
       const proposed=new Map(request.proposal!.map(item=>[item.node.nodeId,item.expectation]))
       for(const item of repair.proposal!.tasks)proposed.set(stage.assigned?.[item.node.nodeId]??item.node.nodeId,item.expectation)
       db.prepare("INSERT OR IGNORE INTO request_task_history SELECT * FROM control_request_tasks WHERE request_id=?").run(request.id)
@@ -167,6 +190,7 @@ export class RegionalRepairs {
         if(engine.store.childTasks(link.taskId).length||store.head("task_expectations",link.taskId))continue
         const expectation=proposed.get(link.nodeId)
         if(!expectation)throw new Error("Replacement task lacks a validated expectation")
+        runtime.inputs.bind(link.taskId,program.observedInputs??[])
         runtime.pinExpectation({...expectation,id:link.taskId,taskId:link.taskId,version:1,specHash:engine.signals.capture(link.taskId).specHash,evidence:proof.evidence},program.predictionPolicy,program.observationValidators)
       }
       db.prepare("UPDATE control_requests SET payload=? WHERE id=?").run(canonical(request),request.id)

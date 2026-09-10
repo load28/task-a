@@ -8,6 +8,7 @@ import { TaskGraphEngine } from "#task-engine"
 import { CausalGraph } from "../packages/task-causality/src/graph.ts"
 import { propagate } from "../packages/task-causality/src/propagation.ts"
 import { preservedExit } from "../packages/task-causality/src/boundary.ts"
+import { shouldSwitch } from "../packages/task-causality/src/prediction.ts"
 import { predictionError,nextStability } from "../packages/task-causality/src/prediction.ts"
 import { minimumRegion,mergeRegions } from "../packages/task-causality/src/regions.ts"
 import type { CausalEdge,BoundaryProof,TaskExpectation,Observation } from "../packages/task-causality/src/model.ts"
@@ -80,6 +81,12 @@ test("T06 타입 이름이나 호환성만으로 경계 보존을 증명하지 �
   assert.equal(preservedExit({...input,boundary:{...input.boundary,bindingsComplete:false}}),false)
   assert.equal(preservedExit({...input,now:201}),false)
   assert.equal(preservedExit({...input,graphHash:"other"}),false)
+})
+
+test("T08 현재 계획의 critical 위반은 비용상 유지가 싸도 전환한다",()=>{
+  assert.equal(shouldSwitch(0,100,100,100,false),true)
+  assert.equal(shouldSwitch(1,2,3,4,true),false)
+  assert.equal(shouldSwitch(20,2,3,4,true),true)
 })
 
 test("T07 실제 관찰의 unknown과 임계값 진동을 구분한다",()=>{
@@ -185,10 +192,8 @@ test("T11 정책은 shadow·검증 없이 활성화되지 않으며 회귀 후�
     assert.throws(()=>learning.evaluate({...evaluation,stage:"validated",effectiveSamples:1.5},gate,()=>true),/sample count/)
     learning.propose({...proposal,version:2},()=>true)
     assert.throws(()=>learning.evaluate({...evaluation,proposal:{id:proposal.id,version:2},stage:"validated"},gate,()=>true),/skip/)
-    learning.evaluate({...evaluation,stage:"validated"},gate,()=>true)
+    assert.throws(()=>learning.evaluate({...evaluation,stage:"validated"},gate,()=>true),/preregistered measured study/)
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM policy_heads").get()!.n,0)
-    learning.evaluate({...evaluation,stage:"active"},gate,()=>true)
-    assert.equal(store.db.prepare("SELECT policy_id FROM policy_heads WHERE target='activation'").get()!.policy_id,proposal.id)
   }finally{store.close()}
 })
 

@@ -1,3 +1,5 @@
+import { assertMeasuredEvaluation } from "./measurement.ts"
+import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { randomUUID } from "node:crypto"
 import { ControlStore } from "../../task-control/src/store.ts"
 import { canonical, digest, unit } from "../../task-control/src/value.ts"
@@ -14,7 +16,7 @@ export interface PolicyProposal {
 export interface Evaluation {
   id:string;version:number;proposal:VersionRef;stage:"shadow"|"validated"|"active";episodes:string[];holdoutEpisodes:string[]
   usefulGainLowerBound:number;qualityLowerBound:number;missedCriticalUpperBound:number;effectiveSamples:number;confidenceWidth:number
-  criticalStrata:string[];evidence:VersionRef[];authorized:boolean
+  criticalStrata:string[];evidence:VersionRef[];authorized:boolean;measurementStudy?:VersionRef;approval?:VersionRef[]
 }
 export interface EvaluationGate {minimumSamples:number;maxConfidenceWidth:number;qualityFloor:number;maxMissedCritical:number;criticalStrata:string[];requiresApproval:boolean}
 export function validateRule(rule:StructuralRule):void {
@@ -74,7 +76,7 @@ export class PolicyLearning {
       const legacy=legacyHead?this.store.get<Evaluation>("policy_evaluations",proposal.id,legacyHead):undefined
       const lifecycleId=legacy&&digest(legacy.proposal)===digest(evaluation.proposal)?proposal.id:`proposal:${digest(evaluation.proposal)}`
       const priorVersion=this.store.head("policy_evaluations",lifecycleId)
-      const prior=priorVersion?this.store.get<Evaluation & {evaluationGate?:EvaluationGate}>("policy_evaluations",lifecycleId,priorVersion):undefined
+      const prior=priorVersion?this.store.get<Evaluation & {evaluationGate?:EvaluationGate;baselineHead?:{policy:VersionRef|null;revision:number}}>("policy_evaluations",lifecycleId,priorVersion):undefined
       const expected=prior?.stage==="shadow"?"validated":prior?.stage==="validated"?"active":"shadow"
       if(evaluation.stage!==expected||prior?.stage==="active")throw new Error("Policy lifecycle cannot skip stages")
       if(prior&&(!prior.evaluationGate||digest(prior.evaluationGate)!==digest(gate)))throw new Error("Evaluation gates are frozen before shadow outcomes")
@@ -83,8 +85,15 @@ export class PolicyLearning {
         if(evaluation.episodes.some(e=>evaluation.holdoutEpisodes.includes(e))||!evaluation.holdoutEpisodes.length)throw new Error("Training/holdout episode leakage")
         if(evaluation.effectiveSamples<gate.minimumSamples||evaluation.confidenceWidth>gate.maxConfidenceWidth||evaluation.usefulGainLowerBound<=0||evaluation.qualityLowerBound<gate.qualityFloor||evaluation.missedCriticalUpperBound>gate.maxMissedCritical||gate.criticalStrata.some(s=>!evaluation.criticalStrata.includes(s)))throw new Error("Policy has not met evidence and correctness gates")
       }
-      if(evaluation.stage==="active"&&gate.requiresApproval&&!evaluation.authorized)throw new Error("Policy approval is required")
-      this.store.put("policy_evaluations",lifecycleId,priorVersion+1,{...evaluation,evaluationGate:gate})
+      if(evaluation.stage!=="shadow")assertMeasuredEvaluation(this.store,evaluation,gate)
+      if(prior&&digest(prior.measurementStudy??null)!==digest(evaluation.measurementStudy??null))throw new Error("Measurement study is frozen before shadow outcomes")
+      if(evaluation.stage==="active"&&gate.requiresApproval) {
+        const evidence=new EvidenceStore(this.store)
+        if(!evaluation.approval?.length||evaluation.approval.some(ref=>{const proof=evidence.require(ref);return !["user","code"].includes(proof.type)||digest((proof.content as {proposal?:VersionRef}).proposal??null)!==digest(evaluation.proposal)||(proof.content as {approval?:string}).approval!=="activate-policy"}))throw new Error("Policy approval requires explicit evidence for this proposal")
+      }
+      const baselineHead=prior?.baselineHead??this.head(proposal.target)
+      if(evaluation.stage==="active"&&(!prior?.baselineHead||digest(this.head(proposal.target))!==digest(baselineHead)||digest(baselineHead.policy)!==digest(proposal.rollback)))throw new Error("Policy activation baseline changed since shadow registration")
+      this.store.put("policy_evaluations",lifecycleId,priorVersion+1,{...evaluation,evaluationGate:gate,baselineHead})
       this.store.advance("policy_evaluations",lifecycleId,priorVersion,priorVersion+1)
       if(evaluation.stage==="active") {
         this.store.put("policy_versions",proposal.id,proposal.version,proposal)

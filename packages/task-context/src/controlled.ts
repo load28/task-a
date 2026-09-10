@@ -13,6 +13,10 @@ export function controlledContext(runtime:ControlRuntime,taskId:string,role:Role
   const {architectureDecisions,inputArtifacts,verifiedBundles,contracts,learnings,recentHistory,...core}=source
   const items:ContextItem[]=[{id:`task:${taskId}`,version:1,kind:"task",content:canonical(core),required:true,depth:0,relevance:1,level:0,dependencies,path:[taskId],evidence:[]},...extra]
   const append=(id:string,kind:ContextItem["kind"],content:unknown,required:boolean,depth:number,version=1)=>items.push({id,version,kind,content:canonical(content),required,depth,relevance:required?1:.5,level:depth?1:0,dependencies,path:[taskId,id],evidence:[]})
+  for(const observation of runtime.inputs.taskValues(taskId)) {
+    const definition=runtime.inputs.definition(observation.definition)
+    items.push({id:observation.id,version:observation.version,kind:"dependency",content:canonical(observation),required:true,depth:0,relevance:1,level:0,dependencies:[{entityId:observation.id,port:definition.kind,view:definition.schemaVersion,version:observation.version,hash:observation.hash}],path:[taskId,observation.id],evidence:observation.evidence})
+  }
   for(const artifact of [...inputArtifacts,...verifiedBundles])append(`artifact:${artifact.artifactId}`,"dependency",artifact,true,1,artifact.version)
   for(const contract of contracts)append(`contract:${contract.contractId}`,"dependency",contract,true,1,contract.version)
   for(const decision of architectureDecisions)append(`architecture:${decision.artifactId}`,"history",decision,true,0,decision.version)

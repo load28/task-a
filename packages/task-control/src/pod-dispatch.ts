@@ -47,6 +47,8 @@ export class GrantedPodExecutor implements GrantedExecutor {
     }
   }
   private async deliver(id:string):Promise<unknown> {
+    const pending=this.runtime.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)
+    if(pending&&JSON.parse(String(pending.payload)).profile.level<2)throw new Error("Non-model grants cannot provision a model Pod")
     await this.start()
     const db=this.runtime.store.db,row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(id)
     if(row?.state!=="issued")throw new Error("Pod dispatch requires an unused activation grant")

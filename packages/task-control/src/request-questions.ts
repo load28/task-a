@@ -83,18 +83,18 @@ export class RequestQuestions {
   history(requestId:string):RequestQuestion[] {
     return this.controller.store.db.prepare("SELECT payload FROM request_questions WHERE request_id=? ORDER BY rowid").all(requestId).map(row=>JSON.parse(String(row.payload)))
   }
-  supersedeForChange(requestId:string,causeId:string):void {
+  supersedeForChange(requestId:string,causeId:string,planning=false):void {
     const request=this.controller.get(requestId)
-    if(!request?.planId||!["waiting","resuming"].includes(request.state)||!request.program)return
+    if(!request||!request.planId&&!planning||!["waiting","resuming"].includes(request.state)||!request.program)return
     const program=this.controller.store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version)
-    if(!program?.replanner)return
+    if(!program?.replanner&&!planning)return
     const questions=this.history(requestId).filter(question=>question.state==="pending"||request.state==="resuming"&&question.state==="answered"&&question.id===request.clarifications?.at(-1)?.questionId)
     if(!questions.length)return
     for(const question of questions) {
       question.state="superseded";this.save(question)
       this.controller.store.event({id:`question-superseded:${question.id}`,type:"RequestQuestionSuperseded",entityId:request.taskId,correlationId:request.id,causationId:causeId,schemaVersion:1,timestamp:Date.now(),payload:{questionId:question.id,causeId,source:question.source,answer:question.evidence??null}})
     }
-    request.state="executing";delete request.reason
+    request.state=planning?"pending":"executing";delete request.reason
     this.controller.store.db.prepare("UPDATE control_requests SET state=?,payload=? WHERE id=?").run(request.state,canonical(request),request.id)
   }
   cancel(requestId:string):void {

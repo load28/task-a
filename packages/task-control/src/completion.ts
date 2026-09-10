@@ -1,7 +1,8 @@
 import type { TaskGraphEngine } from "../../task-engine/src/index.ts"
-import type { Observation, PredictionError, TaskExpectation, VersionVector } from "../../task-causality/src/model.ts"
+import type { Observation, PredictionError, TaskExpectation, VersionVector,VersionRef } from "../../task-causality/src/model.ts"
 import type { PredictionPolicy, Stability } from "../../task-causality/src/prediction.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
+import { observedInputRefs,observedInputValid } from "./observed-inputs.ts"
 import { decisionValid } from "./decisions.ts"
 import { integrationTuple } from "./boundary-validation.ts"
 import { digest } from "./value.ts"
@@ -40,6 +41,7 @@ export function pinAttemptExpectation(engine:TaskGraphEngine,taskId:string,attem
 export function controlCompletionMissing(engine:TaskGraphEngine,taskIds:Iterable<string>):string[] {
   const store=engine.store.control,evidence=new EvidenceStore(store),ids=new Set(taskIds),entities=new Set(ids),missing:string[]=[]
   for(const id of ids) {
+    for(const ref of observedInputRefs(store,id))if(!observedInputValid(store,ref))missing.push(`registered input unresolved: ${ref.id}@${ref.version}`)
     if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='decision_task_consumers'").get())for(const ref of store.db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(id))if(!decisionValid(store,{id:String(ref.id),version:Number(ref.version)}))missing.push(`decision is not validated: ${ref.id}@${ref.version}`)
     if(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='adversarial_reviews'").get())for(const row of store.db.prepare("SELECT state,obligation_id FROM adversarial_reviews WHERE task_id=?").all(id)) {
       if(row.state!=="satisfied"||!row.obligation_id||!evidence.satisfied(evidence.obligation(String(row.obligation_id))!))missing.push("Independent adversarial review is unresolved")
@@ -73,6 +75,7 @@ export function controlCompletionMissing(engine:TaskGraphEngine,taskIds:Iterable
       const run=store.db.prepare("SELECT r.payload FROM agent_runs r JOIN activation_grants g ON g.id=r.grant_id WHERE r.task_id=? AND r.state='completed' AND json_extract(g.payload,'$.worker')=? AND json_extract(g.payload,'$.executionMode')='task'").get(id,attempt.worker.sessionId)
       const output=run&&JSON.parse(String(run.payload)).output
       if(output&&(output.requiresEscalation||output.unresolvedQuestions.length))missing.push(`worker reasoning unresolved: ${id}`)
+      if(output?.evidence?.some((ref:VersionRef)=>!evidence.valid(ref)))missing.push(`worker result evidence expired: ${id}`)
     }
     const binding=attempt&&store.db.prepare("SELECT * FROM control_attempt_expectations WHERE attempt_id=?").get(attempt.id)
     if(!binding||Number(binding.expectation_version)!==version||expectation.specHash!==engine.signals.capture(id).specHash) {

@@ -61,7 +61,10 @@ test("경쟁하는 dispatcher도 이미 전달 중인 grant를 중복 호출하�
   const wait=new Promise<void>(resolve=>{finish=resolve}),a=adapter(f.r,()=>wait)
   const first=new GrantDispatcher(f.r.control,a.executor,1),second=new GrantDispatcher(f.r.control,a.executor,1)
   try {
-    f.issue();first.tick();second.tick();assert.equal(a.calls.length,1)
+    const grant=f.issue();first.tick();second.tick();assert.equal(a.calls.length,1)
+    await second.recover()
+    assert.equal(f.r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(grant.id)!.state,"claimed")
+    assert.equal(a.stops.length,0)
     finish();await first.settle();second.tick();assert.equal(a.calls.length,1)
   } finally {finish();await first.close();await second.close();f.r.close()}
 })

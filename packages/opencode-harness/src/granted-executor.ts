@@ -94,6 +94,8 @@ export class GrantedOpenCodeExecutor {
     return {stopped:true,evidence:"Native abort acknowledged and session idle confirmed"}
   }
   async execute(grantId:string):Promise<AgentOutput> {
+    const pending=this.runtime.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grantId)
+    if(pending&&JSON.parse(String(pending.payload)).profile.level<2)throw new Error("Non-model grants cannot enter the model executor")
     await this.start()
     const client=this.client!,store=this.runtime.store,engine=this.runtime.engine
     const row=store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)

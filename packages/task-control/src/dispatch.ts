@@ -1,3 +1,4 @@
+import { CacheFallbackBudgetUnavailable } from "./cognitive-cache.ts"
 import { randomUUID } from "node:crypto"
 import type { ActivationGrant } from "../../task-cognition/src/model.ts"
 import type { ControlRuntime } from "./runtime.ts"
@@ -19,16 +20,22 @@ export class GrantDispatcher {
   readonly runtime:ControlRuntime
   readonly executor:GrantedExecutor
   readonly maxWorkers:number
-  constructor(runtime:ControlRuntime,executor:GrantedExecutor,maxWorkers:number) {
-    this.runtime=runtime;this.executor=executor;this.maxWorkers=maxWorkers
+  readonly ownerLeaseMs:number
+  constructor(runtime:ControlRuntime,executor:GrantedExecutor,maxWorkers:number,ownerLeaseMs=30000) {
+    this.runtime=runtime;this.executor=executor;this.maxWorkers=maxWorkers;this.ownerLeaseMs=ownerLeaseMs
     if(!Number.isSafeInteger(maxWorkers)||maxWorkers<1||maxWorkers>16)throw new Error("Invalid dispatch capacity")
+    if(!Number.isSafeInteger(ownerLeaseMs)||ownerLeaseMs<1000)throw new Error("Invalid dispatcher lease")
     runtime.store.db.exec(`CREATE TABLE IF NOT EXISTS grant_dispatches(grant_id TEXT PRIMARY KEY REFERENCES activation_grants(id),state TEXT NOT NULL,owner TEXT,payload TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS grant_dispatch_queue ON grant_dispatches(state);`)
+      CREATE INDEX IF NOT EXISTS grant_dispatch_queue ON grant_dispatches(state);
+      CREATE TABLE IF NOT EXISTS grant_dispatcher_leases(owner TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);`)
+    this.heartbeat()
   }
   private get db(){return this.runtime.store.db}
+  private heartbeat():void {this.db.prepare("INSERT INTO grant_dispatcher_leases VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET expires_at=excluded.expires_at").run(this.owner,Date.now()+this.ownerLeaseMs)}
   /** Nonblocking pump. A committed delivery intent always precedes the external call. */
   tick():void {
     if(this.closed)return
+    this.heartbeat()
     const selected=this.runtime.store.atomic(()=>{
       this.db.prepare("INSERT INTO grant_dispatches(grant_id,state,owner,payload) SELECT id,'pending',NULL,'{}' FROM activation_grants WHERE state='issued' AND id NOT IN (SELECT grant_id FROM grant_dispatches)").run()
       const running=Number(this.db.prepare("SELECT count(*) AS n FROM grant_dispatches WHERE state IN ('dispatching','stopping')").get()!.n)
@@ -52,8 +59,10 @@ export class GrantDispatcher {
     }
   }
   private async execute(id:string):Promise<void> {
+    const heartbeat=setInterval(()=>{if(!this.closed)try{this.heartbeat()}catch{/* recovery will retain the unknown external call */}},Math.max(500,Math.floor(this.ownerLeaseMs/3)))
     try {
-      await this.executor.execute(id)
+      const input=JSON.parse(String(this.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)!.payload)) as ActivationGrant
+      if(input.profile.level!==0||this.runtime.cognitiveCache.execute(id)===undefined)await this.executor.execute(id)
       this.runtime.store.atomic(()=>{
         const delivery=this.db.prepare("SELECT state,owner FROM grant_dispatches WHERE grant_id=?").get(id)
         if(delivery?.state!=="dispatching"||delivery.owner!==this.owner)return
@@ -62,6 +71,7 @@ export class GrantDispatcher {
         this.save(id,"completed",{completedAt:Date.now()})
       })
     } catch(error) {
+      if(error instanceof CacheFallbackBudgetUnavailable){this.save(id,"pending",{reason:error.message});return}
       this.runtime.store.atomic(()=>{
         const delivery=this.db.prepare("SELECT state,owner FROM grant_dispatches WHERE grant_id=?").get(id)
         if(delivery?.state!=="dispatching"||delivery.owner!==this.owner)return
@@ -69,15 +79,18 @@ export class GrantDispatcher {
         const grant=JSON.parse(String(this.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)!.payload)) as ActivationGrant
         this.save(id,grant.worker||this.executor.stopGrant?"stopping":"failed",{error:error instanceof Error?error.message:"Grant delivery failed"})
       })
-    }
+    } finally {clearInterval(heartbeat)}
   }
   /** A lost acknowledgement is never permission to submit another model request. */
   async recover():Promise<void> {
+    this.heartbeat()
     for(const row of this.db.prepare("SELECT d.*,g.payload AS grant_payload,g.state AS grant_state FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE d.state IN ('dispatching','stopping')").all()) {
       const id=String(row.grant_id)
       if(this.active.has(id)&&row.grant_state!=="fenced")continue
+      if(row.owner&&row.owner!==this.owner&&Number(this.db.prepare("SELECT expires_at FROM grant_dispatcher_leases WHERE owner=?").get(String(row.owner))?.expires_at??0)>Date.now())continue
       if(row.grant_state==="completed") {
-        if(this.executor.completion&&!await this.executor.completion(id))continue
+        const completedGrant=JSON.parse(String(row.grant_payload)) as ActivationGrant
+        if(completedGrant.profile.level!==0&&this.executor.completion&&!await this.executor.completion(id))continue
         this.save(id,"completed",{recoveredReceipt:true});continue
       }
       const grant=JSON.parse(String(row.grant_payload)) as ActivationGrant
@@ -132,5 +145,6 @@ export class GrantDispatcher {
     this.runtime.store.atomic(()=>{for(const id of this.active.keys())this.db.prepare("UPDATE activation_grants SET state='fenced' WHERE id=? AND state IN ('issued','claimed')").run(id)})
     await this.executor.close()
     await this.settle()
+    this.db.prepare("DELETE FROM grant_dispatcher_leases WHERE owner=?").run(this.owner)
   }
 }

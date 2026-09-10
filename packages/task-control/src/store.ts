@@ -6,7 +6,7 @@ export interface SystemEvent {
   id: string; type: string; entityId: string; timestamp: number; payload: unknown
   causationId?: string; correlationId: string; schemaVersion: 1
 }
-export const COLLECTIONS = ["evidence_versions", "decision_versions", "assumptions", "task_expectations", "task_observations", "prediction_errors", "planning_boundaries", "boundary_proofs", "role_versions", "policy_versions", "signal_snapshots", "context_manifests", "cognitive_records", "routine_versions", "policy_proposals", "policy_evaluations", "policy_replay_frames", "policy_shadow_trials", "policy_shadow_predictions", "policy_regression_watches", "outcome_labels", "replan_regions", "replan_leases", "validator_versions", "controller_programs"] as const
+export const COLLECTIONS = ["evidence_versions", "decision_versions", "assumptions", "task_expectations", "task_observations", "prediction_errors", "planning_boundaries", "boundary_proofs", "role_versions", "policy_versions", "signal_snapshots", "context_manifests", "cognitive_records", "routine_versions", "policy_proposals", "policy_evaluations", "policy_replay_frames", "policy_shadow_trials", "policy_shadow_predictions", "policy_regression_watches", "policy_measurement_studies", "outcome_labels", "replan_regions", "replan_leases", "replan_supersessions", "validator_versions", "controller_programs", "observed_input_definitions", "observed_input_observations"] as const
 export type Collection = typeof COLLECTIONS[number]
 
 /** Every writer uses the graph connection; nested graph transactions remain atomic. */

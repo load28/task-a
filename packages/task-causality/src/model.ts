@@ -51,7 +51,7 @@ export interface PropagationResult {
   impact: Record<string, number>; trace: Array<{ edgeId: string; scope: ChangeScope; reason: string; impact: number }>
 }
 export interface ReplanLease {
-  id: string; planId: string; baseRevision: number; graphHash: string; inputVector: VersionVector
+  id: string; planId: string; baseRevision: number; sourceRevision?: number; graphHash: string; inputVector: VersionVector
   changedNodes: string[]; invalidatedNodes: string[]; preservedNodes: string[]
   boundary: string[]; immutableDecisions: VersionRef[]; invalidAssumptions: VersionRef[]; invalidDecisions?:VersionRef[]; immutableAssumptions?:VersionRef[]
   predictionErrors: PredictionError[]; violatedInvariants: string[]; evidence: VersionRef[]

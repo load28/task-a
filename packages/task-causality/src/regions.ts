@@ -29,7 +29,8 @@ export function mergeRegions(regions: Array<{nodes:string[];boundaries:string[];
 }
 
 export interface FiniteRegion {id:string;nodes:string[];lowerBound:number}
-export interface RegionEvaluation {feasible:true|false|"unknown";cost:number|null;evidence:string[];reason:string}
+export interface SwitchingEstimate {currentValid:boolean;keep:{estimate:number;lower:number;upper:number};newFailure:{estimate:number;lower:number;upper:number}}
+export interface RegionEvaluation {feasible:true|false|"unknown";cost:number|null;evidence:string[];reason:string;switching?:SwitchingEstimate;costComponents?:Record<string,number>}
 /** Search a registered finite domain; an unknown cheaper candidate remains in
  * the optimality gap. Evaluation is deterministic/validated controller work. */
 export function searchRegions(input:{candidates:FiniteRegion[];affected:string[];budget:number;domainComplete:boolean;evaluate:(candidate:FiniteRegion)=>RegionEvaluation}) {
