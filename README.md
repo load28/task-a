@@ -59,7 +59,7 @@ node scripts/host-setup.ts cancel --workspace /absolute/project/path
 npm run host:stop
 npm run host:uninstall
 npm run check
-npm run evaluate:host -- --model claude
+npm run evaluate:host -- --model openai/gpt-5.6-terra
 ```
 
 프로젝트 전체 취소는 `agent_cancel({workspace: "/absolute/project/path"})` 또는 위 `cancel --workspace` 명령으로 요청합니다. 대기 작업과 기존 예약을 먼저 차단하고, OpenCode 세션 및 Kubernetes Pod 종료 확인 후 예약을 해제합니다. 연결 장애 중에는 `cancelling`과 오류 이유를 보존하며 재시작 후에도 재시도합니다. 저장 볼륨은 삭제하지 않습니다. 원격 Graph MCP 연결에서는 전체 취소를 지원하지 않습니다.

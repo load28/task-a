@@ -59,5 +59,5 @@ export function controlledContext(runtime:ControlRuntime,taskId:string,role:Role
       frontier=next
     }
   }
-  return budgetContext({taskId,role,policy,items,scaffold:canonical({prompt:role.prompt,schema:role.outputSchema}),outputReservation:profile.maxOutputTokens,countTokens:text=>Buffer.byteLength(text)})
+  return budgetContext({taskId,role,policy,items,scaffold:canonical({prompt:role.prompt,schema:role.outputSchema}),outputReservation:profile.maxOutputTokens??0,countTokens:text=>Buffer.byteLength(text)})
 }

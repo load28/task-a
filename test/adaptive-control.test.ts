@@ -297,12 +297,51 @@ test("T14 OpenCode hook은 모델·도구·context 상한을 실제 요청 전�
   await hooks["chat.params"]({sessionID:"s",model:{providerID:"test",id:"bounded"}},params)
   assert.equal(params.maxOutputTokens,20)
   await assert.rejects(hooks["chat.params"]({sessionID:"s",model:{providerID:"test",id:"other"}},params),/match/)
-  const output:{args:Record<string,unknown>}={args:{grantId:"forged",path:"src/a.ts"}}
+  const output:{args:Record<string,unknown>}={args:{capability:"a".repeat(64),path:"src/a.ts"}}
   await hooks["tool.execute.before"]({sessionID:"s",tool:"task_graph_cognitive_read",callID:"c"},output)
-  assert.equal(output.args.grantId,"g");assert.equal(output.args.workerSessionId,"s")
+  assert.deepEqual(output.args,{capability:"a".repeat(64),path:"src/a.ts"})
+  await assert.rejects(hooks["tool.execute.before"]({sessionID:"s",tool:"task_graph_cognitive_read",callID:"missing"},{args:{path:"src/a.ts"}}),/session capability/)
+  await assert.rejects(hooks["tool.execute.before"]({sessionID:"s",tool:"task_graph_cognitive_read",callID:"forged"},{args:{capability:"a".repeat(64),grantId:"g",path:"src/a.ts"}}),/Model-authored/)
   await assert.rejects(hooks["tool.execute.before"]({sessionID:"s",tool:"bash",callID:"x"},output),/outside/)
   await assert.rejects(hooks["experimental.chat.messages.transform"]({}, {messages:[{info:{sessionID:"s"},parts:["x".repeat(1000)]}]}),/overflow/)
   assert.ok(calls.length>=4)
+})
+
+test("구독제 프로필은 지원되지 않는 출력 상한 파라미터를 제거하고 사용량 receipt를 유지한다",async()=>{
+  const {grantHooks}=await import("../packages/opencode-harness/src/grant-hooks.ts")
+  const grant={id:"g",profile:{provider:"openai",model:"subscription",maxOutputTokens:null},allowedTools:[]} as unknown as import("../packages/task-cognition/src/model.ts").ActivationGrant
+  const hooks=grantHooks({authorize:async()=>({grant,remainingInputTokens:500,remainingOutputTokens:null,remainingToolCalls:0}),recordTool:async()=>{},recordModel:async()=>{}})
+  const params:{maxOutputTokens?:number}={maxOutputTokens:1000}
+  await hooks["chat.params"]({sessionID:"s",model:{providerID:"openai",id:"subscription"}},params)
+  assert.equal("maxOutputTokens" in params,false)
+})
+
+test("OpenCode 단계 완료 이벤트는 이벤트 봉투의 세션 식별자로 사용량을 기록한다",async()=>{
+  const {grantHooks}=await import("../packages/opencode-harness/src/grant-hooks.ts")
+  const calls:Array<{session:string;message:string;usage:{inputTokens:number;outputTokens:number}}>=[]
+  const hooks=grantHooks({authorize:async()=>{throw new Error("unused")},recordTool:async()=>{},recordModel:async(session,message,usage)=>{calls.push({session,message,usage})}})
+  await hooks.event({event:{
+    id:"event-1",type:"message.part.updated",
+    properties:{sessionID:"session-from-envelope",time:Date.now(),part:{
+      id:"step-1",sessionID:"durable-session",messageID:"message-1",type:"step-finish",reason:"stop",cost:0,
+      tokens:{total:15,input:7,output:3,reasoning:1,cache:{read:4,write:0}}
+    }}
+  }})
+  assert.deepEqual(calls,[{session:"session-from-envelope",message:"step-1",usage:{inputTokens:11,outputTokens:4}}])
+})
+
+test("OpenCode 단계 완료 이벤트는 생략된 0 토큰 카운터를 정규화한다",async()=>{
+  const {grantHooks}=await import("../packages/opencode-harness/src/grant-hooks.ts")
+  const calls:Array<{session:string;message:string;usage:{inputTokens:number;outputTokens:number}}>=[]
+  const hooks=grantHooks({authorize:async()=>{throw new Error("unused")},recordTool:async()=>{},recordModel:async(session,message,usage)=>{calls.push({session,message,usage})}})
+  await hooks.event({event:{
+    id:"event-2",type:"message.part.updated",
+    properties:{sessionID:"live-session",time:1,part:{
+      id:"step-2",sessionID:"durable-session",messageID:"message-2",type:"step-finish",reason:"stop",cost:0,
+      tokens:{input:21,output:8,cache:{read:3} as {read:number;write:number}},
+    }},
+  } as unknown as import("@opencode-ai/sdk/v2").Event})
+  assert.deepEqual(calls,[{session:"live-session",message:"step-2",usage:{inputTokens:24,outputTokens:8}}])
 })
 
 test("T01 실제 Graph MCP 관찰 경로가 새 이벤트를 소비하고 재조회에는 실행을 만들지 않는다",async()=>{

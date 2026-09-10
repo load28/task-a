@@ -27,6 +27,7 @@ export function socketPath(directory: string): string {
 }
 export function loadConfig(path: string): HostConfig {
   const c = JSON.parse(readFileSync(path, "utf8")) as HostConfig
+  c.validationBudget ??= {maxJobs:8,maxDurationMs:10000}
   if (
     c.version !== 1 ||
     !isAbsolute(c.database) ||

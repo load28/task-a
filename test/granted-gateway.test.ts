@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync,writeFileSync,readFileSync,rmSync,symlinkSync } from "node:fs"
+import { mkdirSync,mkdtempSync,writeFileSync,readFileSync,rmSync,symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGraphRuntime } from "../apps/task-agent/src/graph-runtime.ts"
@@ -18,7 +18,7 @@ function setup() {
   const workspace=mkdtempSync(join(tmpdir(),"granted-gateway-")),r=createGraphRuntime(join(workspace,"graph.db"))
   const task=r.engine.createTask({title:"edit",goal:"edit",writeScopes:["a.txt"]}),worker="native-session"
   new TaskScheduler(r.engine,1,workspace).claim(task.id,{agent:"native",sessionId:worker})
-  const tools=["task_graph_cognitive_read","task_graph_cognitive_write","task_graph_cognitive_context"]
+  const tools=["task_graph_cognitive_list","task_graph_cognitive_read","task_graph_cognitive_write","task_graph_cognitive_context"]
   const role:RoleVersion={id:"editor",version:1,name:"Editor",purpose:"edit",capabilities:[],prompt:"Edit only granted files",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:2},requiredContext:[],contextBudget:{maxTokens:20000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:tools,lifecycle:"persistent",evidence:[]}
   r.control.roleLifecycle.installConfigured(role,"granted-gateway fixture")
   const context=budgetContext({taskId:task.id,role,policy:{id:"p",version:1},items:[],scaffold:role.prompt,outputReservation:100,countTokens:s=>Buffer.byteLength(s)})
@@ -26,10 +26,10 @@ function setup() {
   const decision=r.control.admission.record(activation({taskId:task.id,eventId:"change",eligible:true,role,policy:{id:"p",version:1},signals:{...Object.fromEntries(FEATURES.map(f=>[f,0])),failure:1} as Signals,now:Date.now(),invocations:0}))
   const grant=r.control.admission.issue({taskId:task.id,decisionId:decision.id,specHash:r.engine.signals.capture(task.id).specHash,inputVector:[],graphHash:r.control.graph.hash(),role:{id:role.id,version:1},policy:{id:"p",version:1},context:{id:context.id,version:1},contextHash:context.hash,profile:{id:"test",level:3,provider:"test",model:"bounded",maxInputTokens:10000,maxOutputTokens:10000,maxToolCalls:20,timeoutMs:60000,capability:{usage:true,tokenLimit:true,toolLimit:true,timeout:true},independentRoles:[]},readScopes:["a.txt","alias.txt"],writeScopes:["a.txt"],allowedTools:tools,obligations:[],expiresAt:Date.now()+60000,generation:1,executionMode:"task"},"account",100000)
   r.control.admission.claim(grant.id,{worker,specHash:grant.specHash,inputVector:[],graphHash:grant.graphHash,generation:1,now:Date.now()})
-  const authority=new GuardAuthority(r.store.control);authority.bind(worker,grant.id)
+  const authority=new GuardAuthority(r.store.control),capability=authority.bind(worker,grant.id)
   const gateway=new CognitiveGateway(r.engine,workspace)
   writeFileSync(join(workspace,"a.txt"),"before")
-  return {r,workspace,task,worker,grant,authority,gateway,close:()=>{r.close();rmSync(workspace,{recursive:true,force:true})}}
+  return {r,workspace,task,worker,grant,authority,capability,gateway,close:()=>{r.close();rmSync(workspace,{recursive:true,force:true})}}
 }
 
 test("등록 watcher의 gateway 밖 변경은 소유 작업을 보수적으로 무효화한다",()=>{
@@ -64,16 +64,16 @@ test("실제 hook→authority→gateway에서 인자 위조·경로 탈출·syml
   try {
     await rpc.listen()
     const hooks=grantHooks(new AuthorityHttpClient(rpc.register(f.worker)))
-    const request={args:{path:"a.txt"} as Record<string,unknown>}
+    const request={args:{capability:f.capability,path:"a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"read"},request)
     assert.equal((f.gateway.execute("cognitive_read",request.args) as {content:string}).content,"before")
-    assert.throws(()=>f.gateway.execute("cognitive_read",{...request.args,path:"graph.db"}),/not admitted/)
+    assert.throws(()=>f.gateway.execute("cognitive_read",{...request.args,path:"graph.db"}),/admission/)
     await assert.rejects(hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_task_create",callID:"raw"},{args:{}}),/not granted/)
     symlinkSync("a.txt",join(f.workspace,"alias.txt"))
-    const alias={args:{path:"alias.txt"} as Record<string,unknown>}
+    const alias={args:{capability:f.capability,path:"alias.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"alias"},alias)
     assert.throws(()=>f.gateway.execute("cognitive_read",alias.args),/Aliased/)
-    const escape={args:{path:"../a.txt"} as Record<string,unknown>}
+    const escape={args:{capability:f.capability,path:"../a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"escape"},escape)
     assert.throws(()=>f.gateway.execute("cognitive_read",escape.args),/outside/)
     f.r.engine.atomic(()=>f.r.engine.signals.invalidate(f.task.id,"changed"))
@@ -81,10 +81,22 @@ test("실제 hook→authority→gateway에서 인자 위조·경로 탈출·syml
   } finally {await rpc.close();f.close()}
 })
 
+test("capability로 허가된 repository inventory는 읽기 범위 안의 정규 파일만 열거한다",async()=>{
+  const f=setup()
+  try {
+    const hooks=grantHooks(f.authority),request={args:{capability:f.capability,path:"."} as Record<string,unknown>}
+    mkdirSync(join(f.workspace,".venv","bin"),{recursive:true});symlinkSync("a.txt",join(f.workspace,".venv","bin","python"))
+    await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_list",callID:"list"},request)
+    assert.deepEqual(f.gateway.execute("cognitive_list",request.args),{root:".",files:[{path:"a.txt",size:6}]})
+    await hooks["tool.execute.after"]({sessionID:f.worker,callID:"list"},{} as {output?:unknown})
+    assert.equal(f.r.store.db.prepare("SELECT output_bytes FROM grant_tool_calls WHERE session_id=? AND call_id='list'").get(f.worker)!.output_bytes,2)
+  }finally{f.close()}
+})
+
 test("파일 교체는 실제 reservation과 CAS를 강제하고 재전송은 쓰기를 반복하지 않는다",async()=>{
   const f=setup()
   try {
-    const hooks=grantHooks(f.authority),request={args:{path:"a.txt",content:"after",previousHash:digest("before")} as Record<string,unknown>}
+    const hooks=grantHooks(f.authority),request={args:{capability:f.capability,path:"a.txt",content:"after",previousHash:digest("before")} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_write",callID:"write"},request)
     const result=f.gateway.execute("cognitive_write",request.args)
     assert.equal(readFileSync(join(f.workspace,"a.txt"),"utf8"),"after")
@@ -95,7 +107,7 @@ test("파일 교체는 실제 reservation과 CAS를 강제하고 재전송은 �
     const proof=f.r.control.evidence.require(write)
     assert.equal((proof.content as {before:{hash:string};after:{hash:string}}).before.hash,digest("before"))
     assert.equal((proof.content as {before:{hash:string};after:{hash:string}}).after.hash,digest("after"))
-    const stale={args:{path:"a.txt",content:"new",previousHash:digest("before")} as Record<string,unknown>}
+    const stale={args:{capability:f.capability,path:"a.txt",content:"new",previousHash:digest("before")} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_write",callID:"stale"},stale)
     assert.throws(()=>f.gateway.execute("cognitive_write",stale.args),/changed since/)
     assert.equal(readFileSync(join(f.workspace,"a.txt"),"utf8"),"after")
@@ -105,10 +117,10 @@ test("파일 교체는 실제 reservation과 CAS를 강제하고 재전송은 �
 test("채택된 granted write만 task→파일 causal lineage를 만들고 다른 소비자에게 전파한다",async()=>{
   const f=setup()
   try {
-    const hooks=grantHooks(f.authority),read={args:{path:"a.txt"} as Record<string,unknown>}
+    const hooks=grantHooks(f.authority),read={args:{capability:f.capability,path:"a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"write-source-read"},read)
     f.gateway.execute("cognitive_read",read.args)
-    const write={args:{path:"a.txt",content:"owned output",previousHash:digest("before")} as Record<string,unknown>}
+    const write={args:{capability:f.capability,path:"a.txt",content:"owned output",previousHash:digest("before")} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_write",callID:"attributed-write"},write)
     f.gateway.execute("cognitive_write",write.args)
     assert.equal(f.r.engine.requireTask(f.task.id).status,"running")
@@ -164,7 +176,7 @@ test("실제 gateway 읽기는 파일 버전과 소비 포트를 고정하고 �
   try {
     const hooks=grantHooks(f.authority)
     const read=async(callID:string)=>{
-      const request={args:{path:"a.txt"} as Record<string,unknown>}
+      const request={args:{capability:f.capability,path:"a.txt"} as Record<string,unknown>}
       await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID},request)
       return f.gateway.execute("cognitive_read",request.args)
     }
@@ -193,14 +205,14 @@ test("native 결과 채택 직전 읽은 파일을 확인하며 자기 쓰기와
   const f=setup()
   try {
     const hooks=grantHooks(f.authority)
-    const read={args:{path:"a.txt"} as Record<string,unknown>}
+    const read={args:{capability:f.capability,path:"a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"snapshot-read"},read)
     f.gateway.execute("cognitive_read",read.args)
     f.gateway.assertReadsCurrent(f.grant.id)
     writeFileSync(join(f.workspace,"a.txt"),"foreign")
     assert.throws(()=>f.gateway.assertReadsCurrent(f.grant.id),/changed before result/)
     writeFileSync(join(f.workspace,"a.txt"),"before")
-    const write={args:{path:"a.txt",content:"own output",previousHash:digest("before")} as Record<string,unknown>}
+    const write={args:{capability:f.capability,path:"a.txt",content:"own output",previousHash:digest("before")} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_write",callID:"snapshot-write"},write)
     f.gateway.execute("cognitive_write",write.args)
     f.gateway.assertReadsCurrent(f.grant.id)
@@ -213,7 +225,7 @@ test("native 결과 채택 직전 읽은 파일을 확인하며 자기 쓰기와
 test("관찰된 입력 파일의 새 버전은 실제 이전 소비 task를 무효화한다",async()=>{
   const f=setup()
   try {
-    const hooks=grantHooks(f.authority),read={args:{path:"a.txt"} as Record<string,unknown>}
+    const hooks=grantHooks(f.authority),read={args:{capability:f.capability,path:"a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"first-consumer"},read)
     f.gateway.execute("cognitive_read",read.args)
     f.r.control.admission.submit(f.grant.id,f.worker,{taskId:f.task.id,findings:[],decisions:[],risks:[],unresolvedQuestions:[],evidence:[],proposedTasks:[],confidence:1,requiresEscalation:false},{inputTokens:10,outputTokens:10,toolCalls:1,elapsedMs:1})
@@ -225,9 +237,9 @@ test("관찰된 입력 파일의 새 버전은 실제 이전 소비 task를 무�
     f.r.store.control.put("context_manifests",context.id,1,context)
     const decision=f.r.control.admission.record({id:"second-reader",eventId:"second-reader",taskId:task.id,role:f.grant.role,policy:f.grant.policy,signals:Object.fromEntries(FEATURES.map(feature=>[feature,null])) as Signals,score:0,hard:[],action:"activate",reasons:["fixture read"],timestamp:Date.now()})
     const grant=f.r.control.admission.issue({...f.grant,taskId:task.id,decisionId:decision.id,specHash:f.r.engine.signals.capture(task.id).specHash,graphHash:f.r.control.graph.hash(),context:{id:context.id,version:1},contextHash:context.hash,writeScopes:[]},"account",100000)
-    f.r.control.admission.claim(grant.id,{worker,specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()});f.authority.bind(worker,grant.id)
+    f.r.control.admission.claim(grant.id,{worker,specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()});const secondCapability=f.authority.bind(worker,grant.id)
     writeFileSync(join(f.workspace,"a.txt"),"new input")
-    const second={args:{path:"a.txt"} as Record<string,unknown>}
+    const second={args:{capability:secondCapability,path:"a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:worker,tool:"task_graph_cognitive_read",callID:"second-consumer"},second)
     f.gateway.execute("cognitive_read",second.args)
     assert.equal(f.r.engine.requireTask(f.task.id).status,"stale")
@@ -239,7 +251,7 @@ test("관찰된 입력 파일의 새 버전은 실제 이전 소비 task를 무�
 for(const mutation of ["edit","delete","symlink","oversize"] as const)test(`새 모델 읽기 없이 실제 외부 파일 ${mutation}을 관찰하고 소비 task를 무효화한다`,async()=>{
   const f=setup()
   try {
-    const hooks=grantHooks(f.authority),read={args:{path:"a.txt"} as Record<string,unknown>}
+    const hooks=grantHooks(f.authority),read={args:{capability:f.capability,path:"a.txt"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:f.worker,tool:"task_graph_cognitive_read",callID:"observed"},read)
     f.gateway.execute("cognitive_read",read.args)
     f.r.control.admission.submit(f.grant.id,f.worker,{taskId:f.task.id,findings:[],decisions:[],risks:[],unresolvedQuestions:[],evidence:[],proposedTasks:[],confidence:1,requiresEscalation:false},{inputTokens:1,outputTokens:1,toolCalls:1,elapsedMs:1})

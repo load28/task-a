@@ -7,7 +7,7 @@ export interface ActivationPolicy { hardTriggers: Feature[]; softSignals: Partia
 export interface ContextBudget { maxTokens:number; maxDependencyDepth:number; maxEvidenceItems:number; maxHistoricalDecisions:number }
 export interface ContextSelector { relation:string; ports:string[]; required:boolean; depth:number }
 export interface ReasoningProfile {
-  id:string; level:0|1|2|3|4|5; provider:string; model:string; maxInputTokens:number; maxOutputTokens:number; maxToolCalls:number; timeoutMs:number
+  id:string; level:0|1|2|3|4|5; provider:string; model:string; maxInputTokens:number|null; maxOutputTokens:number|null; maxToolCalls:number|null; timeoutMs:number
   capability:{usage:boolean;tokenLimit:boolean;toolLimit:boolean;timeout:boolean}; independentRoles:string[]
 }
 export interface RoleVersion {
@@ -32,7 +32,7 @@ export interface ActivationGrant {
   writeScopes:string[]; allowedTools:string[]; obligations:string[]; expiresAt:number; generation:number; worker?:string
   readScopes?:string[]
   executionMode?:"cognition"|"task"
-  reuse?:{record:VersionRef;requestedProfile:ReasoningProfile;accountLimit:number}
+  reuse?:{record:VersionRef;requestedProfile:ReasoningProfile;accountLimit:number|null}
   preflight?:{id:string;requestedProfile:ReasoningProfile}
   replanLease?:VersionRef
   policyProgram?:VersionRef&{hash:string}

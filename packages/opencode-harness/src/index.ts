@@ -31,6 +31,7 @@ interface ManagedServer {
 
 /** Native server connection; persists managed connection details so relay crashes do not launch duplicate harnesses. */
 export class OpenCodeConnection {
+  private static launchQueue:Promise<void>=Promise.resolve()
   private process?: ChildProcess
   private starting?: Promise<OpencodeClient>
   private closed = false
@@ -45,10 +46,6 @@ export class OpenCodeConnection {
     return createOpencodeClient({
       baseUrl: url,
       throwOnError: true,
-      fetch: (input, init) => {
-        const request = new Request(input, init)
-        return fetch(request, { signal: AbortSignal.any([request.signal, AbortSignal.timeout(25000)]) })
-      },
       ...(password
         ? {
             headers: {
@@ -73,11 +70,14 @@ export class OpenCodeConnection {
         ),
       )
     }
-    if (!this.starting)
-      this.starting = this.launch().catch((error) => {
+    if (!this.starting) {
+      const launch=OpenCodeConnection.launchQueue.then(()=>this.launch())
+      OpenCodeConnection.launchQueue=launch.then(()=>undefined,()=>undefined)
+      this.starting = launch.catch((error) => {
         this.starting = undefined
         throw error
       })
+    }
     return this.starting
   }
   private async launch(): Promise<OpencodeClient> {

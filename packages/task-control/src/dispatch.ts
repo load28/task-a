@@ -91,7 +91,15 @@ export class GrantDispatcher {
     this.heartbeat()
     for(const row of this.db.prepare("SELECT d.*,g.payload AS grant_payload,g.state AS grant_state FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id WHERE d.state IN ('dispatching','stopping')").all()) {
       const id=String(row.grant_id)
-      if(this.active.has(id)&&row.grant_state!=="fenced")continue
+      const local=this.active.get(id)
+      if(local) {
+        if(row.grant_state!=="fenced")continue
+        // A live executor fences its grant before it aborts the native session.
+        // Give that owned cleanup a brief chance to persist the real failure;
+        // otherwise recovery can overwrite it as an interrupted delivery.
+        const settled=await Promise.race([local.then(()=>true),new Promise<false>(resolve=>setTimeout(()=>resolve(false),250))])
+        if(settled)continue
+      }
       if(row.owner&&row.owner!==this.owner&&Number(this.db.prepare("SELECT expires_at FROM grant_dispatcher_leases WHERE owner=?").get(String(row.owner))?.expires_at??0)>Date.now())continue
       if(row.grant_state==="completed") {
         const completedGrant=JSON.parse(String(row.grant_payload)) as ActivationGrant

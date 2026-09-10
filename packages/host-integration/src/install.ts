@@ -140,6 +140,7 @@ export function install(options: InstallOptions): { config: string; files: strin
     autoContinue: options.autoContinue ?? existing.autoContinue ?? true,
     maxRuns: existing.maxRuns ?? 50,
     maxWorkers: options.maxWorkers ?? existing.maxWorkers ?? 3,
+    validationBudget: existing.validationBudget ?? {maxJobs:8,maxDurationMs:10000},
   }
   if (workspace) {
     const prior = config.workspaces.find((w) => w.path === workspace)

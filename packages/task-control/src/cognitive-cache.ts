@@ -63,9 +63,9 @@ export class CognitiveResultCache {
       const cached=cachedResult(store,grant,grant.reuse.record)
       if(!cached) {
         const reservation=store.db.prepare("SELECT account FROM budget_reservations WHERE id=?").get(id)!
-        const profile=grant.reuse.requestedProfile,cost=profile.maxInputTokens+profile.maxOutputTokens
+        const profile=grant.reuse.requestedProfile,cost=profile.maxInputTokens===null?0:profile.maxInputTokens+(profile.maxOutputTokens??0)
         const used=Number(store.db.prepare("SELECT coalesce(sum(CASE WHEN state='reserved' THEN reserved ELSE coalesce(spent,reserved) END),0) total FROM budget_reservations WHERE account=?").get(String(reservation.account))!.total)
-        if(used+cost>grant.reuse.accountLimit)throw new CacheFallbackBudgetUnavailable("Cached evidence expired; the original model budget is unavailable")
+        if(grant.reuse.accountLimit!==null&&used+cost>grant.reuse.accountLimit)throw new CacheFallbackBudgetUnavailable("Cached evidence expired; the original model budget is unavailable")
         const {reuse,...original}=grant
         store.db.prepare("UPDATE budget_reservations SET reserved=? WHERE id=? AND state='reserved'").run(cost,id)
         store.db.prepare("UPDATE activation_grants SET payload=? WHERE id=? AND state='issued'").run(JSON.stringify({...original,profile}),id)

@@ -4,10 +4,12 @@ import type { ControlRuntime } from "../../task-control/src/runtime.ts"
 import type { HarnessServer, ServerBinding, ServerState } from "../../opencode-harness/src/server.ts"
 import { OpenCodeServer } from "../../opencode-harness/src/server.ts"
 import type { HostConfig } from "./config.ts"
+import { provisionDefaultProgram } from "./default-program.ts"
 
 /** Relay compatibility ends here. This transport has no model client or raw tools. */
 export class ControlServer implements HarnessServer {
   private controllers=new Map<string,RequestController>()
+  private programs=new Map<string,{id:string;version:number}>()
   private legacy?:OpenCodeServer
   private config:HostConfig
   private runtime:(workspace:string,database?:string)=>ControlRuntime
@@ -18,7 +20,13 @@ export class ControlServer implements HarnessServer {
   }
   private controller(workspace:string):RequestController {
     let controller=this.controllers.get(workspace)
-    if(!controller){controller=this.runtime(workspace).requests;this.controllers.set(workspace,controller)}
+    if(!controller){
+      const runtime=this.runtime(workspace)
+      controller=runtime.requests;this.controllers.set(workspace,controller)
+      const program=this.config.controlProgram??(this.config.model?provisionDefaultProgram(runtime,this.config.model):undefined)
+      if(program){this.programs.set(workspace,program);controller.attachProgramToUnconfigured(program)}
+      controller.retryPreAdmissionInfrastructureFailure()
+    }
     return controller
   }
   async prepare(workspace:string,database:string):Promise<void> {
@@ -29,7 +37,7 @@ export class ControlServer implements HarnessServer {
   async submit(binding:ServerBinding,text:string,plan:boolean):Promise<void> {
     const controller=this.controller(binding.workspace)
     // Request identity is the relay message identity, including after recovery.
-    const input={id:binding.messageID,sessionId:binding.sessionID,text,planOnly:plan,program:this.config.controlProgram}
+    const input={id:binding.messageID,sessionId:binding.sessionID,text,planOnly:plan,program:this.programs.get(binding.workspace)??this.config.controlProgram}
     if(binding.control==="steer"&&binding.parentMessageID)controller.steer(binding.parentMessageID,input)
     else controller.submit(input)
     controller.tick()
@@ -54,9 +62,13 @@ export class ControlServer implements HarnessServer {
   async cancel(binding:ServerBinding):Promise<void> {
     const controller=this.controller(binding.workspace),request=controller.get(binding.messageID)
     if(!request)return
+    const rows=controller.store.db.prepare("SELECT id,state,payload FROM activation_grants WHERE task_id IN (SELECT task_id FROM control_request_tasks WHERE request_id=?) OR task_id=?").all(request.id,request.taskId)
     controller.cancel(request.id)
-    const rows=controller.store.db.prepare("SELECT id,payload FROM activation_grants WHERE task_id IN (SELECT task_id FROM control_request_tasks WHERE request_id=?) OR task_id=?").all(request.id,request.taskId)
     for(const row of rows) {
+      // Completed and already-fenced grants have no live execution to stop. Trying
+      // their historical endpoint can keep a durable cancellation stuck forever
+      // after a host restart and starve the next request in the same workspace.
+      if(!["issued","claimed"].includes(String(row.state)))continue
       const grant=JSON.parse(String(row.payload)) as {worker?:string}
       if(grant.worker){const result=await this.stopBound(binding.workspace,grant.worker);if(!result.stopped)throw new Error(result.evidence)}
       else if(this.stopGrant){const result=await this.stopGrant(binding.workspace,String(row.id));if(!result.stopped)throw new Error(result.evidence)}
@@ -80,6 +92,6 @@ export class ControlServer implements HarnessServer {
     if(legacy){this.legacy??=new OpenCodeServer(this.config);return this.legacy.stopWorkspace(workspace)}
     return {stopped:true,evidence:"Controller requests cancelled and bound workers acknowledged stop"}
   }
-  async readiness():Promise<unknown>{return {architecture:"event-driven-control",program:this.config.controlProgram??null,workspaces:[...this.controllers.keys()]}}
+  async readiness():Promise<unknown>{return {architecture:"event-driven-control",program:this.config.controlProgram??[...this.programs.values()][0]??null,workspaces:[...this.controllers.keys()]}}
   async close():Promise<void>{await this.legacy?.close()}
 }

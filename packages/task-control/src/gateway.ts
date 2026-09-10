@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync, readFileSync } from "node:fs"
+import { lstatSync, realpathSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { FileObservations } from "./file-observations.ts"
 import { durableReplace } from "./durable-file.ts"
@@ -12,11 +12,14 @@ import { assertGrantObservedInputsCurrent } from "./observed-inputs.ts"
 import { attemptInputVector,currentInputVector } from "./completion.ts"
 
 const identity={grantId:{type:"string"},workerSessionId:{type:"string"},authorizationCallId:{type:"string"}}
+const capability={capability:{type:"string",pattern:"^[a-f0-9]{64}$"}}
+const inventoryExcluded=new Set([".git",".codex",".agents",".task-agent",".venv","venv","node_modules",".pytest_cache","__pycache__",".mypy_cache",".ruff_cache","dist","build"])
 export const cognitiveTools=[
-  {name:"cognitive_context",description:"Read the immutable context authorized for this role.",inputSchema:{type:"object",properties:{...identity},additionalProperties:false}},
-  {name:"cognitive_read",description:"Read one granted UTF-8 file with its content hash. Required oversized files are rejected rather than truncated.",inputSchema:{type:"object",properties:{...identity,path:{type:"string"}},required:["path"],additionalProperties:false}},
-  {name:"cognitive_write",description:"Atomically replace one granted file if its previous hash still matches; null previousHash creates a new file. Parent directory must exist.",inputSchema:{type:"object",properties:{...identity,path:{type:"string"},content:{type:"string"},previousHash:{type:["string","null"]}},required:["path","content","previousHash"],additionalProperties:false}},
-  {name:"cognitive_replan_stage",description:"Propose a scoped patch under the controller-pinned lease. This stages validation and cannot approve or commit a plan.",inputSchema:{type:"object",properties:{...identity,patch:{type:"object"},specifications:{type:"array",items:{type:"object"}},summary:{type:"string",minLength:1}},required:["patch","specifications","summary"],additionalProperties:false}},
+  {name:"cognitive_context",description:"Read the immutable context authorized for this role. Pass the toolCapability supplied in the controlled role input as capability.",inputSchema:{type:"object",properties:{...identity,...capability},additionalProperties:false}},
+  {name:"cognitive_list",description:"List a bounded repository subtree without following aliases. Pass the supplied toolCapability as capability.",inputSchema:{type:"object",properties:{...identity,...capability,path:{type:"string"}},required:["path"],additionalProperties:false}},
+  {name:"cognitive_read",description:"Read one granted UTF-8 file with its content hash. Pass the supplied toolCapability as capability. Required oversized files are rejected rather than truncated.",inputSchema:{type:"object",properties:{...identity,...capability,path:{type:"string"}},required:["path"],additionalProperties:false}},
+  {name:"cognitive_write",description:"Atomically replace one granted file if its previous hash still matches; null previousHash creates a new file. Pass the supplied toolCapability as capability. Parent directory must exist.",inputSchema:{type:"object",properties:{...identity,...capability,path:{type:"string"},content:{type:"string"},previousHash:{type:["string","null"]}},required:["path","content","previousHash"],additionalProperties:false}},
+  {name:"cognitive_replan_stage",description:"Propose a scoped patch under the controller-pinned lease. Pass the supplied toolCapability as capability. This stages validation and cannot approve or commit a plan.",inputSchema:{type:"object",properties:{...identity,...capability,patch:{type:"object"},specifications:{type:"array",items:{type:"object"}},summary:{type:"string",minLength:1}},required:["patch","specifications","summary"],additionalProperties:false}},
 ]
 
 /** The model receives no arbitrary shell, raw graph mutation or database handle. */
@@ -27,6 +30,7 @@ export class CognitiveGateway {
   constructor(engine:TaskGraphEngine,workspace:string) {
     this.engine=engine;this.workspace=realpathSync(workspace);this.files=new FileObservations(engine.store.control)
     engine.store.db.exec(`CREATE TABLE IF NOT EXISTS cognitive_tool_receipts(session_id TEXT NOT NULL,call_id TEXT NOT NULL,signature TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(session_id,call_id));
+      CREATE TABLE IF NOT EXISTS cognitive_tool_claims(session_id TEXT NOT NULL,call_id TEXT NOT NULL,PRIMARY KEY(session_id,call_id));
       CREATE TABLE IF NOT EXISTS execution_reads(grant_id TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(grant_id,path,hash));`)
   }
   execute(name:string,input:Record<string,unknown>):unknown {
@@ -38,10 +42,22 @@ export class CognitiveGateway {
     return this.step(name,input)
   }
   private step(name:string,input:Record<string,unknown>,writeStage?:"prepare"|"apply"):unknown {
-    const {grantId,workerSessionId,authorizationCallId,...args}=input
-    if(typeof grantId!=="string"||typeof workerSessionId!=="string"||typeof authorizationCallId!=="string")throw new Error("Tool has no injected activation identity")
     return this.engine.atomic(()=>{
-      const db=this.engine.store.db,signature=digest({name,args})
+      const db=this.engine.store.db
+      const {capability:token,grantId:legacyGrantId,workerSessionId:legacySessionId,authorizationCallId:legacyCallId,...args}=input
+      let grantId=legacyGrantId,workerSessionId=legacySessionId,authorizationCallId=legacyCallId
+      let admittedArgsHash=digest(args)
+      if(typeof token==="string") {
+        const authorizationHash=digest(input),tokenHash=digest(token)
+        admittedArgsHash=authorizationHash
+        let admitted=db.prepare(`SELECT c.session_id,c.call_id,s.grant_id FROM grant_tool_calls c JOIN grant_tool_arguments a ON a.session_id=c.session_id AND a.call_id=c.call_id JOIN grant_sessions s ON s.session_id=c.session_id JOIN grant_tool_capabilities p ON p.session_id=c.session_id AND p.grant_id=s.grant_id LEFT JOIN cognitive_tool_claims q ON q.session_id=c.session_id AND q.call_id=c.call_id WHERE p.token_hash=? AND c.tool=? AND a.args_hash=? AND q.call_id IS NULL ORDER BY c.rowid LIMIT 1`).get(tokenHash,`task_graph_${name}`,authorizationHash)
+        if(!admitted)admitted=db.prepare(`SELECT c.session_id,c.call_id,s.grant_id FROM grant_tool_calls c JOIN grant_tool_arguments a ON a.session_id=c.session_id AND a.call_id=c.call_id JOIN grant_sessions s ON s.session_id=c.session_id JOIN grant_tool_capabilities p ON p.session_id=c.session_id AND p.grant_id=s.grant_id JOIN cognitive_tool_claims q ON q.session_id=c.session_id AND q.call_id=c.call_id JOIN cognitive_tool_receipts r ON r.session_id=c.session_id AND r.call_id=c.call_id WHERE p.token_hash=? AND c.tool=? AND a.args_hash=? AND r.state IN ('prepared','completed') ORDER BY c.rowid DESC LIMIT 1`).get(tokenHash,`task_graph_${name}`,authorizationHash)
+        if(!admitted)throw new Error("Tool capability has no matching live admission")
+        grantId=admitted.grant_id;workerSessionId=admitted.session_id;authorizationCallId=admitted.call_id
+        db.prepare("INSERT OR IGNORE INTO cognitive_tool_claims VALUES(?,?)").run(String(workerSessionId),String(authorizationCallId))
+      }
+      if(typeof grantId!=="string"||typeof workerSessionId!=="string"||typeof authorizationCallId!=="string")throw new Error("Tool has no activation capability")
+      const signature=digest({name,args})
       const row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)
       if(!row||row.state!=="claimed")throw new Error("Tool has no live activation grant")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
@@ -53,7 +69,7 @@ export class CognitiveGateway {
       if(snapshot.specHash!==grant.specHash||(exact?digest(grant.inputVector)!==digest(current):pinned?pinned.hash!==snapshot.digest:!this.engine.signals.matches(grant.taskId)))throw new Error("Task inputs changed before tool execution")
       assertGrantObservedInputsCurrent(this.engine.store.control,grant)
       const call=db.prepare("SELECT c.tool,a.args_hash FROM grant_tool_calls c JOIN grant_tool_arguments a ON a.session_id=c.session_id AND a.call_id=c.call_id WHERE c.session_id=? AND c.call_id=?").get(workerSessionId,authorizationCallId)
-      if(call?.tool!==`task_graph_${name}`||call.args_hash!==digest(args))throw new Error("Tool arguments were not admitted by the model adapter")
+      if(call?.tool!==`task_graph_${name}`||call.args_hash!==admittedArgsHash)throw new Error("Tool arguments were not admitted by the model adapter")
       const receipt=db.prepare("SELECT * FROM cognitive_tool_receipts WHERE session_id=? AND call_id=?").get(workerSessionId,authorizationCallId)
       if(receipt) {
         if(receipt.signature!==signature)throw new Error("Tool receipt identity conflict")
@@ -62,12 +78,34 @@ export class CognitiveGateway {
         if(writeStage==="prepare")return JSON.parse(String(receipt.payload))
       }
       const session=db.prepare("SELECT input_used FROM grant_sessions WHERE session_id=?").get(workerSessionId)
-      const remaining=grant.profile.maxInputTokens-Number(session?.input_used??grant.profile.maxInputTokens)
+      const remaining=grant.profile.maxInputTokens===null?null:grant.profile.maxInputTokens-Number(session?.input_used??grant.profile.maxInputTokens)
       let result:unknown
       if(name==="cognitive_context") {
         const context=this.engine.store.control.get<ContextManifest>("context_manifests",grant.context.id,grant.context.version)
         if(!context||context.hash!==grant.contextHash)throw new Error("Context pin mismatch")
         result=context
+      } else if(name==="cognitive_list") {
+        const requested=String(args.path)
+        if(requested!=="."&&(!requested||requested.startsWith("/")||requested.includes("\\")||requested.includes("\0")||requested.split("/").some(part=>["",".","..",".git",".codex",".agents",".task-agent"].includes(part))))throw new Error("Inventory path is outside the grant")
+        const readScopes=grant.readScopes??[]
+        if(!readScopes.some(scope=>scope==="."||requested==="."||scope===requested||scope.startsWith(`${requested}/`)||requested.startsWith(`${scope}/`)))throw new Error("Inventory path is outside the grant")
+        const base=requested==="."?this.workspace:resolve(this.workspace,requested),stat=lstatSync(base)
+        if(!stat.isDirectory()||stat.isSymbolicLink())throw new Error("Inventory root must be an unaliased directory")
+        const files:Array<{path:string;size:number}>=[]
+        const walk=(directory:string,prefix:string)=>{
+          for(const entry of readdirSync(directory,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))) {
+            if(inventoryExcluded.has(entry.name))continue
+            const path=prefix?`${prefix}/${entry.name}`:entry.name
+            if(!readScopes.some(scope=>scope==="."||scope===path||scope.startsWith(`${path}/`)||path.startsWith(`${scope}/`)))continue
+            const absolute=resolve(this.workspace,path),metadata=lstatSync(absolute)
+            if(metadata.isSymbolicLink()||metadata.isFile()&&metadata.nlink!==1)throw new Error("Aliased inventory entries are not permitted")
+            if(metadata.isDirectory())walk(absolute,path)
+            else if(metadata.isFile())files.push({path,size:metadata.size})
+            if(files.length>1000)throw new Error("Repository inventory exceeds the bounded entry limit")
+          }
+        }
+        walk(base,requested==="."?"":requested)
+        result={root:requested,files}
       } else if(name==="cognitive_replan_stage") {
         if(!grant.replanLease)throw new Error("Replanning requires a pinned lease")
         const replanning=new ScopedReplanning(this.engine)
@@ -77,7 +115,7 @@ export class CognitiveGateway {
       } else if(name==="cognitive_read") {
         const path=this.path(args.path,grant.readScopes??[],false)
         const metadata=lstatSync(path)
-        if(!metadata.isFile()||metadata.size>remaining)throw new Error("Required file exceeds context budget")
+        if(!metadata.isFile()||(remaining!==null&&metadata.size>remaining))throw new Error("Required file exceeds context budget")
         const bytes=readFileSync(path),content=new TextDecoder("utf-8",{fatal:true}).decode(bytes)
         result={path:args.path,content,hash:digest(content)}
         db.prepare("INSERT OR IGNORE INTO execution_reads VALUES(?,?,?)").run(grant.id,String(args.path),digest(content))
@@ -105,7 +143,7 @@ export class CognitiveGateway {
         const observed=this.files.write(grant,this.workspace,String(args.path),args.previousHash as string|null,hash,authorizationCallId)
         this.engine.store.control.event({id:`file:${workerSessionId}:${authorizationCallId}`,type:"CognitiveFileWritten",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId,path:args.path,before:args.previousHash,after:hash,observed}})
       } else throw new Error("Unknown cognitive tool")
-      if(Buffer.byteLength(JSON.stringify(result))>remaining)throw new Error("Tool result exceeds remaining context budget")
+      if(remaining!==null&&Buffer.byteLength(JSON.stringify(result))>remaining)throw new Error("Tool result exceeds remaining context budget")
       db.prepare("INSERT INTO cognitive_tool_receipts VALUES(?,?,?,'completed',?) ON CONFLICT(session_id,call_id) DO UPDATE SET state='completed',payload=excluded.payload").run(workerSessionId,authorizationCallId,signature,canonical(result))
       return result
     })

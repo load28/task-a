@@ -496,7 +496,8 @@ for(const mode of ["resume","budget","budget-stale","cancel","stale","quota","un
   const dir=mkdtempSync(join(tmpdir(),"question-resume-")),database=join(dir,"graph.db")
   let r=createGraphRuntime(database)
   const config={version:1 as const,directory:dir,database,socket:join(dir,"host.sock"),workspaces:[{path:dir}],autoContinue:false,maxRuns:1,controlProgram:{id:"program",version:2}}
-  const server=()=>new ControlServer(config,()=>r.control,async()=>({stopped:true,evidence:"fixture"}))
+  let physicalStops=0
+  const server=()=>new ControlServer(config,()=>r.control,async()=>{physicalStops++;return {stopped:true,evidence:"fixture"}})
   let transport=server()
   const binding={workspace:dir,sessionID:"user",messageID:"request"}
   const questionOutput:Partial<AgentOutput>={findings:["기존 조사 결과를 보존한다"],unresolvedQuestions:mode==="untyped"?["untyped request"]:[{kind:"user",question:"결과 파일의 문자열을 확인해 주세요."}],requiresEscalation:mode==="escalation"}
@@ -529,6 +530,7 @@ for(const mode of ["resume","budget","budget-stale","cancel","stale","quota","un
     await assert.rejects(transport.reply(binding,{requestID:question.id,kind:"permission",reply:"once"}),/Permission/)
     if(mode==="cancel") {
       await transport.cancel(binding)
+      assert.equal(physicalStops,0,"completed planning grants have no live endpoint to stop")
       await assert.rejects(transport.reply(binding,reply),/no longer pending/)
       assert.equal(r.control.requests.questions.pending("request").length,0);return
     }
@@ -653,7 +655,8 @@ test("quota 증액은 같은 계정의 더 높은 한도와 새 정책을 가진
     const request=r.control.requests.get("quota-request")!,second=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)!.payload)) as ActivationGrant
     assert.deepEqual(request.program,{id:target.id,version:target.version})
     assert.deepEqual(second.policy,{id:"operator-policy",version:2})
-    assert.equal(second.profile.maxInputTokens+second.profile.maxOutputTokens<=target.tokenLimit,true)
+    assert.ok(second.profile.maxInputTokens!==null&&target.tokenLimit!==null)
+    assert.equal(second.profile.maxInputTokens!+(second.profile.maxOutputTokens??0)<=target.tokenLimit!,true)
   }finally{r.close()}
 })
 

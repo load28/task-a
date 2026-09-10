@@ -25,6 +25,7 @@ export class EvidenceStore {
     return {id:evidence.id,version:evidence.version}
   }
   valid(ref:VersionRef, now=Date.now()): boolean {
+    if(!ref||typeof ref.id!=="string"||!ref.id||!Number.isSafeInteger(ref.version)||ref.version<1)return false
     const value=this.store.get<Evidence>("evidence_versions",ref.id,ref.version)
     return !!value && !this.store.db.prepare("SELECT 1 FROM evidence_retractions WHERE id=? AND version=?").get(ref.id,ref.version) && digest(value.content)===value.contentHash && (value.expiresAt===null||value.expiresAt>now)
   }

@@ -60,6 +60,8 @@ export class GrantedOpenCodeExecutor {
       this.connection=new OpenCodeConnection({directory:this.stateDirectory,serverConfig:config})
       client=await this.connection.client()
     }
+    const existing=await client.mcp.status({directory:this.workspace})
+    if(existing.data?.task_graph)await client.mcp.disconnect({directory:this.workspace,name:"task_graph"})
     const connected=await client.mcp.add({directory:this.workspace,name:"task_graph",config:{type:"local",command:[process.execPath,fileURLToPath(new URL("../../../scripts/graph-mcp.ts",import.meta.url)),this.database],environment:{TASK_GRAPH_SURFACE:"cognitive",TASK_AGENT_INTERNAL:"1",TASK_AGENT_WORKSPACE:this.workspace,TASK_AGENT_MAX_WORKERS:String(this.limit)},enabled:true}})
     if(connected.data?.task_graph?.status!=="connected")throw new Error("Controlled graph gateway did not connect")
     this.client=client
@@ -94,6 +96,7 @@ export class GrantedOpenCodeExecutor {
     return {stopped:true,evidence:"Native abort acknowledged and session idle confirmed"}
   }
   async execute(grantId:string):Promise<AgentOutput> {
+    let toolCapability=""
     const pending=this.runtime.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grantId)
     if(pending&&JSON.parse(String(pending.payload)).profile.level<2)throw new Error("Non-model grants cannot enter the model executor")
     await this.start()
@@ -124,13 +127,13 @@ export class GrantedOpenCodeExecutor {
       const current=engine.signals.capture(grant.taskId)
       const inputs=grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):currentInputVector(engine,grant.taskId)
       this.runtime.admission.claim(grant.id,{worker:session,specHash:current.specHash,inputVector:inputs,graphHash:this.runtime.graph.hash(),generation:grant.generation,now:Date.now()})
-      this.authority.bind(session,grant.id)
+      toolCapability=this.authority.bind(session,grant.id)
     })
     const began=Date.now()
     let timer:ReturnType<typeof setTimeout>|undefined
     try {
       const response=await Promise.race([
-        client.session.prompt({directory:this.workspace,sessionID:session,agent:"task-cognitive",model:{providerID:grant.profile.provider,modelID:grant.profile.model},system:role.prompt,parts:[{type:"text",text:JSON.stringify({taskId:grant.taskId,context:manifest,outputSchema:role.outputSchema})}]}),
+        client.session.prompt({directory:this.workspace,sessionID:session,agent:"task-cognitive",model:{providerID:grant.profile.provider,modelID:grant.profile.model},system:`${role.prompt}\nEvery cognitive tool call must include capability exactly equal to toolCapability from the controlled input.`,parts:[{type:"text",text:JSON.stringify({taskId:grant.taskId,context:manifest,toolCapability,outputSchema:role.outputSchema})}]}),
         new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error("Granted execution deadline exceeded")),Math.max(1,Math.min(grant.profile.timeoutMs,grant.expiresAt-Date.now())))})
       ])
       if(response.error||!response.data||response.data.info.error) {

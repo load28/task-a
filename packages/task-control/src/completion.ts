@@ -40,9 +40,14 @@ export function pinAttemptExpectation(engine:TaskGraphEngine,taskId:string,attem
   const expectation=store.get<PinnedExpectation>("task_expectations",taskId,version)!
   if(expectation.specHash!==engine.signals.capture(taskId).specHash)throw new Error("Stale execution expectation")
   if(!expectation.predictionPolicy)throw new Error("Expectation has no pinned prediction policy")
+  const vector=observationInputVector(engine,taskId)
   store.db.prepare("INSERT INTO control_attempt_expectations VALUES(?,?,?,?,?)").run(
-    attemptId,taskId,version,expectation.specHash,JSON.stringify(observationInputVector(engine,taskId)))
-  if(expectation.observationValidators?.length)new EvidenceStore(store).createObligation({entityId:taskId,tuple:observationInputVector(engine,taskId),kind:"prediction-state",mandatory:true,validators:expectation.observationValidators,reason:expectation.evidence})
+    attemptId,taskId,version,expectation.specHash,JSON.stringify(vector))
+  if(expectation.observationValidators?.length) {
+    const evidence=new EvidenceStore(store),content={taskId,attemptId,expectation:{expectedArtifacts:expectation.expectedArtifacts,expectedInterface:expectation.expectedInterface,expectedBehavior:expectation.expectedBehavior,expectedDependencies:expectation.expectedDependencies,expectedGoals:expectation.expectedGoals,expectedRisk:expectation.expectedRisk}}
+    const target=evidence.put({id:`expectation-target:${taskId}:${attemptId}`,version:1,type:"runtime",source:`task expectation ${taskId}@${version}`,producer:"control-runtime",validatorVersion:"pinned-expectation/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:vector,confidence:1,expiresAt:null})
+    evidence.createObligation({entityId:taskId,tuple:vector,kind:"prediction-state",mandatory:true,validators:expectation.observationValidators,reason:[...expectation.evidence,target]})
+  }
 }
 
 /** Used by task adoption, parent completion and integration promotion alike. */

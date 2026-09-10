@@ -28,7 +28,7 @@ export class PodGateway {
       if(prior?.state==="read-prepared")result=prior.result
       else {
         const file=this.path(args.path,grant.readScopes??[],true),stat=lstatSync(file)
-        if(!stat.isFile()||stat.size>authorization.remainingInputTokens)throw new Error("Pod read exceeds the context budget")
+        if(!stat.isFile()||(authorization.remainingInputTokens!==null&&stat.size>authorization.remainingInputTokens))throw new Error("Pod read exceeds the context budget")
         const content=new TextDecoder("utf-8",{fatal:true}).decode(readFileSync(file));result={path:args.path,content,hash:digest(content)}
         save("read-prepared",result)
       }

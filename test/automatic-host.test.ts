@@ -688,6 +688,7 @@ test("프로젝트 경로 없이 설치하고 현재 git 프로젝트와 worktre
   mkdirSync(resolve(project, ".git"))
   const result = install({ home, hosts: ["claude", "codex"] })
   const c = loadConfig(result.config)
+  assert.deepEqual(c.validationBudget,{maxJobs:8,maxDurationMs:10000})
   assert.equal(c.autoDiscover, true)
   assert.equal(c.workspaces.length, 0)
   assert.equal(workspaceFor(c, nested)!.path, project)

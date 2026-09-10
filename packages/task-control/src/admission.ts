@@ -23,7 +23,7 @@ export class Admission {
     this.store.db.prepare("INSERT INTO activation_decisions VALUES(?,?,?,?,?,?)").run(decision.id,decision.eventId,decision.taskId,decision.role.id,canonical(decision.policy),canonical(decision))
     return decision
   }
-  issue(input:Omit<ActivationGrant,"id">,account:string,limit:number):ActivationGrant {
+  issue(input:Omit<ActivationGrant,"id">,account:string,limit:number|null):ActivationGrant {
     return this.store.atomic(()=>{
       if(input.reuse||input.profile.level<2)throw new Error("Non-model execution must be selected from a validated controller record")
       const decisionRow=this.store.db.prepare("SELECT payload FROM activation_decisions WHERE id=?").get(input.decisionId)
@@ -46,7 +46,7 @@ export class Admission {
       if(!role||!this.roles.executable(input.role,ref=>new EvidenceStore(this.store).valid(ref))||!context||context.hash!==input.contextHash||context.taskId!==input.taskId||digest(context.role)!==digest(input.role)||digest(context.policy)!==digest(input.policy)) throw new Error("Uncertified role or unpinned context")
       const { hash: contextHash, ...contextValue } = context
       if(digest(contextValue)!==contextHash)throw new Error("Corrupted context manifest")
-      if(context.tokens>input.profile.maxInputTokens+input.profile.maxOutputTokens)throw new Error("Context exceeds profile budget")
+      if(input.profile.maxInputTokens!==null&&context.tokens>input.profile.maxInputTokens+(input.profile.maxOutputTokens??0))throw new Error("Context exceeds profile budget")
       if(input.allowedTools.some(t=>!role.allowedTools.includes(t))) throw new Error("Grant exceeds role tools")
       if(input.allowedTools.includes("task_graph_cognitive_replan_stage")) {
         const lease=input.replanLease&&this.store.get<import("../../task-causality/src/model.ts").ReplanLease>("replan_leases",input.replanLease.id,input.replanLease.version)
@@ -57,10 +57,10 @@ export class Admission {
       const cached=input.policyControls?.cacheReuse==="disabled"?undefined:cachedResult(this.store,input)
       if(input.preflight&&(digest(input.preflight.requestedProfile)!==digest(input.profile)||!preflightResult(this.store,input.preflight.id,input)))throw new Error("No current deterministic task proof")
       const selected=input.preflight?{...input,profile:{...input.profile,id:`preflight:${input.profile.id}`,level:1 as const,maxToolCalls:0},allowedTools:[]}:cached?{...input,profile:{...input.profile,id:`cache:${input.profile.id}`,level:0 as const,maxToolCalls:0},reuse:{record:cached.record,requestedProfile:input.profile,accountLimit:limit}}:input
-      const reserved=cached||input.preflight?0:input.profile.maxInputTokens+input.profile.maxOutputTokens
-      positive(limit,"Account token limit")
+      const reserved=cached||input.preflight||input.profile.maxInputTokens===null?0:input.profile.maxInputTokens+(input.profile.maxOutputTokens??0)
+      if(limit!==null)positive(limit,"Account token limit")
       const used=Number(this.store.db.prepare("SELECT coalesce(sum(CASE WHEN state='reserved' THEN reserved ELSE coalesce(spent,reserved) END),0) AS total FROM budget_reservations WHERE account=?").get(account)?.total??0)
-      if(used+reserved>limit) throw new AdmissionBudgetUnavailableError("Budget unavailable; obligations remain pending")
+      if(limit!==null&&used+reserved>limit) throw new AdmissionBudgetUnavailableError("Budget unavailable; obligations remain pending")
       const id=randomUUID(),boundary=attachExecutionInputBoundary(this.store,id,selected)
       const grant={...selected,id,inputBoundary:boundary}
       this.store.db.prepare("INSERT INTO activation_grants VALUES(?,?,?,?,?)").run(grant.id,grant.decisionId,grant.taskId,"issued",canonical(grant))
@@ -97,7 +97,7 @@ export class Admission {
       if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Grant role lifecycle is no longer executable")
       for(const value of Object.values(usage)) if(!Number.isFinite(value)||value<0) throw new Error("Missing actual usage")
       const p=grant.profile
-      if(usage.inputTokens>p.maxInputTokens||usage.outputTokens>p.maxOutputTokens||usage.toolCalls>p.maxToolCalls||usage.elapsedMs>p.timeoutMs) throw new Error("Execution exceeded granted budget")
+      if((p.maxInputTokens!==null&&usage.inputTokens>p.maxInputTokens)||(p.maxOutputTokens!==null&&usage.outputTokens>p.maxOutputTokens)||(p.maxToolCalls!==null&&usage.toolCalls>p.maxToolCalls)||usage.elapsedMs>p.timeoutMs) throw new Error("Execution exceeded granted budget")
       const role=this.store.get<RoleVersion>("role_versions",grant.role.id,grant.role.version)!
       const validate=new Ajv({strict:false,allErrors:true}).compile(role.outputSchema)
       if(!validate(output)) throw new Error(`Invalid role result: ${JSON.stringify(validate.errors)}`)

@@ -1,9 +1,9 @@
 import type { GrantAuthority,GrantAuthorization } from "../../opencode-harness/src/grant-hooks.ts"
 import type { ActivationGrant } from "../../task-cognition/src/model.ts"
 import { ControlStore } from "./store.ts"
-import { canonical } from "./value.ts"
+import { canonical,digest } from "./value.ts"
 import { cognitiveTools } from "./gateway.ts"
-import { randomUUID } from "node:crypto"
+import { randomBytes,randomUUID } from "node:crypto"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { assertGrantObservedInputsCurrent } from "./observed-inputs.ts"
@@ -13,6 +13,7 @@ import { assertExecutionInputBoundary } from "./input-boundary.ts"
 export class GuardAuthority implements GrantAuthority {
   readonly store:ControlStore
   readonly roles:RoleRegistry
+  private capabilities=new Map<string,string>()
   constructor(store:ControlStore) {
     this.store=store
     this.roles=new RoleRegistry(store)
@@ -21,8 +22,12 @@ export class GuardAuthority implements GrantAuthority {
       CREATE TABLE IF NOT EXISTS grant_model_usage(session_id TEXT NOT NULL,message_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(session_id,message_id));`)
     store.db.exec("CREATE TABLE IF NOT EXISTS grant_tool_arguments(session_id TEXT NOT NULL,call_id TEXT NOT NULL,args_hash TEXT NOT NULL,PRIMARY KEY(session_id,call_id))")
     store.db.exec("CREATE TABLE IF NOT EXISTS grant_model_admissions(session_id TEXT PRIMARY KEY,system_bytes INTEGER,active INTEGER NOT NULL DEFAULT 0)")
+    store.db.exec("CREATE TABLE IF NOT EXISTS grant_tool_capabilities(token_hash TEXT PRIMARY KEY,session_id TEXT NOT NULL UNIQUE,grant_id TEXT NOT NULL UNIQUE)")
   }
-  bind(sessionId:string,grantId:string):void {
+  bind(sessionId:string,grantId:string):string {
+    const existing=this.capabilities.get(sessionId)
+    if(existing)return existing
+    const capability=randomBytes(32).toString("hex")
     this.store.atomic(()=>{
       const row=this.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)
       if(!row||row.state!=="claimed")throw new Error("Only a claimed grant can bind a model session")
@@ -30,9 +35,12 @@ export class GuardAuthority implements GrantAuthority {
       assertExecutionInputBoundary(this.store,grant)
       if(grant.worker!==sessionId)throw new Error("Grant worker/session mismatch")
       const prior=this.store.db.prepare("SELECT grant_id FROM grant_sessions WHERE session_id=?").get(sessionId)
-      if(prior) {if(prior.grant_id!==grantId)throw new Error("Session already bound to another grant");return}
+      if(prior) {if(prior.grant_id!==grantId)throw new Error("Session already bound to another grant");throw new Error("Bound session capability is unavailable after authority restart")}
       this.store.db.prepare("INSERT INTO grant_sessions VALUES(?,?,0,0,0,0)").run(sessionId,grantId)
+      this.store.db.prepare("INSERT INTO grant_tool_capabilities VALUES(?,?,?)").run(digest(capability),sessionId,grantId)
     })
+    this.capabilities.set(sessionId,capability)
+    return capability
   }
   async authorize(sessionId:string,operation:Parameters<GrantAuthority["authorize"]>[1]):Promise<GrantAuthorization> {
     return this.store.atomic(()=>{
@@ -47,11 +55,11 @@ export class GuardAuthority implements GrantAuthority {
       if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Role lifecycle authorization was withdrawn")
       const run=this.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)
       if(!run||Date.now()-Number(JSON.parse(String(run.payload)).startedAt)>=grant.profile.timeoutMs)throw new Error("Execution time budget exhausted")
-      const remainingInputTokens=grant.profile.maxInputTokens-Number(session.input_used),remainingOutputTokens=grant.profile.maxOutputTokens-Number(session.output_used)
-      let remainingToolCalls=grant.profile.maxToolCalls-Number(session.tool_used)
-      if(remainingInputTokens<=0||remainingOutputTokens<=0)throw new Error("Model budget exhausted")
+      const remainingInputTokens=grant.profile.maxInputTokens===null?null:grant.profile.maxInputTokens-Number(session.input_used),remainingOutputTokens=grant.profile.maxOutputTokens===null?null:grant.profile.maxOutputTokens-Number(session.output_used)
+      let remainingToolCalls=grant.profile.maxToolCalls===null?null:grant.profile.maxToolCalls-Number(session.tool_used)
+      if((remainingInputTokens!==null&&remainingInputTokens<=0)||(remainingOutputTokens!==null&&remainingOutputTokens<=0))throw new Error("Model budget exhausted")
       if(operation.inputBytes!==undefined) {
-        if(!Number.isSafeInteger(operation.inputBytes)||operation.inputBytes<0||operation.inputBytes>remainingInputTokens)throw new Error("Serialized context exceeds remaining input budget")
+        if(!Number.isSafeInteger(operation.inputBytes)||operation.inputBytes<0||(remainingInputTokens!==null&&operation.inputBytes>remainingInputTokens))throw new Error("Serialized context exceeds remaining input budget")
         this.store.db.prepare("UPDATE grant_sessions SET input_bound=? WHERE session_id=?").run(operation.inputBytes,sessionId)
       }
       if(operation.systemBytes!==undefined) {
@@ -63,7 +71,7 @@ export class GuardAuthority implements GrantAuthority {
         if(!pending||pending.system_bytes===null||Number(session.input_bound)<=0)throw new Error("Complete model context must be measured before admission")
         if(pending.active===1)throw new Error("Previous model invocation has no usage receipt")
         const toolBytes=Buffer.byteLength(JSON.stringify(cognitiveTools.filter(tool=>grant.allowedTools.includes(`task_graph_${tool.name}`))))
-        if(Number(session.input_bound)+Number(pending.system_bytes)+toolBytes>remainingInputTokens)throw new Error("Complete context exceeds remaining input budget")
+        if(remainingInputTokens!==null&&Number(session.input_bound)+Number(pending.system_bytes)+toolBytes>remainingInputTokens)throw new Error("Complete context exceeds remaining input budget")
         this.store.db.prepare("UPDATE grant_model_admissions SET active=1 WHERE session_id=?").run(sessionId)
       }
       if(operation.kind==="tool") {
@@ -73,7 +81,7 @@ export class GuardAuthority implements GrantAuthority {
         const args=this.store.db.prepare("SELECT args_hash FROM grant_tool_arguments WHERE session_id=? AND call_id=?").get(sessionId,operation.callId)
         if(args&&args.args_hash!==operation.argsHash)throw new Error("Tool argument identity conflict")
         if(!prior) {
-          if(remainingToolCalls<1)throw new Error("Tool budget exhausted")
+          if(remainingToolCalls!==null&&remainingToolCalls<1)throw new Error("Tool budget exhausted")
           this.store.db.prepare("INSERT INTO grant_tool_calls VALUES(?,?,?,NULL)").run(sessionId,operation.callId,operation.tool)
           this.store.db.prepare("UPDATE grant_sessions SET tool_used=tool_used+1 WHERE session_id=?").run(sessionId)
           if(operation.argsHash) {
@@ -108,7 +116,7 @@ export class GuardAuthority implements GrantAuthority {
       this.store.db.prepare("UPDATE grant_model_admissions SET active=0 WHERE session_id=?").run(sessionId)
       // Preserve actual incurred usage even when the provider violates its bound.
       // Fencing and the receipt must commit together; throwing here would erase both.
-      if(Number(session.input_used)+usage.inputTokens>grant.profile.maxInputTokens||Number(session.output_used)+usage.outputTokens>grant.profile.maxOutputTokens) {
+      if((grant.profile.maxInputTokens!==null&&Number(session.input_used)+usage.inputTokens>grant.profile.maxInputTokens)||(grant.profile.maxOutputTokens!==null&&Number(session.output_used)+usage.outputTokens>grant.profile.maxOutputTokens)) {
         this.store.db.prepare("UPDATE activation_grants SET state='fenced' WHERE id=? AND state='claimed'").run(grant.id)
         this.store.event({id:randomUUID(),type:"ModelBudgetExceeded",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId:grant.id,messageId,inputTokens:Number(session.input_used)+usage.inputTokens,outputTokens:Number(session.output_used)+usage.outputTokens}})
       }

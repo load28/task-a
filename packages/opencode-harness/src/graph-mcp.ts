@@ -151,7 +151,7 @@ export function createGraphMcp(database: string, maxWorkers = 3, instances?: Ins
   const instanceCalls = new Map<string, { signature: string; result: Promise<unknown> }>()
   const server = new TaskAgentMcpServer(runtime.agent, {
     tools: schemas,
-    instructions: surface==="cognitive"?"Execute only the role and context pinned by the controller. Tools require adapter-injected activation identities. Return structured findings and proposals. The controller owns task selection, grants, validation and revision commits.":GRAPH_INSTRUCTIONS + (instances ? `\n${INSTANCE_INSTRUCTIONS}` : ""),
+    instructions: surface==="cognitive"?"Execute only the role and context pinned by the controller. Every tool call requires the opaque capability supplied in the controlled role input. Return structured findings and proposals. The controller owns task selection, grants, validation and revision commits.":GRAPH_INSTRUCTIONS + (instances ? `\n${INSTANCE_INSTRUCTIONS}` : ""),
     async dispatch(name, args) {
       const validate = validators.get(name)
       if (!validate || !validate(args)) throw new Error(ajv.errorsText(validate?.errors))

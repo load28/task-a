@@ -146,3 +146,28 @@ test("더 새로운 입력으로 fence된 실행은 응답 대기 중에도 실�
     d.tick();assert.equal(a.calls.length,1)
   }finally{finish();await d.close();f.r.close()}
 })
+
+test("실행기가 자체 fence 후 정리 중이면 복구가 실제 오류를 중단 오류로 덮지 않는다",async()=>{
+  const f=fixture();let release!:()=>void
+  const cleanup=new Promise<void>(resolve=>{release=resolve}),stops:string[]=[]
+  const executor:GrantedExecutor={
+    async execute(id) {
+      const grant=JSON.parse(String(f.r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)!.payload)) as ActivationGrant
+      claim(f.r,grant)
+      f.r.control.admission.fence(grant.taskId)
+      queueMicrotask(release)
+      await cleanup
+      throw new Error("native model failure")
+    },
+    async stop(id){stops.push(id);return {stopped:true,evidence:"stopped"}},
+    async close(){},
+  }
+  const d=new GrantDispatcher(f.r.control,executor,1)
+  try {
+    const grant=f.issue();d.tick();await d.recover();await d.settle();await d.recover()
+    assert.equal(stops.length,1)
+    assert.equal(d.status()[0]!.state,"failed")
+    assert.equal((d.status()[0]!.payload as {error?:string}).error,"native model failure")
+    assert.equal(f.r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(grant.id)!.state,"fenced")
+  } finally {release();await d.close();f.r.close()}
+})

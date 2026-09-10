@@ -38,7 +38,7 @@ export interface ControllerProgram {
   specialists?:ProgramRole[]
   planValidators:string[]; observationValidators:string[]; predictionPolicy:PredictionPolicy
   readScopes:string[]; writeScopes:string[]; maxTasks:number; grantLifetimeMs:number
-  account:string; tokenLimit:number
+  account:string; tokenLimit:number|null
   workerPrecision?:{profiles:ReasoningProfile[];failureThresholds:Array<{minimumFailures:number;profileId:string}>}
   adversarialValidator?:string
   integrationValidators?:Record<typeof INTEGRATION_DIMENSIONS[number],string>
@@ -58,6 +58,7 @@ export interface ControlledRequest {
   id:string; sessionId:string; text:string; planOnly:boolean; taskId:string; program?:VersionRef
   evidence:VersionRef; state:"pending"|"resuming"|"planning"|"validating"|"executing"|"waiting"|"completed"|"failed"|"cancelled"
   reason?:string; plannerGrant?:string; planId?:string; obligationId?:string; proposal?:ProposedTask[]
+  infrastructureRetry?:{failedGrantId:string;generation:number}
   clarifications?:Array<{questionId:string;questions:string[];answers:string[][];evidence:VersionRef;source:VersionRef}>
   permissionChanges?:Array<{permissionId:string;from:VersionRef;to:VersionRef;reply:"once"|"reject";evidence:VersionRef;source:VersionRef}>
   parentId?:string; amendments?:Array<{text:string;evidence:VersionRef}>
@@ -65,7 +66,7 @@ export interface ControlledRequest {
   routineUses?:RoutineUse[]
   policyBundle?:PolicyBundle
 }
-const allowedTools=new Set(["task_graph_cognitive_context","task_graph_cognitive_read","task_graph_cognitive_write"])
+const allowedTools=new Set(["task_graph_cognitive_context","task_graph_cognitive_list","task_graph_cognitive_read","task_graph_cognitive_write"])
 const validScope=(scope:string)=>scope==="."||!!scope&&!scope.startsWith("/")&&!scope.includes("\\")&&!scope.includes("\0")&&!scope.split("/").some(p=>["",".","..",".git",".codex",".agents",".task-agent"].includes(p))
 const within=(scope:string,allowed:string[])=>allowed.some(root=>root==="."||scope===root||scope.startsWith(root+"/"))
 
@@ -86,6 +87,7 @@ export class RequestController {
       CREATE INDEX IF NOT EXISTS control_request_session ON control_requests(session_id);
       CREATE INDEX IF NOT EXISTS control_request_task ON control_requests(task_id);
       CREATE TABLE IF NOT EXISTS control_request_tasks(request_id TEXT NOT NULL,task_id TEXT NOT NULL,node_id TEXT NOT NULL,PRIMARY KEY(request_id,task_id));`)
+    this.store.db.exec("CREATE TABLE IF NOT EXISTS request_pre_admission_retries(request_id TEXT PRIMARY KEY,failed_grant_id TEXT NOT NULL,retried_at INTEGER NOT NULL)")
     this.store.db.exec("CREATE TABLE IF NOT EXISTS request_plan_admissions(plan_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,state TEXT NOT NULL)")
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS request_draft_replacements(old_plan_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,old_obligation_id TEXT NOT NULL,new_plan_id TEXT,new_obligation_id TEXT,cause TEXT NOT NULL,evidence TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS request_draft_replacement_obligation ON request_draft_replacements(old_obligation_id);
@@ -106,9 +108,10 @@ export class RequestController {
       transition.authorization.forEach(ref=>{if(!["user","code"].includes(this.runtime.evidence.require(ref).type))throw new Error("Permission transition requires operator authorization")})
       const target=this.store.get<ControllerProgram>("controller_programs",transition.program.id,transition.program.version)
       if(!target)throw new Error("Permission transition target must be registered first")
+      const currentLimit=program.tokenLimit??Infinity,targetLimit=target.tokenLimit??Infinity
       if(transition.kind==="quota") {
-        if(target.account!==program.account||target.tokenLimit<=program.tokenLimit||digest(target.policy)===digest(program.policy))throw new Error("Quota transition requires a higher limit under a new registered policy for the same account")
-      } else if(target.tokenLimit>program.tokenLimit)throw new Error("Capability transition cannot increase the account quota")
+        if(target.account!==program.account||targetLimit<=currentLimit||digest(target.policy)===digest(program.policy))throw new Error("Quota transition requires a higher limit under a new registered policy for the same account")
+      } else if(targetLimit>currentLimit)throw new Error("Capability transition cannot increase the account quota")
     }
     if(program.deterministicPreflight&&(!Number.isSafeInteger(program.deterministicPreflight.maxAgeMs)||program.deterministicPreflight.maxAgeMs<1||program.worker.profile.level===5))throw new Error("Deterministic preflight requires a finite observation lifetime and cannot bypass L5 review")
     if(program.fileObservation&&![program.fileObservation.maxFiles,program.fileObservation.maxBytes].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Native input observation needs explicit finite budgets")
@@ -124,7 +127,7 @@ export class RequestController {
     }
     for(const ref of program.observedInputs??[])this.runtime.inputs.definition(ref)
     validatePredictionPolicy(program.predictionPolicy)
-    if(!program.id||!Number.isSafeInteger(program.version)||program.version<1||!program.authorization.length||!program.planValidators.length||!program.observationValidators.length||!program.account||!Number.isSafeInteger(program.tokenLimit)||program.tokenLimit<1||!Number.isSafeInteger(program.maxTasks)||program.maxTasks<1||!Number.isSafeInteger(program.grantLifetimeMs)||program.grantLifetimeMs<1)throw new Error("Incomplete controller program")
+    if(!program.id||!Number.isSafeInteger(program.version)||program.version<1||!program.authorization.length||!program.planValidators.length||!program.observationValidators.length||!program.account||(program.tokenLimit!==null&&(!Number.isSafeInteger(program.tokenLimit)||program.tokenLimit<1))||!Number.isSafeInteger(program.maxTasks)||program.maxTasks<1||!Number.isSafeInteger(program.grantLifetimeMs)||program.grantLifetimeMs<1)throw new Error("Incomplete controller program")
     if([...program.readScopes,...program.writeScopes].some(scope=>!validScope(scope)))throw new Error("Invalid program file scope")
     for(const ref of program.authorization)if(!["user","code"].includes(this.runtime.evidence.require(ref).type))throw new Error("Program requires operator authorization")
     if(!this.store.get("policy_versions",program.policy.id,program.policy.version))throw new Error("Program policy is not registered")
@@ -243,6 +246,42 @@ export class RequestController {
     this.store.event({id:`input-plan-recovery:${digest({id,cause})}`,type:"InputPlanReplanningRequested",entityId:request.taskId,correlationId:id,causationId:cause,schemaVersion:1,timestamp:Date.now(),payload:{requestId:id,...current.inputReplan,state:current.state}})
   }
   tasks(id:string):string[]{return this.store.db.prepare("SELECT task_id FROM control_request_tasks WHERE request_id=?").all(id).map(row=>String(row.task_id))}
+  attachProgramToUnconfigured(program:VersionRef):number {
+    if(!this.store.get<ControllerProgram>("controller_programs",program.id,program.version))throw new Error("Configured controller program is unavailable")
+    return this.store.atomic(()=>{
+      let changed=0
+      for(const row of this.store.db.prepare("SELECT id FROM control_requests WHERE state='waiting' AND json_extract(payload,'$.program') IS NULL").all()) {
+        const request=this.get(String(row.id))!
+        if(request.plannerGrant||request.planId||this.tasks(request.id).length)continue
+        request.program=program;request.state="pending";delete request.reason;this.save(request);changed++
+        this.store.event({id:`request-program-attached:${request.id}:${program.id}:${program.version}`,type:"RequestProgramAttached",entityId:request.taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{requestId:request.id,program}})
+      }
+      return changed
+    })
+  }
+  retryPreAdmissionInfrastructureFailure():number {
+    return this.store.atomic(()=>{
+      if(!this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='grant_dispatches'").get())return 0
+      let changed=0
+      for(const row of this.store.db.prepare("SELECT id FROM control_requests WHERE state='waiting' AND json_extract(payload,'$.plannerGrant') IS NOT NULL AND json_extract(payload,'$.planId') IS NULL").all()) {
+        const request=this.get(String(row.id))!,grantId=request.plannerGrant!
+        if(this.store.db.prepare("SELECT 1 FROM request_pre_admission_retries WHERE request_id=?").get(request.id))continue
+        const grant=this.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId),dispatch=this.store.db.prepare("SELECT state,payload FROM grant_dispatches WHERE grant_id=?").get(grantId)
+        if(grant?.state!=="fenced"||dispatch?.state!=="failed")continue
+        const payload=JSON.parse(String(grant.payload)) as ActivationGrant,error=JSON.parse(String(dispatch.payload)) as {error?:string}
+        const sessions=this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='grant_sessions'").get()?this.store.db.prepare("SELECT 1 FROM grant_sessions WHERE grant_id=?").get(grantId):undefined
+        if(payload.worker||sessions||!error.error?.startsWith("OpenCode exited"))continue
+        this.store.db.prepare("INSERT INTO request_pre_admission_retries VALUES(?,?,?)").run(request.id,grantId,Date.now())
+        delete request.plannerGrant;request.infrastructureRetry={failedGrantId:grantId,generation:1};request.state="pending";request.reason="Confirmed pre-admission infrastructure failure will be retried once";this.save(request);changed++
+        this.store.event({id:`request-pre-admission-retry:${request.id}:${grantId}`,type:"RequestPreAdmissionRetry",entityId:request.taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{requestId:request.id,failedGrantId:grantId}})
+      }
+      for(const row of this.store.db.prepare("SELECT r.request_id,r.failed_grant_id FROM request_pre_admission_retries r JOIN control_requests c ON c.id=r.request_id WHERE c.state='waiting' AND json_extract(c.payload,'$.plannerGrant') IS NULL AND json_extract(c.payload,'$.reason') LIKE 'UNIQUE constraint failed: activation_grants.decision_id%'").all()) {
+        const request=this.get(String(row.request_id))!
+        request.infrastructureRetry={failedGrantId:String(row.failed_grant_id),generation:1};request.state="pending";request.reason="Recovering a pre-admission retry interrupted before grant issuance";this.save(request);changed++
+      }
+      return changed
+    })
+  }
   tick():void {
     this.runtime.roles.retry()
     for(const row of this.store.db.prepare("SELECT id FROM control_requests WHERE state IN ('pending','resuming','planning','validating','executing') ORDER BY rowid").all()) {
@@ -293,14 +332,15 @@ export class RequestController {
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
-      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availablePermissionTransitions:(program.permissionTransitions??[]).map(({id,kind,permission,patterns,program})=>({id,kind,permission,patterns,program})),availableRoutines:this.runtime.routines.available(program.policyControls?.allowedRoutines),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability or quota transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availablePermissionTransitions:(program.permissionTransitions??[]).map(({id,kind,permission,patterns,program})=>({id,kind,permission,patterns,program})),availableRoutines:this.runtime.routines.available(program.policyControls?.allowedRoutines),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability or quota transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.infrastructureRetry?`pre-admission-retry:${request.infrastructureRetry.failedGrantId}:${request.infrastructureRetry.generation}`:request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      delete request.infrastructureRetry
       if(request.inputReplan)request.inputReplan.pending=false
       request.state="planning";delete request.reason;this.save(request);return
     }
     if(request.state==="planning") {
       const row=this.store.db.prepare("SELECT state,payload FROM agent_runs WHERE grant_id=?").get(request.plannerGrant!)
       const state=this.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(request.plannerGrant!)?.state
-      if(state==="fenced")throw new Error("Planning grant was fenced; automatic model retry is prohibited")
+      if(state==="fenced")throw new Error(this.dispatchFailure(request.plannerGrant!,"Planning grant was fenced; automatic model retry is prohibited"))
       if(row?.state!=="completed")return
       this.assertPlannerInputsCurrent(request)
       if(JSON.parse(String(this.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)!.payload)).profile.level===5) {
@@ -369,7 +409,10 @@ export class RequestController {
         }
         if(this.repairs.advance(request,program,id))continue
         const existing=this.store.db.prepare("SELECT state FROM activation_grants WHERE task_id=?").all(id)
-        if(existing.some(row=>row.state==="fenced"))throw new Error("Worker grant was fenced; scoped recovery is required")
+        if(existing.some(row=>row.state==="fenced")) {
+          const failed=this.store.db.prepare("SELECT id FROM activation_grants WHERE task_id=? AND state='fenced' ORDER BY rowid DESC LIMIT 1").get(id)
+          throw new Error(this.dispatchFailure(String(failed?.id??""),"Worker grant was fenced; scoped recovery is required"))
+        }
         if(task.status==="ready"&&!existing.length) {
           const preflight=this.runtime.preflight.check(id,program)
           if(preflight.state==="pending")continue
@@ -383,6 +426,16 @@ export class RequestController {
         this.finish(request)
       }
     }
+  }
+  private dispatchFailure(grantId:string,fallback:string):string {
+    if(!grantId||!this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='grant_dispatches'").get())return fallback
+    const row=this.store.db.prepare("SELECT payload FROM grant_dispatches WHERE grant_id=? AND state IN ('failed','stopping')").get(grantId)
+    if(!row)return fallback
+    try {
+      const payload=JSON.parse(String(row.payload)) as {error?:string;reason?:string}
+      const detail=payload.error??payload.reason
+      return detail?`${fallback}: ${detail.slice(0,2000)}`:fallback
+    } catch {return fallback}
   }
   registerIntegration(request:ControlledRequest,program:ControllerProgram):void {
     if(!program.integrationValidators||!request.planId)return

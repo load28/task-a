@@ -120,9 +120,9 @@ test("인지 역할은 adapter가 고정한 lease로만 patch를 제안하며 �
     const snapshot=r.engine.signals.capture(taskId)
     const grant=r.control.admission.issue({taskId,decisionId:decision.id,specHash:snapshot.specHash,inputVector:[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}],graphHash:r.control.graph.hash(),role:{id:role.id,version:1},policy:{id:"test",version:1},context:{id:context.id,version:1},contextHash:context.hash,profile:{id:"bounded",level:3,provider:"test",model:"test",maxInputTokens:20000,maxOutputTokens:1000,maxToolCalls:2,timeoutMs:60000,capability:{usage:true,tokenLimit:true,toolLimit:true,timeout:true},independentRoles:[]},writeScopes:[],allowedTools:[tool],obligations:[],expiresAt:lease.expiresAt,generation:lease.generation,replanLease:{id:lease.id,version:lease.generation}},"test",21000)
     r.control.admission.claim(grant.id,{worker:"session",specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()})
-    const authority=new GuardAuthority(r.store.control);authority.bind("session",grant.id)
+    const authority=new GuardAuthority(r.store.control),capability=authority.bind("session",grant.id)
     const hooks=grantHooks(authority),gateway=new CognitiveGateway(r.engine,process.cwd())
-    const call={args:{patch:f.patch,specifications:[f.spec],summary:"scoped"} as Record<string,unknown>}
+    const call={args:{capability,patch:f.patch,specifications:[f.spec],summary:"scoped"} as Record<string,unknown>}
     await hooks["tool.execute.before"]({sessionID:"session",tool,callID:"propose"},call)
     const staged=gateway.execute("cognitive_replan_stage",call.args) as {id:string}
     assert.deepEqual(gateway.execute("cognitive_replan_stage",call.args),staged)

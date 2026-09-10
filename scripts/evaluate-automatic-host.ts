@@ -5,6 +5,7 @@ import assert from "node:assert/strict"
 import { HostService, callService } from "../packages/host-integration/src/service.ts"
 import { socketPath, type HostConfig } from "../packages/host-integration/src/config.ts"
 import { createGraphRuntime } from "../apps/task-agent/src/graph-runtime.ts"
+import { provisionEvaluationProgram } from "./evaluation-program.ts"
 
 const args = process.argv.slice(2)
 const parallel = args.includes("--parallel")
@@ -13,16 +14,25 @@ const option = (name: string) => {
   return at < 0 ? undefined : args[at + 1]
 }
 const directory = realpathSync(mkdtempSync(resolve(tmpdir(), "task-agent-server-evaluation-")))
+const model = option("--model")
+if (!model) throw new Error("Usage: evaluate-automatic-host.ts --model provider/model [--parallel] [--opencode-url url]")
+const database = resolve(directory, "tasks.db")
+const bootstrap = createGraphRuntime(database)
+const program = provisionEvaluationProgram(bootstrap, model, parallel)
+bootstrap.close()
 const config: HostConfig = {
   version: 1,
   directory,
-  database: resolve(directory, "tasks.db"),
+  database,
   socket: socketPath(directory),
   workspaces: [{ path: directory }],
-  model: option("--model") ?? "claude",
+  model,
   opencodeUrl: option("--opencode-url"),
   autoContinue: true,
   maxRuns: 30,
+  maxWorkers: parallel ? 2 : 1,
+  validationBudget: { maxJobs: 8, maxDurationMs: 10000 },
+  controlProgram: { id: program.id, version: program.version },
 }
 const service = new HostService(config)
 try {
@@ -34,7 +44,7 @@ try {
     sessionId: "evaluation",
     workspace: directory,
     kind: "UserPromptSubmit",
-    text: parallel ? "Create a root task with integrationPolicy targeted and two independent implementation leaves, using writeScopes [a.txt] and [b.txt]. Dispatch BOTH task-worker calls concurrently in the SAME response. Each worker must claim its own assigned task, write its file containing exactly 안녕하세요, read back and verify it, publish a code artifact (a-output or b-output, contentRef is its file path) WITH task_complete and verification evidence, then return. Do not execute the leaf work yourself. Do not run shell commands. Use native file tools and graph MCP. After both workers return verified artifact references, the manager reads both files and records an integration set on the root using those artifact names as members, then integration_run and integration_report. Do not create a QA producer whose completion requires its own consuming integration run. Finish all tasks." : "Create a graph task, start it, write hello.txt containing exactly 안녕하세요, verify its content by reading it, and complete the graph task with evidence. Do not run shell commands. Use OpenCode file tools and task_graph MCP. Do all work yourself.",
+    text: parallel ? "Create two independent implementation tasks. Write a.txt and b.txt with exactly 안녕하세요 and verify both files." : "Write hello.txt with exactly 안녕하세요 and verify the file.",
   })
   const deadline = Date.now() + 180000
   let status: any
@@ -42,9 +52,9 @@ try {
     status = await callService(config.socket, "/status", { requestId: request.requestId, waitMs: 25000 }, 35000)
     if (status.state === "waiting" || ["failed", "uncertain", "interrupted", "completed"].includes(status.phase)) break
   } while (Date.now() < deadline)
-  assert.equal(status.phase, "completed", JSON.stringify(status))
+  if (status.phase !== "completed") throw new Error(`Host evaluation failed: ${status.text ?? JSON.stringify(status)}`)
   for (const file of parallel ? ["a.txt", "b.txt"] : ["hello.txt"])
-    assert.equal(readFileSync(resolve(directory, file), "utf8").trim(), "안녕하세요")
+    assert.equal(readFileSync(resolve(directory, file), "utf8"), "안녕하세요")
   const graph = createGraphRuntime(config.database)
   try {
     assert.ok(graph.engine.rootTasks().some((t) => ["verified", "integrated"].includes(t.status)))

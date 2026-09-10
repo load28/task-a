@@ -3,7 +3,7 @@ import type { ActivationGrant } from "../../task-cognition/src/model.ts"
 import { digest } from "../../task-control/src/value.ts"
 
 export interface GrantAuthorization {
-  grant:ActivationGrant; remainingOutputTokens:number;remainingInputTokens:number;remainingToolCalls:number
+  grant:ActivationGrant; remainingOutputTokens:number|null;remainingInputTokens:number|null;remainingToolCalls:number|null
 }
 export interface GrantAuthority {
   authorize(sessionId:string,operation:{kind:"model"|"tool";tool?:string;callId?:string;inputBytes?:number;systemBytes?:number;reserveModel?:boolean;argsHash?:string}):Promise<GrantAuthorization>
@@ -19,25 +19,38 @@ export function grantHooks(authority:GrantAuthority) {
       if(input.event.type!=="message.part.updated")return
       const part=input.event.properties.part
       if(part.type!=="step-finish")return
-      await authority.recordModel(part.sessionID,part.id,{inputTokens:part.tokens.input+part.tokens.cache.read+part.tokens.cache.write,outputTokens:part.tokens.output+part.tokens.reasoning})
+      // The durable part returned by the messages API carries sessionID, but the
+      // live event contract owns it on properties. Using the durable-only field
+      // here passes undefined to SQLite on current OpenCode releases.
+      // Some subscription-backed providers omit zero-valued reasoning or cache
+      // counters at runtime even though the generated SDK types mark them required.
+      // Normalize those absent counters before crossing the SQLite authority boundary.
+      const inputTokens=(part.tokens.input??0)+(part.tokens.cache?.read??0)+(part.tokens.cache?.write??0)
+      const outputTokens=(part.tokens.output??0)+(part.tokens.reasoning??0)
+      await authority.recordModel(input.event.properties.sessionID,part.id,{inputTokens,outputTokens})
     },
     "chat.params":async(input:{sessionID:string;model:{id:string;providerID:string}},output:{maxOutputTokens?:number})=>{
       const authorization=await authority.authorize(input.sessionID,{kind:"model",reserveModel:true})
       const p=authorization.grant.profile
       if(p.model!==input.model.id||p.provider!==input.model.providerID)throw new Error("Model does not match activation grant")
-      if(authorization.remainingOutputTokens<1||authorization.remainingInputTokens<1)throw new Error("Cognitive budget exhausted")
-      output.maxOutputTokens=Math.min(output.maxOutputTokens??Infinity,p.maxOutputTokens,authorization.remainingOutputTokens)
+      if((authorization.remainingInputTokens!==null&&authorization.remainingInputTokens<1)||(authorization.remainingOutputTokens!==null&&authorization.remainingOutputTokens<1))throw new Error("Cognitive budget exhausted")
+      if(p.maxOutputTokens===null) delete output.maxOutputTokens
+      else output.maxOutputTokens=Math.min(output.maxOutputTokens??Infinity,p.maxOutputTokens,authorization.remainingOutputTokens!)
     },
     "tool.execute.before":async(input:{sessionID:string;tool:string;callID:string},output:{args:Record<string,unknown>})=>{
-      const {grantId:_,workerSessionId:__,authorizationCallId:___,...args}=output.args
-      const authorization=await authority.authorize(input.sessionID,{kind:"tool",tool:input.tool,callId:input.callID,argsHash:digest(args)})
-      if(authorization.remainingToolCalls<1||!authorization.grant.allowedTools.includes(input.tool))throw new Error("Tool is outside the activation grant")
-      // Only the controlled gateway accepts these injected identities. Built-in shell/edit/task tools are not allowed.
+      if(input.tool.startsWith("task_graph_cognitive_")) {
+        if(typeof output.args.capability!=="string"||!/^[a-f0-9]{64}$/.test(output.args.capability))throw new Error("Cognitive tool has no valid session capability")
+        if("grantId" in output.args||"workerSessionId" in output.args||"authorizationCallId" in output.args)throw new Error("Model-authored activation identity is prohibited")
+      }
+      const authorization=await authority.authorize(input.sessionID,{kind:"tool",tool:input.tool,callId:input.callID,argsHash:digest(output.args)})
+      if((authorization.remainingToolCalls!==null&&authorization.remainingToolCalls<1)||!authorization.grant.allowedTools.includes(input.tool))throw new Error("Tool is outside the activation grant")
+      // Built-in shell/edit/task tools are not allowed. The MCP gateway resolves
+      // the opaque per-session capability without trusting plugin arg mutation.
       if(!input.tool.startsWith("task_graph_cognitive_"))throw new Error("Role tools must use the bounded graph gateway")
-      output.args={...args,grantId:authorization.grant.id,workerSessionId:input.sessionID,authorizationCallId:input.callID}
     },
-    "tool.execute.after":async(input:{sessionID:string;callID:string},output:{output:string})=>{
-      await authority.recordTool(input.sessionID,input.callID,{outputBytes:Buffer.byteLength(output.output)})
+    "tool.execute.after":async(input:{sessionID:string;callID:string},output:{output?:unknown})=>{
+      const observed=typeof output.output==="string"?output.output:JSON.stringify(output.output??output)
+      await authority.recordTool(input.sessionID,input.callID,{outputBytes:Buffer.byteLength(observed)})
     },
     "experimental.chat.messages.transform":async(_input:unknown,output:{messages:Array<{info:{sessionID:string};parts:unknown[]}>})=>{
       for(const message of output.messages)for(const value of message.parts) {
