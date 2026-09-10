@@ -11,7 +11,7 @@ import { canonical,digest } from "./value.ts"
 
 interface Repair {
   id:string;requestId:string;state:"planning"|"waiting"|"validating"|"activating"|"applied"|"rejected"|"superseded"
-  questionId?:string;causes:string[];lease:ReplanLease;grantId:string;stageId?:string;revision?:number;proposal?:Proposal
+  questionId?:string;causes:string[];lease:ReplanLease;grantId:string;grantIds:string[];stageId?:string;revision?:number;proposal?:Proposal;selection?:ReturnType<RegionSelection["choose"]>;startedAt:number;appliedAt?:number;replacementTaskIds?:string[]
 }
 interface Proposal {patch:ReplanPatch;tasks:ProposedTask[];summary:string}
 interface Cause {adversarialReview?:{grantId:string};attemptId?:string;error?:PredictionError;evidence:VersionRef[];reason:string;taskIds?:string[];invalidAssumptions?:VersionRef[];invalidDecisions?:VersionRef[];input?:{entityId:string;version:number;hash:string};registeredInput?:{definition:VersionRef;token:string};integrationBoundary?:{id:string;version:number;tupleHash:string}}
@@ -117,7 +117,7 @@ export class RegionalRepairs {
     const immutableDecisions=[...new Map([...previousDecisions,...boundDecisions].filter(ref=>!invalidDecisions.some(invalid=>canonical(invalid)===canonical(ref))).map(ref=>[canonical(ref),ref])).values()]
     const lease=runtime.replanning.issue({planId:plan.id,boundary,changedNodes:changed,invalidatedNodes:changed,preservedNodes:nodes.filter(node=>!boundary.includes(node.nodeId)).map(node=>node.nodeId),immutableDecisions,invalidDecisions:[...new Map(events.flatMap(event=>event.payload.invalidDecisions??[]).map(ref=>[canonical(ref),ref])).values()],invalidAssumptions:[...new Map(events.flatMap(event=>event.payload.invalidAssumptions??[]).map(ref=>[canonical(ref),ref])).values()],predictionErrors:events.flatMap(event=>event.payload.error?[event.payload.error]:[]),violatedInvariants:events.flatMap(event=>event.payload.error?event.payload.error.criticalViolations.length?event.payload.error.criticalViolations:[`failed expectation ${event.payload.error.expectation.id}@${event.payload.error.expectation.version}`]:event.payload.reason==="joint integration failure"?[`Failed integration boundary ${event.payload.integrationBoundary!.id}@${event.payload.integrationBoundary!.version}`]:event.payload.reason==="adversarial review failure"?["Independent adversarial conclusions did not reconcile"]:event.payload.reason==="observed input change"?["Observed execution input changed"]:event.payload.reason==="assumption validity lost"?["A registered assumption lost its validated basis"]:event.payload.reason==="decision validity lost"?["A registered decision lost its validated basis"]:["Explicit user amendment requires plan consistency validation"]),evidence:[...evidence,selectionRef],expiresAt:Date.now()+program.grantLifetimeMs,validators:program.replanner.validators})
     const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease,assumptions:this.assumptionContext(lease),decisions:this.decisionContext([...lease.immutableDecisions,...(lease.invalidDecisions??[])]),region:nodes.filter(node=>boundary.includes(node.nodeId)),expectations:request.proposal,selection,failures:evidence.map(ref=>runtime.evidence.require(ref)),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Otherwise return exactly one proposedTasks item {patch: ReplanPatch, tasks: [{node: PlanNode, expectation: six dimensions}], summary}. Preserve the original goal and immutable decisions, applying only explicit user amendments. tasks must describe exactly revised/new nodes; never relax expected outcomes to observed failures."},`regional-repair:${cause}`,lease.expiresAt)
-    const repair:Repair={id:cause,requestId:request.id,state:"planning",causes:events.map(event=>event.id),lease,grantId:grant.id}
+    const repair:Repair={id:cause,requestId:request.id,state:"planning",causes:events.map(event=>event.id),lease,grantId:grant.id,grantIds:[grant.id],selection:evaluated,startedAt:Date.now()}
     db.prepare("INSERT INTO request_region_repairs VALUES(?,?,?,?)").run(repair.id,request.id,repair.state,canonical(repair))
     return true
   }
@@ -138,7 +138,7 @@ export class RegionalRepairs {
     const repair=this.assertQuestion(request,question),runtime=this.controller.runtime
     if(question.state!=="answered"||!program.replanner)throw new Error("Regional resume requires an answered question and registered replanner")
     const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease:repair.lease,assumptions:this.assumptionContext(repair.lease),decisions:this.decisionContext([...repair.lease.immutableDecisions,...(repair.lease.invalidDecisions??[])]),region:runtime.engine.store.planNodes(repair.lease.planId,repair.lease.sourceRevision??repair.lease.baseRevision).filter(node=>repair.lease.boundary.includes(node.nodeId)),expectations:request.proposal,failures:repair.lease.evidence.map(ref=>runtime.evidence.require(ref)),contract:"Continue the scoped repair using the original lease, goal, preserved nodes, immutable decisions and invariants. Return one proposedTasks item {patch: ReplanPatch,tasks:[{node:PlanNode,expectation:six dimensions}],summary}. Answers do not extend scope or relax expected outcomes."},`answer:${question.id}`,repair.lease.expiresAt)
-    repair.grantId=grant.id;repair.state="planning";delete repair.questionId;this.save(repair)
+    repair.grantId=grant.id;repair.grantIds=[...(repair.grantIds??[]),grant.id];repair.state="planning";delete repair.questionId;this.save(repair)
   }
   private progress(repair:Repair,request:ControlledRequest,program:ControllerProgram):void {
     const runtime=this.controller.runtime,engine=runtime.engine,store=runtime.store,db=store.db
@@ -180,6 +180,7 @@ export class RegionalRepairs {
       db.prepare("INSERT OR IGNORE INTO request_task_history SELECT * FROM control_request_tasks WHERE request_id=?").run(request.id)
       db.prepare("DELETE FROM control_request_tasks WHERE request_id=?").run(request.id)
       const nodes=engine.store.planNodes(repair.lease.planId,repair.revision!),links=engine.store.planLinks(repair.lease.planId,repair.revision!)
+      repair.replacementTaskIds=repair.proposal!.tasks.map(item=>stage.assigned?.[item.node.nodeId]??item.node.nodeId)
       request.proposal=nodes.map(node=>({node,expectation:proposed.get(node.nodeId)!}))
       const decisionBindings=JSON.parse(String(store.db.prepare("SELECT payload FROM scoped_revision_bindings WHERE plan_id=? AND version=?").get(repair.lease.planId,repair.revision!)!.payload)) as Array<{id:string;decisionRefs:VersionRef[];assumptionRefs?:VersionRef[]}>
       for(const link of links) {
@@ -195,7 +196,7 @@ export class RegionalRepairs {
       }
       db.prepare("UPDATE control_requests SET payload=? WHERE id=?").run(canonical(request),request.id)
       this.controller.registerIntegration(request,program)
-      repair.state="applied";this.save(repair)
+      repair.state="applied";repair.appliedAt=Date.now();this.save(repair)
       store.event({id:`regional-applied:${repair.id}`,type:"RegionalRepairApplied",entityId:request.taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{repairId:repair.id,revision:repair.revision,obligationId:proof.id}})
     }
   }

@@ -42,7 +42,7 @@ export interface ControllerProgram {
   deterministicPreflight?:{maxAgeMs:number}
   permissionTransitions?:PermissionTransition[]
   maxLocalRepairs?:number
-  replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number;selection?:{validator:string;candidateLimit:number;evaluationBudget:number;costUnit:string}}
+  replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number;selection?:{validator:string;candidateLimit:number;evaluationBudget:number;costUnit:string;calibration?:{version:number;minimumSamples:number;maximumRelativeError:number;inputTokensPerUnit:number;outputTokensPerUnit:number;toolCallsPerUnit:number;elapsedMsPerUnit:number}}}
 }
 type Expected = Omit<TaskExpectation,"id"|"version"|"taskId"|"specHash"|"evidence">
 export interface ProposedTask { node:PlanNode; expectation:Expected }
@@ -107,6 +107,8 @@ export class RequestController {
     if(program.replanner?.selection) {
       const selection=program.replanner.selection
       if(!selection.costUnit||![selection.candidateLimit,selection.evaluationBudget].every(value=>Number.isSafeInteger(value)&&value>0))throw new Error("Region selection requires explicit finite budgets and a common cost unit")
+      const calibration=selection.calibration
+      if(calibration&&(!Number.isSafeInteger(calibration.version)||calibration.version<1||!Number.isSafeInteger(calibration.minimumSamples)||calibration.minimumSamples<1||!Number.isFinite(calibration.maximumRelativeError)||calibration.maximumRelativeError<0||[calibration.inputTokensPerUnit,calibration.outputTokensPerUnit,calibration.toolCallsPerUnit,calibration.elapsedMsPerUnit].some(value=>!Number.isFinite(value)||value<=0)))throw new Error("Region selection cost calibration requires a version, sample bound, error bound, and positive unit conversions")
     }
     for(const ref of program.observedInputs??[])this.runtime.inputs.definition(ref)
     validatePredictionPolicy(program.predictionPolicy)

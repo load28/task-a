@@ -18,6 +18,7 @@ import { PolicyRegression } from "../../task-policy/src/regression.ts"
 import { PolicyReplay } from "../../task-policy/src/replay.ts"
 import { AdversarialReview } from "./adversarial-review.ts"
 import { OutcomeRecorder } from "./outcomes.ts"
+import { RegionCostCalibration } from "./region-cost-calibration.ts"
 import { BoundaryValidation } from "./boundary-validation.ts"
 import { ObservedInputs } from "./observed-inputs.ts"
 import { FileObservations } from "./file-observations.ts"
@@ -51,6 +52,7 @@ export class ControlRuntime {
   readonly boundaries:BoundaryValidation
   readonly adversarial:AdversarialReview
   readonly outcomes:OutcomeRecorder
+  readonly regionCosts:RegionCostCalibration
   readonly policyReplay:PolicyReplay
   readonly policyRegression:PolicyRegression
   readonly policyMeasurements:PolicyMeasurements
@@ -94,6 +96,7 @@ export class ControlRuntime {
     this.boundaries=new BoundaryValidation(this)
     this.adversarial=new AdversarialReview(this)
     this.outcomes=new OutcomeRecorder(this)
+    this.regionCosts=new RegionCostCalibration(this)
     this.policyReplay=new PolicyReplay(this)
     this.policyRegression=new PolicyRegression(this)
     this.policyMeasurements=new PolicyMeasurements(this)
@@ -112,6 +115,7 @@ export class ControlRuntime {
       while(this.cognitiveCache.ingest()===1000){ /* only independently validated cognition can become L0 reuse */ }
       while(this.adversarial.ingest()===1000){ /* L5 requires separate reviewers and a joint independent verdict */ }
       while(this.outcomes.ingest()===1000){ /* accepted costs retain unknown usefulness labels */ }
+      while(this.regionCosts.ingest()===1000){ /* completed regional repairs calibrate future finite-domain costs */ }
       while(this.policyReplay.ingest()===1000){ /* shadow decisions never authorize production effects */ }
       while(this.policyMeasurements.ingest()===1000){ /* paired outcomes retain frozen attribution and cost units */ }
       while(this.policyRegression.ingest()===1000){ /* only pinned validator verdicts can move a current policy head */ }

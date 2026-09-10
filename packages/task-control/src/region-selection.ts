@@ -6,9 +6,9 @@ import { searchRegions,type RegionEvaluation } from "../../task-causality/src/re
 import { shouldSwitch } from "../../task-causality/src/prediction.ts"
 import { canonical,digest } from "./value.ts"
 
-const COST_PARTS=["planning","reasoning","context","reexecution","integration","expectedFailure"] as const
+const COST_PARTS=["planning","reasoning","context","reexecution","integration","interruption","discardedWork","warmSessionLoss","dataMigration","expectedFailure"] as const
 interface SelectionInput {id:string;required:string[];candidates:string[][];domainComplete:boolean;context:unknown;evidence:VersionRef[]}
-type SelectionResult=ReturnType<typeof searchRegions>&{switchDecision?:{switch:boolean;keepExpectedFailure:{estimate:number;lower:number;upper:number};newExpectedFailure:{estimate:number;lower:number;upper:number};switchCost:{estimate:number;upper:number};currentValid:boolean;rule:string}}
+type SelectionResult=ReturnType<typeof searchRegions>&{calibration?:ReturnType<ControlRuntime["regionCosts"]["summary"]>;switchDecision?:{switch:boolean;keepExpectedFailure:{estimate:number;lower:number;upper:number};newExpectedFailure:{estimate:number;lower:number;upper:number};switchCost:{estimate:number;upper:number};currentValid:boolean;rule:string}}
 export class RegionSelection {
   readonly runtime:ControlRuntime
   constructor(runtime:ControlRuntime) {
@@ -17,6 +17,7 @@ export class RegionSelection {
   }
   choose(input:SelectionInput,policy:NonNullable<NonNullable<ControllerProgram["replanner"]>["selection"]>):SelectionResult|undefined {
     const {store,evidence}=this.runtime
+    const calibration=this.runtime.regionCosts.summary(policy)
     const candidates=[...new Map(input.candidates.map(nodes=>{const unique=[...new Set(nodes)].sort();return [digest(unique),{id:digest(unique),nodes:unique,lowerBound:0}]})).values()].sort((a,b)=>a.id.localeCompare(b.id))
     const contextHash=digest({context:input.context,policy,candidates,required:input.required})
     let issued=0,pending=false
@@ -47,16 +48,18 @@ export class RegionSelection {
         const output=JSON.parse(receipt.stdout)
         const estimate=output.switching,interval=(value:any)=>value&&[value.estimate,value.lower,value.upper].every(Number.isFinite)&&value.lower>=0&&value.lower<=value.estimate&&value.estimate<=value.upper
         if(![true,false,"unknown"].includes(output.feasible)||output.costUnit!==policy.costUnit||!output.reason||typeof output.costs!=="object"||!output.costs||COST_PARTS.some(part=>!Number.isFinite(output.costs[part])||output.costs[part]<0)||!estimate||typeof estimate.currentValid!=="boolean"||!interval(estimate.keep)||!interval(estimate.newFailure)||estimate.newFailure.estimate!==output.costs.expectedFailure)throw new Error("Malformed feasibility, switching estimate, or normalized cost output")
-        const cost=COST_PARTS.reduce((sum,part)=>sum+output.costs[part],0)
+        const calibratedParts=new Set(["planning","reasoning","context","reexecution"]),scalable=[...calibratedParts].reduce((sum,part)=>sum+output.costs[part],0),factor=calibration?.stable?calibration.factor:1
+        const cost=scalable*factor+output.costs.integration+output.costs.expectedFailure
         if(!Number.isFinite(cost))throw new Error("Nonfinite normalized cost")
         const switching={currentValid:estimate.currentValid,keep:estimate.keep,newFailure:estimate.newFailure}
-        return {feasible:output.feasible,cost,evidence:[`${proof.id}@${proof.version}`],reason:output.reason,switching,costComponents:Object.fromEntries(COST_PARTS.map(part=>[part,output.costs[part]]))} satisfies RegionEvaluation
+        return {feasible:output.feasible,cost,evidence:[`${proof.id}@${proof.version}`],reason:output.reason,switching,costComponents:Object.fromEntries(COST_PARTS.map(part=>[part,calibratedParts.has(part)?output.costs[part]*factor:output.costs[part]])),rawCostComponents:Object.fromEntries(COST_PARTS.map(part=>[part,output.costs[part]]))} satisfies RegionEvaluation
       }catch{return {feasible:"unknown",cost:null,evidence:[`${proof.id}@${proof.version}`],reason:"Candidate validator did not provide a valid typed feasibility and normalized cost"}}
     }})
     const selected=result.trace.find(item=>item.id===result.region?.id)?.evaluation
-    if(!selected?.switching)return {...result,switchDecision:undefined}
-    const components=selected.costComponents!,replanningCost=components.planning!+components.reasoning!+components.context!,executionChangeCost=components.reexecution!+components.integration!,switchUpper=replanningCost+executionChangeCost+selected.switching.newFailure.upper
+    if(!selected?.switching)return {...result,calibration,switchDecision:undefined}
+    if(calibration&&!calibration.stable)return {...result,minimumProven:false,reason:`cost calibration unavailable: ${calibration.reason}`,calibration,switchDecision:undefined}
+    const components=selected.costComponents!,replanningCost=components.planning!+components.reasoning!+components.context!+components.interruption!+components.warmSessionLoss!,executionChangeCost=components.reexecution!+components.integration!+components.discardedWork!+components.dataMigration!,switchUpper=replanningCost+executionChangeCost+selected.switching.newFailure.upper
     const switchDecision={switch:shouldSwitch(selected.switching.keep.lower,replanningCost,executionChangeCost,selected.switching.newFailure.upper,selected.switching.currentValid),keepExpectedFailure:selected.switching.keep,newExpectedFailure:selected.switching.newFailure,replanningCost,executionChangeCost,switchCost:{estimate:selected.cost!,upper:switchUpper},currentValid:selected.switching.currentValid,rule:"switch when current plan is invalid or conservative keep lower bound exceeds switch upper bound"}
-    return {...result,switchDecision}
+    return {...result,calibration,switchDecision}
   }
 }
