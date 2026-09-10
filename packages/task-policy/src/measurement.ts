@@ -205,6 +205,10 @@ export class PolicyMeasurements {
       const metrics=report.bounds?.overall??{usefulGainLowerBound:0,qualityLowerBound:0,missedCriticalUpperBound:1,effectiveSamples:0,confidenceWidth:1}
       const evaluation:Evaluation={id:study.id,version:1,proposal:study.proposal,stage,episodes:study.pairs.filter(pair=>pair.partition==="training").map(pair=>pair.episode),holdoutEpisodes:study.pairs.filter(pair=>pair.partition==="holdout").map(pair=>pair.episode),...metrics,criticalStrata:study.gate.criticalStrata,evidence:report.evidence,authorized:approval.length>0,approval,measurementStudy:ref}
       new PolicyLearning(this.runtime.store).evaluate(evaluation,study.gate,ref=>this.runtime.evidence.valid(ref))
+      if(stage==="active") {
+        const proposal=this.runtime.store.get<PolicyProposal>("policy_proposals",study.proposal.id,study.proposal.version)!
+        this.runtime.policyRegression.register({id:`automatic-regression:${digest(study.proposal)}`,target:proposal.target,policy:study.proposal,rollback:study.baseline,validator:study.validator,condition:study.condition,authorization:study.authorization,maxSamples:Math.max(study.gate.minimumSamples,study.pairs.filter(pair=>pair.partition==="holdout").length),sampleType:study.sampleType})
+      }
     })
   }
 }

@@ -128,7 +128,7 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
       if (!archive || archive.version !== 1 || archive.instanceId !== instance.metadata.uid || archive.run !== instance.spec.run || archive.file !== `run-${instance.spec.run}.tar.gz` || !/^[a-f0-9]{64}$/.test(archive.sha256)) {
         await report("RecoveryRequired", { reason: "Completion has no verified archive receipt; execution data retained" }); return
       }
-      await report("Archiving", { archive, archivedRun: instance.spec.run, result: { exitCode: details.exitCode, message: details.message, codeSnapshot: JSON.parse(details.message).codeSnapshot, inputSnapshotDigest: JSON.parse(details.message).inputSnapshotDigest } }); return
+      await report("Archiving", { archive, archivedRun: instance.spec.run, result: { exitCode: details.exitCode, message: details.message, codeSnapshot: JSON.parse(details.message).codeSnapshot, inputSnapshotDigest: JSON.parse(details.message).inputSnapshotDigest,operationalReceipts:JSON.parse(details.message).operationalReceipts } }); return
     }
     const scheduling = pod.status?.conditions?.find((c: any) => c.type === "PodScheduled" && c.status === "False")
     const waiting = pod.status?.initContainerStatuses?.find((c: any) => c.state?.waiting)?.state.waiting
@@ -138,7 +138,7 @@ export async function reconcile(api: ClusterApi, instance: TaskInstance, maxWork
       await report("Starting", { podUid: pod.metadata.uid, reason: diagnostic.reason ?? "Pending", message: diagnostic.message ?? "" }); return
     }
     await report(terminal === "Succeeded" ? "Completed" : terminal === "Failed" ? "Failed" : terminal === "Running" ? "Running" : "Starting",
-      { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "", ...(() => { try { const r = JSON.parse(details.message ?? "{}"); return { codeSnapshot: r.codeSnapshot, inputSnapshotDigest: r.inputSnapshotDigest, failure: r.failure ?? (details.exitCode !== 0 ? { message: details.reason ?? "Worker terminated", exitCode: details.exitCode, signal: details.signal } : undefined) } } catch { return {} } })() } } : {}) })
+      { podUid: pod.metadata.uid, ...(details ? { result: { exitCode: details.exitCode, message: details.message ?? "", ...(() => { try { const r = JSON.parse(details.message ?? "{}"); return { codeSnapshot: r.codeSnapshot, inputSnapshotDigest: r.inputSnapshotDigest,operationalReceipts:r.operationalReceipts, failure: r.failure ?? (details.exitCode !== 0 ? { message: details.reason ?? "Worker terminated", exitCode: details.exitCode, signal: details.signal } : undefined) } } catch { return {} } })() } } : {}) })
     return
   }
   if (instance.status?.observedRun === instance.spec.run && instance.status?.podUid) {

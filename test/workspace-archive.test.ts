@@ -28,9 +28,12 @@ test("full archive restores worktree history, index, dirty files, untracked file
     assert.match(readFileSync(join(workspace, ".git"), "utf8"), /gitdir:/)
     const receipt = JSON.parse(readFileSync(join(data, "termination.json"), "utf8")).archive
     assert.ok(receipt.sha256)
+    assert.ok(receipt.bytes>0);assert.ok(receipt.elapsedMs>=0)
     rmSync(data, { recursive: true })
     process.env.TASK_WORKSPACE_ARCHIVE = JSON.stringify(Object.fromEntries(Object.entries(receipt).reverse()))
     assert.equal(await runInstance({ ...spec, run: 2, archive: { ...spec.archive!, cleanupOnCompletion: false } }, restored, "uid-archive"), 0)
+    const migration=JSON.parse(readFileSync(join(restored,"termination.json"),"utf8")).operationalReceipts.find((item:any)=>item.category==="dataMigration")
+    assert.equal(migration.bytes,receipt.bytes);assert.ok(migration.elapsedMs>=0)
     const next = join(restored, "workspace")
     assert.equal(git(next, ["rev-parse", "HEAD"]), commit)
     assert.equal(git(next, ["show", ":tracked"]), "staged")

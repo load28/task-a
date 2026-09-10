@@ -283,6 +283,9 @@ test("repair restores a stopped workspace including dirty files and session stat
     assert.equal(readFileSync(join(target, "workspace", "partial"), "utf8"), "fixed")
     assert.equal(readFileSync(join(source, "checkpoint.json"), "utf8"), checkpoint)
     assert.equal(readFileSync(join(target, "history", "source-stopped-owner", "checkpoint.json"), "utf8"), checkpoint)
+    const receipts=JSON.parse(readFileSync(join(target,"termination.json"),"utf8")).operationalReceipts
+    assert.equal(receipts.filter((item:any)=>item.category==="dataMigration").length,1)
+    assert.equal(receipts.filter((item:any)=>item.category==="warmSessionLoss").length,1)
   } finally {
     if (previous === undefined) delete process.env.TASK_RESTORE_DIRECTORY; else process.env.TASK_RESTORE_DIRECTORY = previous
     rmSync(dir, { recursive: true, force: true })

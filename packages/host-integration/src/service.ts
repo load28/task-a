@@ -400,7 +400,14 @@ export class HostService {
       let graph = this.graphs.get(workspace)
       if (!graph) { graph = createGraphRuntime(database); this.graphs.set(workspace, graph) }
       const k = this.config.kubernetes
-      if(!this.store.active().some(r=>r.workspace===workspace&&r.phase==="cancelling"))graph.control.requests.tick()
+      if(!this.store.active().some(r=>r.workspace===workspace&&r.phase==="cancelling")) {
+        for(const row of graph.store.db.prepare("SELECT payload FROM control_requests WHERE state NOT IN ('completed','cancelled','failed')").all()) {
+          const request=JSON.parse(String(row.payload)) as {program?:{id:string;version:number}}
+          const program=request.program&&graph.store.control.get<import("../../task-control/src/requests.ts").ControllerProgram>("controller_programs",request.program.id,request.program.version)
+          if(program?.fileObservation)graph.control.files.refreshNative(workspace,program.fileObservation)
+        }
+        graph.control.requests.tick()
+      }
       // Issued grants are durable controller decisions. Do not infer them from
       // runnable tasks or fall back from a Kubernetes configuration to native.
       let dispatcher:GrantDispatcher|undefined

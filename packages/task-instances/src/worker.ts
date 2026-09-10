@@ -29,9 +29,12 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
   if(spec.activation&&spec.activation.expiresAt<=Date.now())throw new Error("Pod activation expired before execution or restore")
   const restore: WorkspaceArchive | undefined = process.env.TASK_WORKSPACE_ARCHIVE ? JSON.parse(process.env.TASK_WORKSPACE_ARCHIVE) : undefined
   const archiveRoot = process.env.TASK_ARCHIVE_ROOT ?? "/archive"
+  const operationalReceipts:Array<{category:"dataMigration"|"warmSessionLoss";elapsedMs:number;bytes?:number;source:string;content?:unknown}>=[]
+  const preparationStartedAt=Date.now()
   if (restore && !existsSync(resolve(directory, "restored.json"))) {
     if (restore.instanceId !== instanceId && !spec.restoreFromTaskId) throw new Error("Archive belongs to a different task instance")
-    await restoreWorkspace(directory, process.env.TASK_RESTORE_ROOT ?? archiveRoot, restore)
+    const receipt=await restoreWorkspace(directory, process.env.TASK_RESTORE_ROOT ?? archiveRoot, restore)
+    operationalReceipts.push({category:"dataMigration",elapsedMs:receipt.elapsedMs,bytes:receipt.bytes,source:"Pod verified archive restore",content:receipt})
     if (restore.instanceId !== instanceId) {
       const history = resolve(directory, "history", `source-${restore.instanceId}`)
       mkdirSync(history, { recursive: true })
@@ -41,6 +44,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
   }
   const stoppedSource = process.env.TASK_RESTORE_DIRECTORY
   if (stoppedSource && !existsSync(resolve(directory, "restored.json"))) {
+    const startedAt=Date.now()
     if (!spec.restoreFromTaskId) throw new Error("Stopped workspace restoration requires a source task")
     mkdirSync(directory, { recursive: true })
     // Retry a partial copy from the same read-only, stopped source. Never alter its files.
@@ -51,6 +55,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     mkdirSync(history, { recursive: true })
     for (const file of ["checkpoint.json", "initialized.json", "resume.json", "termination.json"]) if (existsSync(resolve(directory, file))) renameSync(resolve(directory, file), resolve(history, file))
     atomicJson(resolve(directory, "restored.json"), { sourceTaskId: spec.restoreFromTaskId })
+    operationalReceipts.push({category:"dataMigration",elapsedMs:Date.now()-startedAt,source:"Pod stopped PVC workspace copy",content:{sourceTaskId:spec.restoreFromTaskId}})
   }
   let codeSnapshot: CodeSnapshot | undefined
   let savedArchive: WorkspaceArchive | undefined
@@ -109,7 +114,8 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     const reuseArchives: Array<WorkspaceArchive | null> = JSON.parse(process.env.TASK_REUSE_ARCHIVES ?? "[]")
     for (const [index, archive] of reuseArchives.entries()) if (archive) {
       const target = resolve(directory, `reuse-source-${index}`)
-      await restoreWorkspace(target, `/reuse/${index}`, archive)
+      const receipt=await restoreWorkspace(target, `/reuse/${index}`, archive)
+      operationalReceipts.push({category:"dataMigration",elapsedMs:receipt.elapsedMs,bytes:receipt.bytes,source:"Pod verified reuse archive restore",content:{...receipt,index}})
       sourceDirectories[index] = target
     }
     for (const source of spec.inputSnapshot?.sources ?? []) {
@@ -136,6 +142,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
       }
       if (reused) continue
       checkpoint.active = stage.id; checkpoint.state = "Running"
+      if((spec.restoreFromTaskId||(spec.reuseSources?.length??0)>0)&&!operationalReceipts.some(item=>item.category==="warmSessionLoss"))operationalReceipts.push({category:"warmSessionLoss",elapsedMs:Date.now()-preparationStartedAt,source:"Pod replacement worker preparation",content:{restoreFromTaskId:spec.restoreFromTaskId,reuseSources:spec.reuseSources?.map(item=>item.taskId)}})
       checkpoint.attempts[stage.id] = (checkpoint.attempts[stage.id] ?? 0) + 1
       save()
       const code = await execute(stage.command, workspace)
@@ -163,7 +170,7 @@ export async function runInstance(spec: InstanceSpec, directory: string, instanc
     if (force) clearTimeout(force)
     process.off("SIGTERM", stop); process.off("SIGINT", stop)
     // Kubernetes bind-mounts this individual file; replacing it with rename yields EBUSY.
-    const receipt = { ...(failure ? { failure } : {}), codeSnapshot, inputSnapshotDigest: spec.inputSnapshot?.digest, state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused, ...(savedArchive ? { archive: savedArchive } : {}) }
+    const receipt = { ...(failure ? { failure } : {}), codeSnapshot, inputSnapshotDigest: spec.inputSnapshot?.digest, state: checkpoint.state, completed: checkpoint.completed, active: checkpoint.active, reused: checkpoint.reused, operationalReceipts, ...(savedArchive ? { archive: savedArchive } : {}) }
     while (failure?.logTail && Buffer.byteLength(JSON.stringify(receipt)) > 3900) failure.logTail = failure.logTail.slice(Math.max(1, Math.floor(failure.logTail.length / 4)))
     writeFileSync(process.env.TASK_TERMINATION_MESSAGE ?? resolve(directory, "termination.json"), JSON.stringify(receipt) + "\n")
   }

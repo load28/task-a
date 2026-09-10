@@ -27,6 +27,10 @@ export class GrantDispatcher {
     if(!Number.isSafeInteger(ownerLeaseMs)||ownerLeaseMs<1000)throw new Error("Invalid dispatcher lease")
     runtime.store.db.exec(`CREATE TABLE IF NOT EXISTS grant_dispatches(grant_id TEXT PRIMARY KEY REFERENCES activation_grants(id),state TEXT NOT NULL,owner TEXT,payload TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS grant_dispatch_queue ON grant_dispatches(state);
+      CREATE TABLE IF NOT EXISTS grant_dispatch_transitions(id TEXT PRIMARY KEY,grant_id TEXT NOT NULL REFERENCES activation_grants(id),from_state TEXT NOT NULL,to_state TEXT NOT NULL,occurred_at INTEGER NOT NULL,payload TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS grant_dispatch_transition_grant ON grant_dispatch_transitions(grant_id,occurred_at);
+      CREATE TRIGGER IF NOT EXISTS grant_dispatch_transition_update BEFORE UPDATE ON grant_dispatch_transitions BEGIN SELECT RAISE(ABORT,'Immutable dispatch transition'); END;
+      CREATE TRIGGER IF NOT EXISTS grant_dispatch_transition_delete BEFORE DELETE ON grant_dispatch_transitions BEGIN SELECT RAISE(ABORT,'Immutable dispatch transition'); END;
       CREATE TABLE IF NOT EXISTS grant_dispatcher_leases(owner TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);`)
     this.heartbeat()
   }
@@ -122,7 +126,13 @@ export class GrantDispatcher {
       this.db.prepare("UPDATE grant_dispatches SET state=?,payload=? WHERE grant_id=?").run(state,canonical(value),id)
       if(row.state!==state) {
         const owner=this.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(String(row.task_id)),correlationId=String(owner?.request_id??row.task_id)
-        this.runtime.store.event({id:`dispatch-transition:${digest({id,state,index:value.transitions.length})}`,type:"GrantDispatchTransition",entityId:String(row.task_id),correlationId,schemaVersion:1,timestamp:now,payload:{grantId:id,transition}})
+        const transitionId=`dispatch-transition:${digest({id,from:row.state,to:state,at:now,index:value.transitions.length})}`
+        this.db.prepare("INSERT INTO grant_dispatch_transitions VALUES(?,?,?,?,?,?)").run(transitionId,id,String(row.state),state,now,canonical(transition))
+        this.runtime.store.event({id:transitionId,type:"GrantDispatchTransition",entityId:String(row.task_id),correlationId,schemaVersion:1,timestamp:now,payload:{grantId:id,transition}})
+        if(["failed","cancelled"].includes(state)&&String(row.state)==="stopping") {
+          const transitions=Array.isArray(prior.transitions)?prior.transitions as Array<{to:string;at:number}>:[],started=transitions.find(item=>item.to==="dispatching"),stopping=[...transitions].reverse().find(item=>item.to==="stopping"),session=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='grant_sessions'").get()?this.db.prepare("SELECT input_used,output_used,tool_used FROM grant_sessions WHERE grant_id=?").get(id):undefined
+          if(started&&stopping)this.runtime.regionCosts.operational({grantId:id,category:"discardedWork",elapsedMs:Math.max(0,stopping.at-started.at),usage:session?{inputTokens:Number(session.input_used),outputTokens:Number(session.output_used),toolCalls:Number(session.tool_used),elapsedMs:0}:undefined,source:"grant-dispatcher confirmed aborted execution",content:{startedAt:started.at,stoppingAt:stopping.at,terminalAt:now}})
+        }
       }
     })
   }

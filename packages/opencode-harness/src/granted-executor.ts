@@ -108,9 +108,14 @@ export class GrantedOpenCodeExecutor {
     if(!provider?.models[grant.profile.model])throw new Error("Granted model is not supported by the active provider")
     const backendHash=digest({id:provider.id,options:provider.options,source:provider.source})
     if(store.db.prepare("SELECT 1 FROM native_capability_failures WHERE provider=? AND model=? AND backend_hash=?").get(grant.profile.provider,grant.profile.model,backendHash))throw new Error("Provider previously rejected the strict profile; revalidate a supported authentication route before execution")
-    const created=await client.session.create({directory:this.workspace,title:`Granted role ${grant.id}`,agent:"task-cognitive",model:{id:grant.profile.model,providerID:grant.profile.provider}})
+    const sessionStartedAt=Date.now(),created=await client.session.create({directory:this.workspace,title:`Granted role ${grant.id}`,agent:"task-cognitive",model:{id:grant.profile.model,providerID:grant.profile.provider}})
     const session=created.data?.id
     if(!session)throw new Error("Native session creation failed")
+    const owner=store.db.prepare("SELECT request_id FROM controlled_tasks WHERE task_id=?").get(grant.taskId)
+    if(owner) {
+      const prior=store.db.prepare("SELECT g.id FROM activation_grants g WHERE g.id<>? AND g.task_id IN (SELECT task_id FROM controlled_tasks WHERE request_id=? UNION SELECT task_id FROM request_task_history WHERE request_id=?) AND g.state IN ('fenced','completed') LIMIT 1").get(grant.id,String(owner.request_id),String(owner.request_id))
+      if(prior)this.runtime.regionCosts.operational({grantId:grant.id,category:"warmSessionLoss",elapsedMs:Date.now()-sessionStartedAt,source:"native executor replacement session creation",content:{sessionId:session,priorGrantId:String(prior.id)}})
+    }
     const scheduler=new TaskScheduler(engine,this.limit,this.workspace)
     engine.atomic(()=>{
       if(!engine.store.executionAllowed(grant.taskId))throw new Error("Task execution is fenced")

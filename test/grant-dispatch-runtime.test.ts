@@ -109,6 +109,8 @@ test("실행 도중 취소는 먼저 grant를 fence하고 늦은 결과가 취�
     finish();await d.settle();assert.equal(d.status()[0]!.state,"cancelled")
     assert.equal(a.stops.length,1)
     assert.equal(f.r.store.db.prepare("SELECT count(*) AS n FROM agent_runs WHERE state='completed'").get()!.n,0)
+    assert.equal(f.r.store.db.prepare("SELECT count(*) AS n FROM operational_cost_measurements WHERE category='discardedWork'").get()!.n,1)
+    assert.equal(f.r.store.db.prepare("SELECT count(*) AS n FROM grant_dispatch_transitions WHERE grant_id=?").get(d.status()[0]!.grantId)!.n,3)
   } finally {finish();await d.close();f.r.close()}
 })
 
@@ -140,6 +142,7 @@ test("더 새로운 입력으로 fence된 실행은 응답 대기 중에도 실�
     assert.equal(d.status()[0]!.state,"failed")
     assert.equal(f.r.store.db.prepare("SELECT state FROM activation_grants WHERE id=?").get(grant.id)!.state,"fenced")
     assert.equal(f.r.store.db.prepare("SELECT state FROM budget_reservations WHERE id=?").get(grant.id)!.state,"reserved")
+    assert.equal(f.r.store.db.prepare("SELECT count(*) AS n FROM operational_cost_measurements WHERE grant_id=? AND category='discardedWork'").get(grant.id)!.n,1)
     d.tick();assert.equal(a.calls.length,1)
   }finally{finish();await d.close();f.r.close()}
 })

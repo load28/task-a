@@ -9,6 +9,8 @@ interface RepairSample {id:string;requestId:string;state:string;grantId:string;g
 const RECEIPT_COMPONENTS=["integration","interruption","discardedWork","warmSessionLoss","dataMigration","expectedFailure"] as const
 type ReceiptComponent=typeof RECEIPT_COMPONENTS[number]
 interface ComponentReceipt {id:string;repairId:string;category:ReceiptComponent;amount:number;unit:string;evidence:import("../../task-causality/src/model.ts").VersionRef[];source:string;recordedAt:number}
+type OperationalCategory="discardedWork"|"warmSessionLoss"|"dataMigration"
+interface OperationalMeasurement {id:string;grantId:string;category:OperationalCategory;usage?:Usage;elapsedMs:number;bytes?:number;source:string;evidence:import("../../task-causality/src/model.ts").VersionRef;recordedAt:number;content?:unknown}
 
 export interface CalibrationSummary {key:string;samples:number;stable:boolean;factor:number;maximumObservedRelativeError:number;reason:string}
 
@@ -26,6 +28,25 @@ export class RegionCostCalibration {
       CREATE INDEX IF NOT EXISTS region_cost_component_repair ON region_cost_component_receipts(repair_id,category);
       CREATE TRIGGER IF NOT EXISTS region_cost_component_receipt_update BEFORE UPDATE ON region_cost_component_receipts BEGIN SELECT RAISE(ABORT,'Immutable cost receipt'); END;
       CREATE TRIGGER IF NOT EXISTS region_cost_component_receipt_delete BEFORE DELETE ON region_cost_component_receipts BEGIN SELECT RAISE(ABORT,'Immutable cost receipt'); END;`)
+    runtime.store.db.exec(`CREATE TABLE IF NOT EXISTS operational_cost_measurements(id TEXT PRIMARY KEY,grant_id TEXT NOT NULL REFERENCES activation_grants(id),category TEXT NOT NULL,payload TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS operational_cost_grant ON operational_cost_measurements(grant_id,category);
+      CREATE TRIGGER IF NOT EXISTS operational_cost_update BEFORE UPDATE ON operational_cost_measurements BEGIN SELECT RAISE(ABORT,'Immutable operational cost measurement'); END;
+      CREATE TRIGGER IF NOT EXISTS operational_cost_delete BEFORE DELETE ON operational_cost_measurements BEGIN SELECT RAISE(ABORT,'Immutable operational cost measurement'); END;`)
+  }
+  operational(input:{grantId:string;category:OperationalCategory;usage?:Usage;elapsedMs:number;bytes?:number;source:string;content?:unknown}):OperationalMeasurement {
+    if(!["discardedWork","warmSessionLoss","dataMigration"].includes(input.category)||!Number.isFinite(input.elapsedMs)||input.elapsedMs<0||input.bytes!==undefined&&(!Number.isSafeInteger(input.bytes)||input.bytes<0)||input.usage&&Object.values(input.usage).some(value=>!Number.isFinite(value)||value<0)||!input.source.trim())throw new Error("Invalid operational cost measurement")
+    const grant=this.runtime.store.db.prepare("SELECT task_id FROM activation_grants WHERE id=?").get(input.grantId)
+    if(!grant)throw new Error("Operational cost measurement has no grant")
+    const identity={grantId:input.grantId,category:input.category,usage:input.usage,elapsedMs:input.elapsedMs,bytes:input.bytes,source:input.source,content:input.content},id=`operational-cost:${digest(identity)}`
+    const prior=this.runtime.store.db.prepare("SELECT payload FROM operational_cost_measurements WHERE id=?").get(id)
+    if(prior)return JSON.parse(String(prior.payload)) as OperationalMeasurement
+    const recordedAt=Date.now(),evidence=this.runtime.evidence.put({id:`operational-cost-evidence:${digest(identity)}`,version:1,type:"runtime",source:input.source,producer:"operational-cost-adapter",validatorVersion:"operational-cost-measurement/v1",timestamp:recordedAt,content:identity,contentHash:digest(identity),inputVector:[],confidence:1,expiresAt:null})
+    const measurement:OperationalMeasurement={...input,id,evidence,recordedAt}
+    this.runtime.store.atomic(()=>{
+      this.runtime.store.db.prepare("INSERT INTO operational_cost_measurements VALUES(?,?,?,?)").run(id,input.grantId,input.category,canonical(measurement))
+      this.runtime.store.event({id:`operational-cost-recorded:${id}`,type:"OperationalCostMeasured",entityId:String(grant.task_id),correlationId:String(grant.task_id),schemaVersion:1,timestamp:recordedAt,payload:{measurementId:id,grantId:input.grantId,category:input.category}})
+    })
+    return measurement
   }
   record(input:Omit<ComponentReceipt,"id"|"recordedAt">):ComponentReceipt {
     if(!RECEIPT_COMPONENTS.includes(input.category)||!Number.isFinite(input.amount)||input.amount<0||!input.unit.trim()||!input.source.trim()||!input.evidence.length)throw new Error("Invalid regional cost component receipt")
@@ -66,8 +87,8 @@ export class RegionCostCalibration {
   ingest():number {
     const {store}=this.runtime
     return store.consume("region-cost-calibration/v1","completed-repair-cost/v1",event=>{
-      if(!["RequestCompleted","RegionCostComponentRecorded","GrantDispatchTransition"].includes(event.type))return
-      const requestedId=event.type==="RequestCompleted"?(event.payload as {requestId:string}).requestId:event.type==="GrantDispatchTransition"?event.correlationId:String(store.db.prepare("SELECT request_id FROM request_region_repairs WHERE id=?").get((event.payload as {repairId:string}).repairId)?.request_id??"")
+      if(!["RequestCompleted","RegionCostComponentRecorded","GrantDispatchTransition","OperationalCostMeasured"].includes(event.type))return
+      const requestedId=event.type==="RequestCompleted"?(event.payload as {requestId:string}).requestId:event.type==="GrantDispatchTransition"?event.correlationId:event.type==="OperationalCostMeasured"?String(store.db.prepare("SELECT t.request_id FROM activation_grants g JOIN controlled_tasks t ON t.task_id=g.task_id WHERE g.id=?").get((event.payload as {grantId:string}).grantId)?.request_id??""):String(store.db.prepare("SELECT request_id FROM request_region_repairs WHERE id=?").get((event.payload as {repairId:string}).repairId)?.request_id??"")
       const request=this.runtime.requests.get(requestedId),program=request?.program&&store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version),selectionPolicy=program?.replanner?.selection
       if(!request||!selectionPolicy?.calibration)return
       const completionRow=store.db.prepare("SELECT json_extract(payload,'$.timestamp') timestamp,payload FROM event_outbox WHERE type='RequestCompleted' AND correlation_id=? ORDER BY sequence DESC LIMIT 1").get(request.id)
@@ -97,20 +118,32 @@ export class RegionCostCalibration {
           if(!this.runtime.evidence.valid(job.evidence)||!Number.isFinite(job.receipt?.startedAt)||!Number.isFinite(job.receipt?.finishedAt)||job.receipt.finishedAt<job.receipt.startedAt)continue
           this.record({repairId:repair.id,category:"integration",amount:(job.receipt.finishedAt-job.receipt.startedAt)/policy.elapsedMsPerUnit,unit:selectionPolicy.costUnit,evidence:[job.evidence],source:`validation-job:${row.id}`})
         }
-        if((selected.interruption??0)>0&&!store.db.prepare("SELECT 1 FROM region_cost_component_receipts WHERE repair_id=? AND category='interruption'").get(repair.id)&&store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()) {
-          const dispatches=store.db.prepare("SELECT d.grant_id,d.payload FROM grant_dispatches d JOIN activation_grants g ON g.id=d.grant_id JOIN controlled_tasks t ON t.task_id=g.task_id WHERE t.request_id=?").all(request.id).map(row=>({grantId:String(row.grant_id),payload:JSON.parse(String(row.payload)) as {transitions?:Array<{from:string;to:string;at:number;detail:unknown}>}}))
-          if(dispatches.length&&dispatches.every(item=>Array.isArray(item.payload.transitions))) {
-            const intervals=dispatches.flatMap(item=>{
-              const transitions=item.payload.transitions!,result:Array<{grantId:string;startedAt:number;finishedAt:number}>=[]
+        if((selected.interruption??0)>0&&!store.db.prepare("SELECT 1 FROM region_cost_component_receipts WHERE repair_id=? AND category='interruption'").get(repair.id)&&store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatch_transitions'").get()) {
+          const taskIds=store.db.prepare("SELECT task_id FROM controlled_tasks WHERE request_id=? UNION SELECT task_id FROM request_task_history WHERE request_id=?").all(request.id,request.id).map(row=>String(row.task_id))
+          const dispatches=taskIds.flatMap(taskId=>store.db.prepare("SELECT t.grant_id,t.from_state,t.to_state,t.occurred_at,t.payload FROM grant_dispatch_transitions t JOIN activation_grants g ON g.id=t.grant_id WHERE g.task_id=? ORDER BY t.occurred_at,t.rowid").all(taskId)).reduce((groups,row)=>{
+            const grantId=String(row.grant_id),list=groups.get(grantId)??[]
+            list.push({from:String(row.from_state),to:String(row.to_state),at:Number(row.occurred_at),detail:JSON.parse(String(row.payload)).detail});groups.set(grantId,list);return groups
+          },new Map<string,Array<{from:string;to:string;at:number;detail:unknown}>>())
+          if(dispatches.size) {
+            const intervals=[...dispatches].flatMap(([grantId,transitions])=>{
+              const result:Array<{grantId:string;startedAt:number;finishedAt:number}>=[]
               for(let index=0;index<transitions.length;index++)if(transitions[index]!.to==="stopping") {
                 const end=transitions.slice(index+1).find(next=>["failed","cancelled","completed"].includes(next.to))
-                if(end)result.push({grantId:item.grantId,startedAt:transitions[index]!.at,finishedAt:end.at})
+                if(end)result.push({grantId,startedAt:transitions[index]!.at,finishedAt:end.at})
               }
               return result
             }).filter(interval=>interval.startedAt>=repair.startedAt&&interval.finishedAt<=Number(completionRow.timestamp))
             const content={repairId:repair.id,requestId:request.id,intervals,source:"durable grant dispatch stop transitions",completion}
             const proof=this.runtime.evidence.put({id:`regional-interruption:${digest(content)}`,version:1,type:"runtime",source:"durable dispatch transition measurement",producer:"region-cost-calibration",validatorVersion:"dispatch-interruption/v1",timestamp:Number(completionRow.timestamp),content,contentHash:digest(content),inputVector:[],confidence:1,expiresAt:null})
             this.record({repairId:repair.id,category:"interruption",amount:intervals.reduce((sum,interval)=>sum+(interval.finishedAt-interval.startedAt)/policy.elapsedMsPerUnit,0),unit:selectionPolicy.costUnit,evidence:[proof],source:"durable grant dispatch stop transitions"})
+          }
+        }
+        for(const category of ["discardedWork","warmSessionLoss","dataMigration"] as const)if((selected[category]??0)>0&&!store.db.prepare("SELECT 1 FROM region_cost_component_receipts WHERE repair_id=? AND category=?").get(repair.id,category)) {
+          const taskIds=store.db.prepare("SELECT task_id FROM controlled_tasks WHERE request_id=? UNION SELECT task_id FROM request_task_history WHERE request_id=?").all(request.id,request.id).map(row=>String(row.task_id))
+          const rows=taskIds.flatMap(taskId=>store.db.prepare("SELECT m.payload FROM operational_cost_measurements m JOIN activation_grants g ON g.id=m.grant_id WHERE g.task_id=? AND m.category=?").all(taskId,category)).map(row=>JSON.parse(String(row.payload)) as OperationalMeasurement).filter(item=>item.recordedAt<=Number(completionRow.timestamp))
+          if(rows.length) {
+            const amount=rows.reduce((sum,item)=>sum+item.elapsedMs/policy.elapsedMsPerUnit+(item.usage?.inputTokens??0)/policy.inputTokensPerUnit+(item.usage?.outputTokens??0)/policy.outputTokensPerUnit+(item.usage?.toolCalls??0)/policy.toolCallsPerUnit,0)
+            this.record({repairId:repair.id,category,amount,unit:selectionPolicy.costUnit,evidence:rows.map(item=>item.evidence),source:`automatic ${category} operational measurements`})
           }
         }
         const componentRows=store.db.prepare("SELECT category,amount,payload FROM region_cost_component_receipts WHERE repair_id=? ORDER BY category,id").all(repair.id)

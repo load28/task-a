@@ -78,15 +78,21 @@ export class GrantedPodExecutor implements GrantedExecutor {
     while(!this.closed) {
       const state=db.prepare("SELECT state FROM activation_grants WHERE id=?").get(id)?.state
       const instance=await this.instances.load(physicalId)
-      if(state==="completed"&&["Completed","Archived"].includes(instance.status?.phase))return {grantId:id,instanceUid:instance.metadata.uid}
+      if(state==="completed"&&["Completed","Archived"].includes(instance.status?.phase)){this.recordOperationalReceipts(grant,instance);return {grantId:id,instanceUid:instance.metadata.uid}}
       if(state==="claimed"&&instance.status?.phase==="Completed"&&db.prepare("SELECT 1 FROM pod_model_results WHERE grant_id=?").get(id)) {
         await this.validate(grant,instance)
+        this.recordOperationalReceipts(grant,instance)
         return {grantId:id,instanceUid:instance.metadata.uid}
       }
       if(state==="fenced"||Date.now()>=grant.expiresAt||["Failed","RecoveryRequired","Suspended"].includes(instance.status?.phase))throw new Error("Pod activation failed, expired or was interrupted")
       await new Promise(resolve=>setTimeout(resolve,250))
     }
     throw new Error("Pod executor stopped")
+  }
+  private recordOperationalReceipts(grant:ActivationGrant,instance:import("../../task-instances/src/types.ts").TaskInstance):void {
+    const receipts=instance.status?.result?.operationalReceipts
+    if(!Array.isArray(receipts))return
+    for(const receipt of receipts)if(receipt&&["dataMigration","warmSessionLoss"].includes(receipt.category))this.runtime.regionCosts.operational({grantId:grant.id,category:receipt.category,elapsedMs:Number(receipt.elapsedMs),...(receipt.bytes===undefined?{}:{bytes:Number(receipt.bytes)}),source:String(receipt.source),content:{instanceUid:instance.metadata.uid,run:instance.spec.run,detail:receipt.content}})
   }
   private async validate(grant:ActivationGrant,instance:import("../../task-instances/src/types.ts").TaskInstance):Promise<void> {
     const model=await this.api.get("pods",names(instance).pod),snapshotHash=instance.status?.codeSnapshot?.hash

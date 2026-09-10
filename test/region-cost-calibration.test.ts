@@ -42,8 +42,9 @@ test("완료된 지역 복구의 실제 사용량은 불변 비용 표본과 다
     const components={planning:1,reasoning:1,context:1,reexecution:1,integration:1,interruption:1,discardedWork:0,warmSessionLoss:0,dataMigration:0,expectedFailure:1}
     const repair={id:repairId,requestId,state:"applied",grantId,grantIds:[grantId],startedAt:now-100,selection:{region:{id:"region",nodes:[task.id]},cost:5,trace:[{id:"region",evaluation:{costComponents:components,rawCostComponents:components}}]}}
     runtime.store.db.prepare("INSERT INTO request_region_repairs VALUES(?,?,?,?)").run(repairId,requestId,"applied",canonical(repair))
-    runtime.store.db.exec("CREATE TABLE grant_dispatches(grant_id TEXT PRIMARY KEY,state TEXT,owner TEXT,payload TEXT)")
-    runtime.store.db.prepare("INSERT INTO grant_dispatches VALUES(?,'failed','fixture',?)").run(grantId,canonical({transitions:[{from:"dispatching",to:"stopping",at:now-50,detail:{}},{from:"stopping",to:"failed",at:now-20,detail:{stop:{stopped:true}}}]}))
+    runtime.store.db.exec("CREATE TABLE grant_dispatch_transitions(id TEXT PRIMARY KEY,grant_id TEXT,from_state TEXT,to_state TEXT,occurred_at INTEGER,payload TEXT)")
+    runtime.store.db.prepare("INSERT INTO grant_dispatch_transitions VALUES(?,?,?,?,?,?)").run("stop",grantId,"dispatching","stopping",now-50,canonical({detail:{}}))
+    runtime.store.db.prepare("INSERT INTO grant_dispatch_transitions VALUES(?,?,?,?,?,?)").run("failed",grantId,"stopping","failed",now-20,canonical({detail:{stop:{stopped:true}}}))
     runtime.control.regionCosts.record({repairId,category:"integration",amount:1,unit:"work-units",evidence:[authorization],source:"measured integration validator duration"})
     runtime.store.control.event({id:"request-completed",type:"RequestCompleted",entityId:task.id,correlationId:requestId,schemaVersion:1,timestamp:now,payload:{requestId,evidence:authorization}})
     runtime.control.regionCosts.ingest()
