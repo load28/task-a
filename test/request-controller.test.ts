@@ -381,6 +381,37 @@ for(const questionMode of ["none","input-change","coalesced-input","question-inp
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}
 })
 
+test("독립된 두 변경은 replanner를 병렬 발급하고 합성 patch를 한 번 검증한다",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"parallel-regional-")),r=createGraphRuntime(":memory:")
+  try {
+    const baseline=install(r),other:ProposedTask={node:{nodeId:"other",label:"Other",stage:"implementation",outcome:"Other file contains done",dependsOnNodeIds:[],taskSpec:{goal:"Write other",writeScopes:["other.txt"],acceptanceCriteria:[{id:"other-correct",description:"Other file contains done"}]}},expectation:{expectedArtifacts:{"other.txt":"done"},expectedInterface:{},expectedBehavior:{"other-correct":true},expectedDependencies:{},expectedGoals:{},expectedRisk:0}}
+    r.control.validators.register({id:"repair",version:1,command:[process.execPath,"-e","process.stdin.resume()"],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
+    const program:ControllerProgram={...baseline,version:2,writeScopes:["result.txt","other.txt"],maxLocalRepairs:0,tokenLimit:200000,replanner:{...baseline.planner,validators:["repair/v1"],maxAttempts:2}}
+    r.control.requests.register(program);r.control.requests.submit({id:"parallel",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
+    r.control.requests.tick();accept(r,r.control.requests.get("parallel")!.plannerGrant!,[...proposal,other]);r.control.requests.tick();await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:3000});r.control.requests.tick()
+    const taskIds=r.control.requests.tasks("parallel");assert.equal(taskIds.length,2,JSON.stringify({request:r.control.requests.get("parallel"),jobs:r.store.db.prepare("SELECT state,payload FROM validation_jobs").all()}))
+    for(const taskId of taskIds)r.control.admission.fence(taskId)
+    ;(r.control.boundaries as any).containment=(sources:string[])=>[...sources]
+    ;(r.control.boundaries as any).preserves=(edge:any)=>edge.relation==="implements_goal"
+    const proof={id:"operator",version:1}
+    for(const taskId of taskIds)r.store.control.event({id:`parallel-change:${taskId}`,type:"RequestChangeRequested",entityId:taskId,correlationId:"parallel",schemaVersion:1,timestamp:Date.now(),payload:{taskIds:[taskId],reason:"explicit user steering",evidence:[proof]}})
+    r.control.requests.tick()
+    const repair=JSON.parse(String(r.store.db.prepare("SELECT payload FROM request_region_repairs WHERE request_id='parallel'").get()!.payload))
+    assert.equal(repair.groups.length,2,JSON.stringify(repair.partition));assert.equal(repair.grantIds.length,2)
+    const plan=r.store.findWorkPlan(r.control.requests.get("parallel")!.planId!)!,nodes=r.store.planNodes(plan.id,plan.currentRevision)
+    for(const group of repair.groups) {
+      const node=nodes.find(item=>item.nodeId===group.nodeIds[0])!,expected=[...proposal,other].find(item=>item.node.nodeId===node.nodeId)!
+      const scoped={id:node.nodeId,parent:node.parentNodeId,dependencies:node.dependsOnNodeIds,objective:node.taskSpec.goal,expectedOutcome:node.outcome,decisionRefs:[]}
+      accept(r,group.grantIds[0],[{patch:{revisedTasks:[scoped],newTasks:[],removedTasks:[],newDependencies:[],preservedDecisions:[],invalidatedAssumptions:[],expectedOutcomes:[{taskId:node.nodeId,value:node.outcome}],confidence:1},tasks:[expected],summary:`repair ${node.nodeId}`}])
+    }
+    r.control.requests.tick()
+    const staged=r.store.db.prepare("SELECT payload FROM scoped_replan_stages WHERE state='staged'").get()!
+    const stage=JSON.parse(String(staged.payload))
+    assert.equal(stage.patch.revisedTasks.length,2);assert.equal(stage.metadata.expectations.length,2)
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM validation_obligations WHERE json_extract(payload,'$.kind')='scoped-plan-validation'").get()!.n,1)
+  }finally{r.close();rmSync(dir,{recursive:true,force:true})}
+})
+
 test("방향 수정은 기존 목표·계획을 보존하고 새 사용자 증거를 scoped replanner에 전달한다",async()=>{
   const dir=mkdtempSync(join(tmpdir(),"request-steer-")),r=createGraphRuntime(":memory:")
   try {

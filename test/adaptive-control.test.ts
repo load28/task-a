@@ -10,7 +10,7 @@ import { propagate } from "../packages/task-causality/src/propagation.ts"
 import { preservedExit } from "../packages/task-causality/src/boundary.ts"
 import { shouldSwitch } from "../packages/task-causality/src/prediction.ts"
 import { predictionError,nextStability } from "../packages/task-causality/src/prediction.ts"
-import { minimumRegion,mergeRegions } from "../packages/task-causality/src/regions.ts"
+import { minimumRegion,mergeRegions,partitionReplanRegions } from "../packages/task-causality/src/regions.ts"
 import type { CausalEdge,BoundaryProof,TaskExpectation,Observation } from "../packages/task-causality/src/model.ts"
 import { activation } from "../packages/task-cognition/src/activation.ts"
 import { FEATURES,type RoleVersion,type Signals } from "../packages/task-cognition/src/model.ts"
@@ -136,6 +136,19 @@ test("T08 최소 후보와 T09 전이적 overlap 병합",()=>{
   assert.equal(result.region?.id,"local")
   assert.equal(minimumRegion([{id:"x",nodes:["a"],cost:1,feasible:true}],["a"],0).minimumProven,false)
   assert.equal(mergeRegions([{nodes:["a"],boundaries:["x"],resources:[]},{nodes:["b"],boundaries:["y"],resources:[]},{nodes:["c"],boundaries:["x","y"],resources:[]}]).length,1)
+})
+
+test("T09 지역 partition은 모든 상호작용 축의 전이적 overlap만 공동 재계획한다",()=>{
+  const region=(id:string,nodes:string[],options:Partial<{boundaries:string[];resources:string[];writeScopes:string[];physicalLocks:string[]}>={})=>({id,nodes,boundaries:options.boundaries??[],resources:options.resources??[],writeScopes:options.writeScopes??[],physicalLocks:options.physicalLocks??[]})
+  const independent=partitionReplanRegions([region("a",["a"],{writeScopes:["src/a"]}),region("b",["b"],{writeScopes:["src/b"]})],[])
+  assert.equal(independent.parallel,true);assert.deepEqual(independent.groups.map(group=>group.ids),[["a"],["b"]])
+  const contract=partitionReplanRegions([region("a",["a"],{resources:["contract:api"]}),region("b",["b"],{resources:["contract:api"]})],[])
+  assert.equal(contract.parallel,false);assert.deepEqual(contract.trace[0]?.reasons,["resource"])
+  const transitive=partitionReplanRegions([region("a",["a"],{boundaries:["x"]}),region("b",["b"],{boundaries:["x","y"]}),region("c",["c"],{boundaries:["y"]})],[])
+  assert.deepEqual(transitive.groups.map(group=>group.ids),[["a","b","c"]])
+  const locked=partitionReplanRegions([region("a",["a"],{writeScopes:["src"],physicalLocks:["build"]}),region("b",["b"],{writeScopes:["src/b.ts"]}),region("c",["c"],{physicalLocks:["build"]})],[])
+  assert.deepEqual(locked.groups.map(group=>group.ids),[["a","b","c"]])
+  assert.equal(partitionReplanRegions([region("a",["a"]),region("b",["b"])],[ ["a","b"] ]).trace[0]?.reasons.includes("causal-link"),true)
 })
 
 test("T11 사례 이름 규칙을 거절하고 구조 규칙은 이름과 무관하게 적용한다",()=>{

@@ -4,16 +4,17 @@ import type { PredictionError,ReplanLease,VersionRef } from "../../task-causalit
 import type { RequestQuestion } from "./request-questions.ts"
 import type { AgentOutput } from "../../task-cognition/src/model.ts"
 import { RegionSelection } from "./region-selection.ts"
-import { connectedRegionDomain } from "../../task-causality/src/regions.ts"
+import { connectedRegionDomain,partitionReplanRegions } from "../../task-causality/src/regions.ts"
 import { propagate } from "../../task-causality/src/propagation.ts"
 import { observationInputVector } from "./completion.ts"
 import { canonical,digest } from "./value.ts"
 
 interface Repair {
   id:string;requestId:string;state:"planning"|"waiting"|"validating"|"activating"|"applied"|"rejected"|"superseded"
-  questionId?:string;causes:string[];lease:ReplanLease;grantId:string;grantIds:string[];stageId?:string;revision?:number;proposal?:Proposal;selection?:ReturnType<RegionSelection["choose"]>;startedAt:number;appliedAt?:number;replacementTaskIds?:string[]
+  questionId?:string;activeGroupId?:string;causes:string[];lease:ReplanLease;grantId:string;grantIds:string[];groups?:RepairGroup[];partition?:ReturnType<typeof partitionReplanRegions>;stageId?:string;revision?:number;proposal?:Proposal;selection?:ReturnType<RegionSelection["choose"]>;startedAt:number;appliedAt?:number;replacementTaskIds?:string[]
 }
 interface Proposal {patch:ReplanPatch;tasks:ProposedTask[];summary:string}
+interface RepairGroup {id:string;nodeIds:string[];grantIds:string[];proposal?:Proposal}
 interface Cause {adversarialReview?:{grantId:string};attemptId?:string;error?:PredictionError;evidence:VersionRef[];reason:string;taskIds?:string[];invalidAssumptions?:VersionRef[];invalidDecisions?:VersionRef[];input?:{entityId:string;version:number;hash:string};registeredInput?:{definition:VersionRef;token:string};integrationBoundary?:{id:string;version:number;tupleHash:string}}
 
 /** Local exhaustion is causal evidence, not permission to replace an entire plan.
@@ -84,7 +85,8 @@ export class RegionalRepairs {
     const plan=engine.store.findWorkPlan(request.planId)!,sourceRevision=runtime.replanning.sourceRevision(plan.id)
     if(sourceRevision!==plan.currentRevision&&engine.revisions.transitions(plan.id).some(t=>t.state==="waiting"&&t.stops.some(stop=>stop.state!=="stopped")))return true
     const links=engine.store.planLinks(plan.id,sourceRevision),nodes=engine.store.planNodes(plan.id,sourceRevision)
-    const sources=links.filter(link=>events.some(event=>event.payload.taskIds?.includes(link.taskId)||!!event.payload.attemptId&&engine.store.currentAttempt(link.taskId)?.id===event.payload.attemptId)).map(link=>link.taskId)
+    const eventSources=(selected:typeof events)=>links.filter(link=>selected.some(event=>event.payload.taskIds?.includes(link.taskId)||!!event.payload.attemptId&&engine.store.currentAttempt(link.taskId)?.id===event.payload.attemptId)).map(link=>link.taskId)
+    const sources=eventSources(events)
     const scopes=["implementation","behavior","contract","dependency","assumption","subgoal","goal"] as const
     const provenUniverse=runtime.boundaries.containment(sources,[...scopes],links.map(link=>link.taskId))
     const closure=propagate({sources,scopes:[...scopes],graphComplete:false,universe:provenUniverse??links.map(link=>link.taskId),outgoing:id=>runtime.graph.outgoing(id),threshold:()=>1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:events.some(event=>(event.payload.error?.criticalViolations.length??0)>0)})
@@ -115,9 +117,22 @@ export class RegionalRepairs {
     const boundDecisions=links.flatMap(link=>db.prepare("SELECT id,version FROM decision_task_consumers WHERE task_id=?").all(link.taskId).map(row=>({id:String(row.id),version:Number(row.version)})))
     const invalidDecisions=events.flatMap(event=>event.payload.invalidDecisions??[])
     const immutableDecisions=[...new Map([...previousDecisions,...boundDecisions].filter(ref=>!invalidDecisions.some(invalid=>canonical(invalid)===canonical(ref))).map(ref=>[canonical(ref),ref])).values()]
+    const sharedRelations=new Set(["shares_contract","shares_resource","integrates_with","conflicts_with"]),allTaskIds=links.map(link=>link.taskId),individual=events.map(event=>{
+      const eventSource=eventSources([event]),universe=eventSource.length?runtime.boundaries.containment(eventSource,[...scopes],allTaskIds):undefined
+      if(!universe)return
+      const affected=propagate({sources:eventSource,scopes:[...scopes],graphComplete:false,universe,outgoing:id=>runtime.graph.outgoing(id),threshold:()=>1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:(event.payload.error?.criticalViolations.length??0)>0}).affected
+      const resources=runtime.graph.all().filter(edge=>sharedRelations.has(edge.relation)&&(affected.includes(edge.source.entityId)||affected.includes(edge.target.entityId))).map(edge=>`${edge.relation}:${edge.id}`)
+      const physicalLocks=db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_reservations'").get()?db.prepare("SELECT task_id FROM task_reservations WHERE task_id IN (SELECT value FROM json_each(?))").all(canonical(affected)).map(row=>String(row.task_id)):[]
+      return {id:event.id,nodes:affected,boundaries:[digest(universe)],resources,writeScopes:[...new Set(affected.flatMap(id=>engine.store.findTask(id)?.writeScopes??["."]))],physicalLocks}
+    })
+    const partition=individual.every(Boolean)&&individual.length>1?partitionReplanRegions(individual as NonNullable<(typeof individual)[number]>[],runtime.graph.all().map(edge=>[edge.source.entityId,edge.target.entityId])):undefined
+    const repairGroups:RepairGroup[]=(partition?.groups.length??0)>1?partition!.groups.map(group=>({id:digest(group.ids),nodeIds:links.filter(link=>group.nodes.includes(link.taskId)).map(link=>link.nodeId),grantIds:[]})):[{id:digest(events.map(event=>event.id)),nodeIds:boundary,grantIds:[]}]
     const lease=runtime.replanning.issue({planId:plan.id,boundary,changedNodes:changed,invalidatedNodes:changed,preservedNodes:nodes.filter(node=>!boundary.includes(node.nodeId)).map(node=>node.nodeId),immutableDecisions,invalidDecisions:[...new Map(events.flatMap(event=>event.payload.invalidDecisions??[]).map(ref=>[canonical(ref),ref])).values()],invalidAssumptions:[...new Map(events.flatMap(event=>event.payload.invalidAssumptions??[]).map(ref=>[canonical(ref),ref])).values()],predictionErrors:events.flatMap(event=>event.payload.error?[event.payload.error]:[]),violatedInvariants:events.flatMap(event=>event.payload.error?event.payload.error.criticalViolations.length?event.payload.error.criticalViolations:[`failed expectation ${event.payload.error.expectation.id}@${event.payload.error.expectation.version}`]:event.payload.reason==="joint integration failure"?[`Failed integration boundary ${event.payload.integrationBoundary!.id}@${event.payload.integrationBoundary!.version}`]:event.payload.reason==="adversarial review failure"?["Independent adversarial conclusions did not reconcile"]:event.payload.reason==="observed input change"?["Observed execution input changed"]:event.payload.reason==="assumption validity lost"?["A registered assumption lost its validated basis"]:event.payload.reason==="decision validity lost"?["A registered decision lost its validated basis"]:["Explicit user amendment requires plan consistency validation"]),evidence:[...evidence,selectionRef],expiresAt:Date.now()+program.grantLifetimeMs,validators:program.replanner.validators})
-    const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease,assumptions:this.assumptionContext(lease),decisions:this.decisionContext([...lease.immutableDecisions,...(lease.invalidDecisions??[])]),region:nodes.filter(node=>boundary.includes(node.nodeId)),expectations:request.proposal,selection,failures:evidence.map(ref=>runtime.evidence.require(ref)),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Otherwise return exactly one proposedTasks item {patch: ReplanPatch, tasks: [{node: PlanNode, expectation: six dimensions}], summary}. Preserve the original goal and immutable decisions, applying only explicit user amendments. tasks must describe exactly revised/new nodes; never relax expected outcomes to observed failures."},`regional-repair:${cause}`,lease.expiresAt)
-    const repair:Repair={id:cause,requestId:request.id,state:"planning",causes:events.map(event=>event.id),lease,grantId:grant.id,grantIds:[grant.id],selection:evaluated,startedAt:Date.now()}
+    const grants=repairGroups.map(group=>{
+      const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease,assumptions:this.assumptionContext(lease),decisions:this.decisionContext([...lease.immutableDecisions,...(lease.invalidDecisions??[])]),region:nodes.filter(node=>group.nodeIds.includes(node.nodeId)),parallelPartition:partition??null,expectations:request.proposal,selection,failures:evidence.map(ref=>runtime.evidence.require(ref)),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. Otherwise return exactly one proposedTasks item {patch: ReplanPatch, tasks: [{node: PlanNode, expectation: six dimensions}], summary}. Touch only the supplied region. Preserve the original goal and immutable decisions, applying only explicit user amendments. tasks must describe exactly revised/new nodes; never relax expected outcomes to observed failures."},`regional-repair:${cause}:${group.id}`,lease.expiresAt)
+      group.grantIds.push(grant.id);return grant
+    })
+    const repair:Repair={id:cause,requestId:request.id,state:"planning",causes:events.map(event=>event.id),lease,grantId:grants[0]!.id,grantIds:grants.map(grant=>grant.id),groups:repairGroups,...(partition?{partition}:{}),selection:evaluated,startedAt:Date.now()}
     db.prepare("INSERT INTO request_region_repairs VALUES(?,?,?,?)").run(repair.id,request.id,repair.state,canonical(repair))
     return true
   }
@@ -126,6 +141,12 @@ export class RegionalRepairs {
   }
   private decisionContext(refs:VersionRef[]) {
     return refs.map(ref=>({ref,definition:this.controller.store.get("decision_versions",ref.id,ref.version)??null}))
+  }
+  private namespaceProposal(groupId:string,proposal:Proposal):Proposal {
+    const assigned=new Map(proposal.patch.newTasks.map(node=>[node.id,`proposal:${groupId}:${digest(node.id).slice(0,16)}`])),id=(value:string)=>assigned.get(value)??value
+    if(assigned.size!==proposal.patch.newTasks.length)throw new Error("Parallel regional proposal contains duplicate new task identities")
+    const node=<T extends {id:string;parent?:string;dependencies:string[]}>(value:T)=>({...value,id:id(value.id),parent:value.parent?id(value.parent):undefined,dependencies:value.dependencies.map(id)})
+    return {...proposal,patch:{...proposal.patch,revisedTasks:proposal.patch.revisedTasks.map(node),newTasks:proposal.patch.newTasks.map(node),newDependencies:proposal.patch.newDependencies.map(edge=>({from:id(edge.from),to:id(edge.to)})),expectedOutcomes:proposal.patch.expectedOutcomes.map(item=>({...item,taskId:id(item.taskId)}))},tasks:proposal.tasks.map(item=>({...item,node:{...item.node,nodeId:id(item.node.nodeId),parentNodeId:item.node.parentNodeId?id(item.node.parentNodeId):undefined,dependsOnNodeIds:item.node.dependsOnNodeIds.map(id)}}))}
   }
   assertQuestion(request:ControlledRequest,question:RequestQuestion):Repair {
     const row=this.controller.store.db.prepare("SELECT payload FROM request_region_repairs WHERE id=? AND request_id=?").get(question.target?.kind==="regional"?question.target.repairId:"",request.id)
@@ -137,30 +158,41 @@ export class RegionalRepairs {
   resume(request:ControlledRequest,program:ControllerProgram,question:RequestQuestion):void {
     const repair=this.assertQuestion(request,question),runtime=this.controller.runtime
     if(question.state!=="answered"||!program.replanner)throw new Error("Regional resume requires an answered question and registered replanner")
-    const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease:repair.lease,assumptions:this.assumptionContext(repair.lease),decisions:this.decisionContext([...repair.lease.immutableDecisions,...(repair.lease.invalidDecisions??[])]),region:runtime.engine.store.planNodes(repair.lease.planId,repair.lease.sourceRevision??repair.lease.baseRevision).filter(node=>repair.lease.boundary.includes(node.nodeId)),expectations:request.proposal,failures:repair.lease.evidence.map(ref=>runtime.evidence.require(ref)),contract:"Continue the scoped repair using the original lease, goal, preserved nodes, immutable decisions and invariants. Return one proposedTasks item {patch: ReplanPatch,tasks:[{node:PlanNode,expectation:six dimensions}],summary}. Answers do not extend scope or relax expected outcomes."},`answer:${question.id}`,repair.lease.expiresAt)
-    repair.grantId=grant.id;repair.grantIds=[...(repair.grantIds??[]),grant.id];repair.state="planning";delete repair.questionId;this.save(repair)
+    const group=repair.groups?.find(group=>group.id===repair.activeGroupId),allowed=group?.nodeIds??repair.lease.boundary
+    const grant=this.controller.issueReplanner(request,program,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),lease:repair.lease,assumptions:this.assumptionContext(repair.lease),decisions:this.decisionContext([...repair.lease.immutableDecisions,...(repair.lease.invalidDecisions??[])]),region:runtime.engine.store.planNodes(repair.lease.planId,repair.lease.sourceRevision??repair.lease.baseRevision).filter(node=>allowed.includes(node.nodeId)),expectations:request.proposal,failures:repair.lease.evidence.map(ref=>runtime.evidence.require(ref)),contract:"Continue only the supplied scoped repair region using the original lease, goal, preserved nodes, immutable decisions and invariants. Return one proposedTasks item {patch: ReplanPatch,tasks:[{node:PlanNode,expectation:six dimensions}],summary}. Answers do not extend scope or relax expected outcomes."},`answer:${question.id}:${group?.id??"joint"}`,repair.lease.expiresAt)
+    repair.grantId=grant.id;repair.grantIds=[...(repair.grantIds??[]),grant.id];if(group)group.grantIds.push(grant.id);repair.state="planning";delete repair.questionId;delete repair.activeGroupId;this.save(repair)
   }
   private progress(repair:Repair,request:ControlledRequest,program:ControllerProgram):void {
     const runtime=this.controller.runtime,engine=runtime.engine,store=runtime.store,db=store.db
     if(repair.state!=="activating"&&Date.now()>=repair.lease.expiresAt)throw new Error("Regional repair lease expired; stale output cannot be adopted")
     if(repair.state==="planning") {
-      const state=db.prepare("SELECT state FROM activation_grants WHERE id=?").get(repair.grantId)?.state
-      if(state==="fenced")throw new Error("Regional cognition grant was fenced; no blind retry")
-      if(state!=="completed")return
-      if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()&&db.prepare("SELECT state FROM grant_dispatches WHERE grant_id=?").get(repair.grantId)?.state!=="completed")return
-      const output=JSON.parse(String(db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(repair.grantId)!.payload)).output as AgentOutput
-      if(output.unresolvedQuestions.length) {
-        runtime.replanning.assertCurrent(repair.lease.id)
-        const question=this.controller.questions.ask(request,program,output,{grantId:repair.grantId,target:{kind:"regional",repairId:repair.id}})
-        repair.questionId=question.id;repair.state="waiting";this.save(repair)
-        request.state="waiting";request.reason="재계획에 필요한 사용자 답변을 기다리고 있습니다."
-        db.prepare("UPDATE control_requests SET state=?,payload=? WHERE id=?").run(request.state,canonical(request),request.id)
-        return
+      const groups=repair.groups?.length?repair.groups:[{id:"joint",nodeIds:repair.lease.boundary,grantIds:[repair.grantId]}]
+      for(const group of groups.filter(group=>!group.proposal)) {
+        const grantId=group.grantIds.at(-1)!,state=db.prepare("SELECT state FROM activation_grants WHERE id=?").get(grantId)?.state
+        if(state==="fenced")throw new Error("Regional cognition grant was fenced; no blind retry")
+        if(state!=="completed")return
+        if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='grant_dispatches'").get()&&db.prepare("SELECT state FROM grant_dispatches WHERE grant_id=?").get(grantId)?.state!=="completed")return
+        const output=JSON.parse(String(db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grantId)!.payload)).output as AgentOutput
+        if(output.unresolvedQuestions.length) {
+          runtime.replanning.assertCurrent(repair.lease.id)
+          repair.grantId=grantId;repair.activeGroupId=group.id
+          const question=this.controller.questions.ask(request,program,output,{grantId,target:{kind:"regional",repairId:repair.id}})
+          repair.questionId=question.id;repair.state="waiting";this.save(repair)
+          request.state="waiting";request.reason="재계획에 필요한 사용자 답변을 기다리고 있습니다."
+          db.prepare("UPDATE control_requests SET state=?,payload=? WHERE id=?").run(request.state,canonical(request),request.id)
+          return
+        }
+        if(output.requiresEscalation||output.proposedTasks.length!==1)throw new Error("Regional proposal left unresolved escalation or has no unique patch")
+        let proposal=output.proposedTasks[0] as Proposal
+        if(!proposal.patch||!proposal.summary?.trim())throw new Error("Incomplete regional patch")
+        const touched=[...proposal.patch.revisedTasks.map(node=>node.id),...proposal.patch.removedTasks,...proposal.patch.newTasks.flatMap(node=>[node.id,node.parent??""])].filter(Boolean)
+        if(touched.some(id=>!group.nodeIds.includes(id)&&!id.startsWith("proposal:")))throw new Error("Parallel regional proposal escaped its independent component")
+        proposal=this.namespaceProposal(group.id,proposal)
+        this.controller.validateProposal(proposal.tasks,program);group.proposal=proposal;this.save(repair)
       }
-      if(output.requiresEscalation||output.proposedTasks.length!==1)throw new Error("Regional proposal left unresolved escalation or has no unique patch")
-      const proposal=output.proposedTasks[0] as Proposal
-      if(!proposal.patch||!proposal.summary?.trim())throw new Error("Incomplete regional patch")
-      this.controller.validateProposal(proposal.tasks,program)
+      const proposals=groups.map(group=>group.proposal!),first=proposals[0]!
+      const proposal:Proposal={summary:proposals.map(item=>item.summary).join("; "),tasks:proposals.flatMap(item=>item.tasks),patch:{revisedTasks:proposals.flatMap(item=>item.patch.revisedTasks),newTasks:proposals.flatMap(item=>item.patch.newTasks),removedTasks:proposals.flatMap(item=>item.patch.removedTasks),newDependencies:proposals.flatMap(item=>item.patch.newDependencies),preservedDecisions:first.patch.preservedDecisions,invalidatedAssumptions:[...new Map(proposals.flatMap(item=>item.patch.invalidatedAssumptions).map(ref=>[canonical(ref),ref])).values()],expectedOutcomes:proposals.flatMap(item=>item.patch.expectedOutcomes),confidence:Math.min(...proposals.map(item=>item.patch.confidence))}}
+      if(proposals.some(item=>canonical(item.patch.preservedDecisions)!==canonical(first.patch.preservedDecisions)))throw new Error("Parallel regional proposals disagree on immutable decisions")
       const stage=runtime.replanning.stage(repair.lease.id,proposal.patch,proposal.tasks.map(item=>item.node),proposal.summary,{goal:request.text,goalEvidence:request.evidence,amendments:request.amendments??[],clarifications:request.clarifications??[],questionHistory:this.controller.questions.history(request.id),expectations:proposal.tasks.map(item=>({nodeId:item.node.nodeId,expectation:item.expectation})),previousExpectations:request.proposal,assumptions:this.assumptionContext(repair.lease),decisions:this.decisionContext([...repair.lease.immutableDecisions,...(repair.lease.invalidDecisions??[])])})
       repair.stageId=stage.id;repair.proposal=proposal;repair.state="validating";this.save(repair);return
     }

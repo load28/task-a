@@ -28,6 +28,34 @@ export function mergeRegions(regions: Array<{nodes:string[];boundaries:string[];
   return merged.map(r=>({nodes:[...r.nodes].sort(),boundaries:[...r.boundaries].sort(),resources:[...r.resources].sort()}))
 }
 
+export interface ReplanRegionPartitionInput {id:string;nodes:string[];boundaries:string[];resources:string[];writeScopes:string[];physicalLocks:string[]}
+export interface ReplanRegionPartition {ids:string[];nodes:string[];boundaries:string[];resources:string[];writeScopes:string[];physicalLocks:string[]}
+const scopeOverlap=(a:string,b:string)=>a==="."||b==="."||a===b||a.startsWith(`${b}/`)||b.startsWith(`${a}/`)
+/** Build connected components over every interaction axis. A different file
+ * name is never enough to establish independence when causal, contract,
+ * resource, hierarchical write scope, or physical reservation edges overlap. */
+export function partitionReplanRegions(regions:ReplanRegionPartitionInput[],causalLinks:Array<[string,string]>):{parallel:boolean;groups:ReplanRegionPartition[];trace:Array<{left:string;right:string;reasons:string[]}>} {
+  if(new Set(regions.map(region=>region.id)).size!==regions.length||regions.some(region=>!region.id||!region.nodes.length||[region.nodes,region.boundaries,region.resources,region.writeScopes,region.physicalLocks].some(items=>new Set(items).size!==items.length)))throw new Error("Invalid regional repair partition input")
+  const normalized=regions.map(region=>({...region,nodes:[...region.nodes].sort(),boundaries:[...region.boundaries].sort(),resources:[...region.resources].sort(),writeScopes:[...region.writeScopes].sort(),physicalLocks:[...region.physicalLocks].sort()})).sort((a,b)=>a.id.localeCompare(b.id))
+  const groups=normalized.map(region=>({ids:new Set([region.id]),nodes:new Set(region.nodes),boundaries:new Set(region.boundaries),resources:new Set(region.resources),writeScopes:new Set(region.writeScopes),physicalLocks:new Set(region.physicalLocks)})),trace:Array<{left:string;right:string;reasons:string[]}>=[]
+  const intersects=(a:Set<string>,b:Set<string>)=>[...a].some(value=>b.has(value))
+  for(let left=0;left<groups.length;left++)for(let right=left+1;right<groups.length;) {
+    const a=groups[left]!,b=groups[right]!,reasons:string[]=[]
+    if(intersects(a.nodes,b.nodes))reasons.push("affected-closure")
+    if(intersects(a.boundaries,b.boundaries))reasons.push("boundary")
+    if(intersects(a.resources,b.resources))reasons.push("resource")
+    if(intersects(a.physicalLocks,b.physicalLocks))reasons.push("physical-lock")
+    if([...a.writeScopes].some(x=>[...b.writeScopes].some(y=>scopeOverlap(x,y))))reasons.push("write-scope")
+    if(causalLinks.some(([from,to])=>a.nodes.has(from)&&b.nodes.has(to)||a.nodes.has(to)&&b.nodes.has(from)))reasons.push("causal-link")
+    if(!reasons.length){right++;continue}
+    trace.push({left:[...a.ids].sort().join(","),right:[...b.ids].sort().join(","),reasons})
+    for(const key of ["ids","nodes","boundaries","resources","writeScopes","physicalLocks"] as const)for(const value of b[key])a[key].add(value)
+    groups.splice(right,1);left=-1;break
+  }
+  const result=groups.map(group=>({ids:[...group.ids].sort(),nodes:[...group.nodes].sort(),boundaries:[...group.boundaries].sort(),resources:[...group.resources].sort(),writeScopes:[...group.writeScopes].sort(),physicalLocks:[...group.physicalLocks].sort()})).sort((a,b)=>a.ids[0]!.localeCompare(b.ids[0]!))
+  return {parallel:result.length>1,groups:result,trace}
+}
+
 export interface FiniteRegion {id:string;nodes:string[];lowerBound:number}
 export interface SwitchingEstimate {currentValid:boolean;keep:{estimate:number;lower:number;upper:number};newFailure:{estimate:number;lower:number;upper:number}}
 export interface RegionEvaluation {feasible:true|false|"unknown";cost:number|null;evidence:string[];reason:string;switching?:SwitchingEstimate;costComponents?:Record<string,number>;rawCostComponents?:Record<string,number>}
