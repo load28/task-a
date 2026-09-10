@@ -222,6 +222,10 @@ Pod 생성 전에도 grant 벡터와 현재 관찰을 비교한다. 불변 `Inst
 
 새 입력 스냅샷은 단일 `legacy-complete-input` digest를 발급하지 않는다. task specification, 각 artifact content와 실제 code tree hash, runtime environment, 등록 외부 관찰을 독립된 entity/port/view/version/hash로 저장한다. task specification 또는 한 입력만 바뀌어도 계획·질문·실행의 해당 벡터 비교가 실패한다. 업그레이드 전에 저장된 attempt와 수동 운영 허가는 읽기 호환 경로에서만 기존 digest를 사용한다.
 
+각 새 grant는 파일 시스템·도구·환경·네트워크·시간·난수·외부 상태의 일곱 입력 채널을 `observed/pinned/denied/bounded/unknown`으로 분류한 불변 실행 경계 계약을 가진다. 계약 hash와 controller runtime evidence를 별도 행에 고정하며 claim, 모델·도구 승인, 결과 제출, Pod 생성 전에 payload·행·증거의 일치를 다시 검사한다. 계약 삭제·위변조·근거 철회·만료는 실행을 차단한다. cognitive gateway 밖의 도구가 있으면 관련 채널을 `unknown`으로 낮춘다.
+
+실제 모델 profile은 제공자 내부 난수를 통제하거나 관찰하지 못하므로 전체 판정을 `unknown`으로 유지한다. 캐시가 만료되면 모델 fallback이 가능한 L0 grant도 같은 보수적 판정을 유지한다. 모델 호출과 fallback이 없는 L1 실행만 모든 채널이 고정되었을 때 `complete`가 될 수 있다. 이는 미관측 입력을 완전하다고 가장하지 않는 locality 전제를 실행 계약으로 만든 것이다.
+
 ## 검증된 경계 보존과 keep/switch 판단
 
 완전 경계는 구성 task, 모든 실제 교차 causal edge, invariant, 전용 binding 검증기와 증거 수명을 불변 버전에 고정한다. 교차 edge 목록이 현재 그래프와 정확히 일치하고 모든 edge의 completeness가 verified인 경우만 등록한다. 현재 attempt의 의미 관찰에 대해 binding 검증과 behavior/interface/data/temporal/error propagation/resource contention/semantic 일곱 검증을 실제 프로세스로 모두 통과해야 scope별 `BoundaryProof`를 만든다. proof는 현재 그래프 hash·관찰 tuple·모든 출구·검증 receipt와 권한에 묶인다.
@@ -236,7 +240,7 @@ region 후보 검증기는 같은 `costUnit`으로 planning·reasoning·context�
 
 ## 남은 전체 수용 조건
 
-1. 파일 gateway 밖의 등록된 코드·도구·환경·외부 입력 관찰은 실행 벡터와 native/Pod 복구 identity에 연결했고 새 실행의 legacy 전체 snapshot을 독립 입력 view로 교체했다. 입력 경계의 등록 완전성 증거는 남아 있다. 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
+1. 파일 gateway 밖의 등록된 코드·도구·환경·외부 입력 관찰은 실행 벡터와 native/Pod 복구 identity에 연결했고 새 실행의 legacy 전체 snapshot을 독립 입력 view로 교체했다. 입력 채널별 완전성 계약과 증거도 실행 경계에 연결했다. 실제 모델 제공자의 난수 채널은 `unknown`이며, 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
 2. 실제 boundary 보존 증거를 활용한 보수적 영역 축소와 불확실성 포함 keep/switch 판단은 연결했다. finite 후보·등록 검증기의 feasibility/공통 단위 비용·최적성 gap 경로도 연결했으나 비용 모델의 실제 성능 calibration은 남아 있다. 독립 region의 병렬 복구는 남아 있다. 승인 전이 중 episode 병합은 미활성 revision 폐기와 source/head 분리로 연결했다. 질문 대기 중 입력 변경 병합은 연결했다. 등록 decision의 증거 기반 무효화와 유효 가정·결정의 대체 task 바인딩 보존은 연결했다. native 관찰 입력 및 등록 가정의 유효성 손실, 진행 중 repair의 최신 원인 교체는 연결했다.
 3. activation additional-trigger의 historical/shadow 비교, gateway 파일 쓰기의 실제 attribution, 역할 lifecycle 실행 게이트, 검증된 routine의 실제 plan graph 확장은 연결했으나, 모든 13개 정책 target의 실행 적용, 파일 밖 외부 입력의 attribution 및 observed paired holdout 운영 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory의 실제 graph mutation은 아직 전체 실행 루프에 연결되지 않았다.
 4. 기존 운영 데이터/worker의 전면 이관, 권한 변경 reply 재개, quota 증액의 정책 변경 경로, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.

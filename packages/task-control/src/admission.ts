@@ -9,6 +9,7 @@ import type { VersionVector } from "../../task-causality/src/model.ts"
 import { validateProfile } from "../../task-cognition/src/precision.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
+import { attachExecutionInputBoundary,assertExecutionInputBoundary } from "./input-boundary.ts"
 
 export class AdmissionBudgetUnavailableError extends Error {}
 
@@ -58,7 +59,8 @@ export class Admission {
       positive(limit,"Account token limit")
       const used=Number(this.store.db.prepare("SELECT coalesce(sum(CASE WHEN state='reserved' THEN reserved ELSE coalesce(spent,reserved) END),0) AS total FROM budget_reservations WHERE account=?").get(account)?.total??0)
       if(used+reserved>limit) throw new AdmissionBudgetUnavailableError("Budget unavailable; obligations remain pending")
-      const grant={...selected,id:randomUUID()}
+      const id=randomUUID(),boundary=attachExecutionInputBoundary(this.store,id,selected)
+      const grant={...selected,id,inputBoundary:boundary}
       this.store.db.prepare("INSERT INTO activation_grants VALUES(?,?,?,?,?)").run(grant.id,grant.decisionId,grant.taskId,"issued",canonical(grant))
       this.store.db.prepare("INSERT INTO agent_runs VALUES(?,?,?,'candidate',?)").run(randomUUID(),grant.id,grant.taskId,canonical({grant,selectedAt:Date.now()}))
       this.store.db.prepare("INSERT INTO budget_reservations VALUES(?,?,?,NULL,'reserved')").run(grant.id,account,reserved)
@@ -70,6 +72,7 @@ export class Admission {
       const row=this.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(id)
       if(!row||row.state!=="issued") throw new Error("Grant is unknown, fenced or already consumed")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
+      assertExecutionInputBoundary(this.store,grant,input.now)
       if(!input.worker||grant.worker&&grant.worker!==input.worker||grant.expiresAt<=input.now||grant.specHash!==input.specHash||grant.graphHash!==input.graphHash||grant.generation!==input.generation||digest(grant.inputVector)!==digest(input.inputVector)) throw new Error("Stale or mismatched activation grant")
       if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Grant role lifecycle is no longer executable")
       grant.worker=input.worker
@@ -86,6 +89,7 @@ export class Admission {
       const row=this.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(id)
       if(!row||row.state!=="claimed") throw new Error("Result has no active grant")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
+      assertExecutionInputBoundary(this.store,grant)
       if(grant.worker!==worker||output.taskId!==grant.taskId||grant.expiresAt<=Date.now()) throw new Error("Late or foreign role result")
       if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Grant role lifecycle is no longer executable")
       for(const value of Object.values(usage)) if(!Number.isFinite(value)||value<0) throw new Error("Missing actual usage")

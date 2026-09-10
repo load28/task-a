@@ -34,5 +34,10 @@ export interface ActivationGrant {
   reuse?:{record:VersionRef;requestedProfile:ReasoningProfile;accountLimit:number}
   preflight?:{id:string;requestedProfile:ReasoningProfile}
   replanLease?:VersionRef
+  inputBoundary?:{
+    version:1;surface:"cognitive-gateway/v1";verdict:"complete"|"unknown"
+    channels:Record<"filesystem"|"tools"|"environment"|"network"|"time"|"random"|"external","observed"|"pinned"|"denied"|"bounded"|"unknown">
+    contractHash:string;evidence:VersionRef
+  }
 }
 export interface AgentOutput { taskId:string; findings:unknown[]; decisions:unknown[]; risks:unknown[]; unresolvedQuestions:unknown[]; evidence:VersionRef[]; proposedTasks:unknown[]; confidence:number; requiresEscalation:boolean }

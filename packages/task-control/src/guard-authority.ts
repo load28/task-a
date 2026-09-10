@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { assertGrantObservedInputsCurrent } from "./observed-inputs.ts"
+import { assertExecutionInputBoundary } from "./input-boundary.ts"
 
 /** The authority reads live fencing state for every model/tool admission. */
 export class GuardAuthority implements GrantAuthority {
@@ -26,6 +27,7 @@ export class GuardAuthority implements GrantAuthority {
       const row=this.store.db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)
       if(!row||row.state!=="claimed")throw new Error("Only a claimed grant can bind a model session")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
+      assertExecutionInputBoundary(this.store,grant)
       if(grant.worker!==sessionId)throw new Error("Grant worker/session mismatch")
       const prior=this.store.db.prepare("SELECT grant_id FROM grant_sessions WHERE session_id=?").get(sessionId)
       if(prior) {if(prior.grant_id!==grantId)throw new Error("Session already bound to another grant");return}
@@ -40,6 +42,7 @@ export class GuardAuthority implements GrantAuthority {
       if(!row||row.state!=="claimed")throw new Error("Execution was fenced or completed")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
       if(grant.expiresAt<=Date.now()||grant.worker!==sessionId)throw new Error("Expired or foreign session grant")
+      assertExecutionInputBoundary(this.store,grant)
       assertGrantObservedInputsCurrent(this.store,grant)
       if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Role lifecycle authorization was withdrawn")
       const run=this.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)

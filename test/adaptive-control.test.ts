@@ -164,6 +164,15 @@ test("T02 grant는 한 worker만 소비하고 입력 변경·위조 context를 �
     assert.throws(()=>admission.issue({...input,contextHash:"forged"},"account",5000),/context/)
     assert.throws(()=>admission.issue(input,"account",100),/Budget/)
     const grant=admission.issue(input,"account",5000)
+    assert.equal(grant.inputBoundary?.verdict,"unknown")
+    assert.equal(grant.inputBoundary?.channels.random,"unknown")
+    assert.equal(grant.inputBoundary?.channels.network,"denied")
+    assert.equal(store.control.get<{producer:string}>("evidence_versions",grant.inputBoundary!.evidence.id,1)?.producer,"admission")
+    const original=String(store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(grant.id)!.payload),payload=JSON.parse(original)
+    payload.inputBoundary.channels.random="denied"
+    store.db.prepare("UPDATE activation_grants SET payload=? WHERE id=?").run(JSON.stringify(payload),grant.id)
+    assert.throws(()=>admission.claim(grant.id,{worker:"altered",specHash:"s",inputVector:[],graphHash:"g",generation:1,now:Date.now()}),/boundary contract/)
+    store.db.prepare("UPDATE activation_grants SET payload=? WHERE id=?").run(original,grant.id)
     const claim={worker:"w",specHash:"s",inputVector:[],graphHash:"g",generation:1,now:Date.now()}
     assert.throws(()=>admission.claim(grant.id,{...claim,specHash:"changed"}),/mismatched/)
     admission.claim(grant.id,claim)

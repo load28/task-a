@@ -49,6 +49,8 @@ for(const mode of ["hit","context-miss","unvalidated","new-validation-fails","ex
     const second=f.issue(mode==="context-miss")
     const hit=!["context-miss","unvalidated"].includes(mode)
     assert.equal(second.profile.level,hit?0:3)
+    assert.equal(second.inputBoundary?.verdict,"unknown")
+    assert.equal(second.inputBoundary?.channels.random,"unknown")
     assert.equal(r.store.db.prepare("SELECT reserved FROM budget_reservations WHERE id=?").get(second.id)!.reserved,hit?0:1100)
     if(["expired-before-delivery","fallback-budget"].includes(mode)) {
       const record=r.store.control.get<import("../packages/task-context/src/memory.ts").CognitiveRecord>("cognitive_records",second.reuse!.record.id,1)!

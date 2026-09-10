@@ -11,6 +11,7 @@ import { TaskScheduler } from "../../task-engine/src/scheduling.ts"
 import { digest } from "./value.ts"
 import { AuthorityHttpClient } from "./authority-http.ts"
 import { currentInputVector } from "./completion.ts"
+import { assertExecutionInputBoundary } from "./input-boundary.ts"
 
 export interface PodDispatchConfig {
   validationBudget?:{maxJobs:number;maxDurationMs:number}
@@ -54,6 +55,7 @@ export class GrantedPodExecutor implements GrantedExecutor {
     const db=this.runtime.store.db,row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(id)
     if(row?.state!=="issued")throw new Error("Pod dispatch requires an unused activation grant")
     const grant=JSON.parse(String(row.payload)) as ActivationGrant,physicalId=`grant-${id}`,secretName=`grant-${digest(id).slice(0,32)}`
+    assertExecutionInputBoundary(this.runtime.store,grant)
     const currentInputs=currentInputVector(this.runtime.engine,grant.taskId)
     if(digest(currentInputs)!==digest(grant.inputVector))throw new Error("Pod dispatch inputs changed before provisioning")
     if(db.prepare("SELECT 1 FROM pod_dispatch_bindings WHERE grant_id=?").get(id))throw new Error("Interrupted Pod dispatch cannot be replayed")
