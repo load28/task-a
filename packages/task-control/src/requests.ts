@@ -99,6 +99,7 @@ export class RequestController {
   }
   get store(){return this.runtime.store}
   register(program:ControllerProgram):void {
+    if(program.policyControls)throw new Error("Policy controls are controller-derived and cannot be registered directly")
     if(new Set((program.permissionTransitions??[]).map(item=>item.id)).size!==(program.permissionTransitions??[]).length)throw new Error("Permission transition identities must be unique")
     for(const transition of program.permissionTransitions??[]) {
       if(!transition.id||!["capability","quota"].includes(transition.kind)||!transition.permission||!transition.patterns.length||transition.patterns.some(pattern=>!pattern.trim())||!transition.authorization.length)throw new Error("Permission transition must be explicit and bounded")

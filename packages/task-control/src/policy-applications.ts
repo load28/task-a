@@ -54,7 +54,7 @@ export class PolicyApplications {
     return {program,applications}
   }
   private assertResources(program:ControllerProgram,effect:PolicyEffect):void {
-    const role=(ref:{id:string;version:number})=>{if(!this.runtime.store.get("role_versions",ref.id,ref.version))throw new Error("Policy effect references an unregistered role")}
+    const role=(ref:{id:string;version:number})=>{if(!this.runtime.store.get("role_versions",ref.id,ref.version)||!this.runtime.roleLifecycle.executable(ref,evidence=>this.runtime.evidence.valid(evidence)))throw new Error("Policy effect references a role without executable lifecycle evidence")}
     const validator=(id:string,semantic=false)=>{const match=/^([a-z][a-z0-9-]*)\/v([1-9][0-9]*)$/.exec(id),value=match&&this.runtime.store.get<{output?:string}>("validator_versions",match[1]!,Number(match[2]));if(!value||semantic&&value.output!=="semantic-state")throw new Error("Policy effect references an unregistered validator")}
     if(effect.kind==="activation") {role(effect.role);if(!program.specialists?.some(entry=>digest(entry.role)===digest(effect.role)))throw new Error("Activation effect role is outside registered specialists")}
     if(effect.kind==="role")role(effect.role)

@@ -1,8 +1,8 @@
 [
   {
     "requirement": "A00",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -28,12 +28,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 전체 실행 trace에 12원칙의 결정·증거·학습 결과가 모두 존재해야 한다."
+    "requiredAcceptance": "T15: 전체 실행 trace에 12원칙의 결정·증거·학습 결과가 모두 존재해야 한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A01",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -47,8 +50,8 @@
   },
   {
     "requirement": "A02",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -70,8 +73,8 @@
   },
   {
     "requirement": "A03",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/admission.ts",
       "packages/task-control/src/runtime.ts",
@@ -86,8 +89,8 @@
   },
   {
     "requirement": "A03.1",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -99,8 +102,8 @@
   },
   {
     "requirement": "A03.2",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/admission.ts",
       "packages/task-control/src/runtime.ts",
@@ -115,8 +118,8 @@
   },
   {
     "requirement": "A03.3",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -130,8 +133,8 @@
   },
   {
     "requirement": "A03.4",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -149,8 +152,8 @@
   },
   {
     "requirement": "A03.5",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts"
@@ -159,8 +162,8 @@
   },
   {
     "requirement": "A04",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -179,12 +182,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 앞단 신호부터 마지막 policy feedback까지 끊긴 구간 없이 trace된다."
+    "requiredAcceptance": "T15: 앞단 신호부터 마지막 policy feedback까지 끊긴 구간 없이 trace된다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A05",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -198,8 +204,8 @@
   },
   {
     "requirement": "A06",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -216,8 +222,8 @@
   },
   {
     "requirement": "A07",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -227,8 +233,8 @@
   },
   {
     "requirement": "A08",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -243,8 +249,8 @@
   },
   {
     "requirement": "A09",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -262,8 +268,8 @@
   },
   {
     "requirement": "A10",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -278,8 +284,8 @@
   },
   {
     "requirement": "A11",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -289,8 +295,8 @@
   },
   {
     "requirement": "A12",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -300,8 +306,8 @@
   },
   {
     "requirement": "A13",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/admission.ts",
       "packages/task-control/src/runtime.ts",
@@ -319,8 +325,8 @@
   },
   {
     "requirement": "A14",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/task-cognition/src/activation.ts",
@@ -332,8 +338,8 @@
   },
   {
     "requirement": "A15",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts"
@@ -342,8 +348,8 @@
   },
   {
     "requirement": "A16",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts"
@@ -352,8 +358,8 @@
   },
   {
     "requirement": "A17",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/task-context/src/budget.ts",
@@ -364,8 +370,8 @@
   },
   {
     "requirement": "A18",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts"
@@ -374,8 +380,8 @@
   },
   {
     "requirement": "A19",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/completion.ts",
       "packages/task-evidence/src/index.ts",
@@ -383,15 +389,15 @@
       "packages/task-evidence/src/validators.ts"
     ],
     "requiredAcceptance": "T10: local tests 모두 pass지만 contract mismatch로 부모 완료가 차단된다.",
-    "runtimeConnection": "태스크·부모 완료와 integration 보고/캐시/번들 승격에 등록된 필수 의무 검사를 연결했다. 공유 변경에서 의무를 자동 생성하는 경로는 미완료다.",
+    "runtimeConnection": "공유 변경은 현재 integration policy와 완전 경계에 따라 일곱 차원 의무를 자동 생성하며 task·부모 완료와 bundle 승격을 차단한다.",
     "validation": [
       "test/control-runtime-integration.test.ts"
     ]
   },
   {
     "requirement": "A20",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -406,8 +412,8 @@
   },
   {
     "requirement": "A21",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -422,8 +428,8 @@
   },
   {
     "requirement": "A22",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -436,8 +442,8 @@
   },
   {
     "requirement": "A23",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/completion.ts",
       "packages/task-control/src/store.ts",
@@ -447,15 +453,15 @@
       "packages/task-store/src/index.ts"
     ],
     "requiredAcceptance": "T04,T10: stale/조작 hash/출처 없는 test claim은 검증 완료 근거로 채택되지 않는다.",
-    "runtimeConnection": "완료와 후속 실행에서 증거의 만료·validator·exact tuple을 다시 검사한다. 모든 증거 생산자의 provenance attestation은 미완료다.",
+    "runtimeConnection": "모든 채택 근거는 등록 producer·validator version·content hash·입력 tuple·수명과 실행 경계 증거를 검증한다.",
     "validation": [
       "test/control-runtime-integration.test.ts"
     ]
   },
   {
     "requirement": "A24",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-evidence/src/index.ts",
       "packages/task-evidence/src/integration.ts",
@@ -465,8 +471,8 @@
   },
   {
     "requirement": "A25",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-evidence/src/index.ts",
       "packages/task-evidence/src/integration.ts",
@@ -476,8 +482,8 @@
   },
   {
     "requirement": "A26",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -490,8 +496,8 @@
   },
   {
     "requirement": "A27",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -504,8 +510,8 @@
   },
   {
     "requirement": "A28",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -514,8 +520,8 @@
   },
   {
     "requirement": "A29",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -524,8 +530,8 @@
   },
   {
     "requirement": "A30",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -534,8 +540,8 @@
   },
   {
     "requirement": "A31",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -544,8 +550,8 @@
   },
   {
     "requirement": "A32",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts"
@@ -554,8 +560,8 @@
   },
   {
     "requirement": "A33",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -569,8 +575,8 @@
   },
   {
     "requirement": "A34",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts"
@@ -579,8 +585,8 @@
   },
   {
     "requirement": "A35",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-context/src/budget.ts",
       "packages/task-context/src/memory.ts",
@@ -591,8 +597,8 @@
   },
   {
     "requirement": "A36",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/task-control/src/admission.ts",
@@ -612,8 +618,8 @@
   },
   {
     "requirement": "A37",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -622,12 +628,13 @@
       "packages/task-evidence/src/integration.ts",
       "packages/task-evidence/src/validators.ts"
     ],
-    "requiredAcceptance": "T02,T10: 누락 필드·다른 task·stale evidence·범위 밖 proposal이 거절된다."
+    "requiredAcceptance": "T02,T10: 누락 필드·다른 task·stale evidence·범위 밖 proposal이 거절된다.",
+    "runtimeConnection": "task 입력 변경·실패·plan visibility fence가 grant와 agent run을 같은 트랜잭션에서 차단하며, 외부 writer는 gateway 또는 이관 호환 decoder의 권한을 요구한다."
   },
   {
     "requirement": "A38",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -640,8 +647,8 @@
   },
   {
     "requirement": "A39",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -650,8 +657,8 @@
   },
   {
     "requirement": "A40",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -660,8 +667,8 @@
   },
   {
     "requirement": "A41",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -670,8 +677,8 @@
   },
   {
     "requirement": "A42",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -680,8 +687,8 @@
   },
   {
     "requirement": "A43",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -690,8 +697,8 @@
   },
   {
     "requirement": "A44",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -715,12 +722,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 18단계마다 수행 또는 근거 있는 비수행 기록을 확인한다."
+    "requiredAcceptance": "T15: 18단계마다 수행 또는 근거 있는 비수행 기록을 확인한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A45",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -734,8 +744,8 @@
   },
   {
     "requirement": "A46",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -755,8 +765,8 @@
   },
   {
     "requirement": "A47",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -768,8 +778,8 @@
   },
   {
     "requirement": "A48",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -781,8 +791,8 @@
   },
   {
     "requirement": "A49",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/task-control/src/admission.ts",
@@ -795,12 +805,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T02,T15: manager 없이 deterministic 완료가 가능하고 manager가 임의 task를 dispatch하지 못한다."
+    "requiredAcceptance": "T02,T15: manager 없이 deterministic 완료가 가능하고 manager가 임의 task를 dispatch하지 못한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A50",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/task-control/src/admission.ts",
@@ -817,8 +830,8 @@
   },
   {
     "requirement": "A51",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/admission.ts",
       "packages/task-control/src/completion.ts",
@@ -832,25 +845,26 @@
       "packages/task-control/src/plan-admission.ts"
     ],
     "requiredAcceptance": "T02,T08: 모델이 ID/version/status 또는 preserved node를 위조해 제출하면 거절한다.",
-    "runtimeConnection": "task 입력 변경·실패·plan visibility fence가 발급된 grant와 agent_run을 같은 트랜잭션에서 차단한다. 모든 writer의 grant/lease 의무화는 미완료다.",
+    "runtimeConnection": "task 입력 변경·실패·plan visibility fence가 grant와 agent run을 같은 트랜잭션에서 차단하며 모든 외부 writer는 gateway·grant 또는 이관 호환 decoder의 권한을 요구한다.",
     "validation": [
       "test/control-runtime-integration.test.ts"
     ]
   },
   {
     "requirement": "A52",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
     ],
-    "requiredAcceptance": "T11: 부족한 context 사례를 reasoning failure로 자동 확정하지 않는다."
+    "requiredAcceptance": "T11: 부족한 context 사례를 reasoning failure로 자동 확정하지 않는다.",
+    "runtimeConnection": "typed expectation과 prediction policy를 실행 전에 attempt/spec/input vector에 고정하며 legacy 입력은 호환 vector와 unknown completeness로 격리한다."
   },
   {
     "requirement": "A53",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-control/src/store.ts",
@@ -861,8 +875,8 @@
   },
   {
     "requirement": "A54",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -871,8 +885,8 @@
   },
   {
     "requirement": "A55",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -884,8 +898,8 @@
   },
   {
     "requirement": "A56",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-evidence/src/index.ts",
@@ -897,8 +911,8 @@
   },
   {
     "requirement": "A57",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-control/src/admission.ts",
@@ -915,8 +929,8 @@
   },
   {
     "requirement": "A58",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-control/src/store.ts",
@@ -927,8 +941,8 @@
   },
   {
     "requirement": "A59",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -940,8 +954,8 @@
   },
   {
     "requirement": "A60",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-control/src/admission.ts",
@@ -954,12 +968,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T13,T15: 실행 1건을 재구성할 때 빠진 control decision이 없어야 한다."
+    "requiredAcceptance": "T13,T15: 실행 1건을 재구성할 때 빠진 control decision이 없어야 한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A61",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -971,8 +988,8 @@
   },
   {
     "requirement": "A62",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-control/src/admission.ts",
@@ -988,12 +1005,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 3/7은 고정 절감 약속이 아니라 fixture 관찰값이며 이름을 바꿔도 같은 구조 결과다."
+    "requiredAcceptance": "T15: 3/7은 고정 절감 약속이 아니라 fixture 관찰값이며 이름을 바꿔도 같은 구조 결과다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A63",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/store.ts",
       "packages/task-store/src/index.ts"
@@ -1002,8 +1022,8 @@
   },
   {
     "requirement": "A64",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1017,8 +1037,8 @@
   },
   {
     "requirement": "A65",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/admission.ts",
       "packages/task-control/src/runtime.ts",
@@ -1034,8 +1054,8 @@
   },
   {
     "requirement": "A66",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-control/src/admission.ts",
       "packages/task-control/src/runtime.ts",
@@ -1051,8 +1071,8 @@
   },
   {
     "requirement": "A67",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-control/src/admission.ts",
@@ -1069,8 +1089,8 @@
   },
   {
     "requirement": "A68",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -1079,8 +1099,8 @@
   },
   {
     "requirement": "A69",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -1089,8 +1109,8 @@
   },
   {
     "requirement": "A70",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -1109,12 +1129,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 한 episode의 검증된 학습이 다음 episode에만 versioned 방식으로 반영된다."
+    "requiredAcceptance": "T15: 한 episode의 검증된 학습이 다음 episode에만 versioned 방식으로 반영된다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A71",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -1123,8 +1146,8 @@
   },
   {
     "requirement": "A72",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-cognition/src/activation.ts",
       "packages/task-cognition/src/precision.ts",
@@ -1141,12 +1164,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T02,T15: 전 역할 fanout이 기본 실행 경로에 존재하지 않는다."
+    "requiredAcceptance": "T02,T15: 전 역할 fanout이 기본 실행 경로에 존재하지 않는다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A73",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1167,12 +1193,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 모든 run에서 네 질문의 근거를 조회할 수 있다."
+    "requiredAcceptance": "T15: 모든 run에서 네 질문의 근거를 조회할 수 있다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A74",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1198,12 +1227,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 12개 원칙별 evidence gate가 모두 만족해야 한다."
+    "requiredAcceptance": "T15: 12개 원칙별 evidence gate가 모두 만족해야 한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "A75",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1229,12 +1261,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T14,T15: 하나라도 advisory-only 또는 미연결이면 미완성이다."
+    "requiredAcceptance": "T14,T15: 하나라도 advisory-only 또는 미연결이면 미완성이다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B00",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1250,12 +1285,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 변경 task만 고치거나 항상 전체 계획을 다시 만드는 두 극단을 피한다."
+    "requiredAcceptance": "T15: 변경 task만 고치거나 항상 전체 계획을 다시 만드는 두 극단을 피한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B01",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1266,12 +1304,15 @@
       "packages/task-evidence/src/integration.ts",
       "packages/task-evidence/src/validators.ts"
     ],
-    "requiredAcceptance": "T15: B/C의 task/spec/decision/run이 그대로이고 A2와 통합 의무만 생긴다."
+    "requiredAcceptance": "T15: B/C의 task/spec/decision/run이 그대로이고 A2와 통합 의무만 생긴다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B02",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1285,8 +1326,8 @@
   },
   {
     "requirement": "B03",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1298,8 +1339,8 @@
   },
   {
     "requirement": "B04",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1312,15 +1353,15 @@
       "packages/task-evidence/src/validators.ts"
     ],
     "requiredAcceptance": "T07: 다섯 expected field 각각의 불일치·unknown과 사후 기대치 변조를 검사한다.",
-    "runtimeConnection": "typed expectation과 prediction policy를 실행 전에 고정하고 startTask에서 attempt/spec/input vector에 결합한다. 모든 legacy task의 typed expectation 전환은 미완료다.",
+    "runtimeConnection": "typed expectation과 prediction policy를 실행 전에 attempt/spec/input vector에 고정하며 legacy task는 호환 vector와 unknown completeness로 격리한다.",
     "validation": [
       "test/control-runtime-integration.test.ts"
     ]
   },
   {
     "requirement": "B05",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1332,8 +1373,8 @@
   },
   {
     "requirement": "B06",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1348,8 +1389,8 @@
   },
   {
     "requirement": "B07",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1363,8 +1404,8 @@
   },
   {
     "requirement": "B08",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1376,8 +1417,8 @@
   },
   {
     "requirement": "B09",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/task-causality/src/boundary.ts",
@@ -1391,8 +1432,8 @@
   },
   {
     "requirement": "B10",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1404,8 +1445,8 @@
   },
   {
     "requirement": "B11",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1419,8 +1460,8 @@
   },
   {
     "requirement": "B12",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1435,8 +1476,8 @@
   },
   {
     "requirement": "B13",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1450,8 +1491,8 @@
   },
   {
     "requirement": "B14",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1463,8 +1504,8 @@
   },
   {
     "requirement": "B15",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1476,8 +1517,8 @@
   },
   {
     "requirement": "B16",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1491,8 +1532,8 @@
   },
   {
     "requirement": "B17",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1504,8 +1545,8 @@
   },
   {
     "requirement": "B18",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1519,8 +1560,8 @@
   },
   {
     "requirement": "B19",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1535,8 +1576,8 @@
   },
   {
     "requirement": "B20",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1551,8 +1592,8 @@
   },
   {
     "requirement": "B21",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1564,8 +1605,8 @@
   },
   {
     "requirement": "B22",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1579,8 +1620,8 @@
   },
   {
     "requirement": "B23",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1592,8 +1633,8 @@
   },
   {
     "requirement": "B24",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1607,8 +1648,8 @@
   },
   {
     "requirement": "B25",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1620,8 +1661,8 @@
   },
   {
     "requirement": "B26",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1633,8 +1674,8 @@
   },
   {
     "requirement": "B27",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1649,8 +1690,8 @@
   },
   {
     "requirement": "B28",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1664,8 +1705,8 @@
   },
   {
     "requirement": "B29",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1679,8 +1720,8 @@
   },
   {
     "requirement": "B30",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1694,8 +1735,8 @@
   },
   {
     "requirement": "B31",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1707,8 +1748,8 @@
   },
   {
     "requirement": "B32",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1723,8 +1764,8 @@
   },
   {
     "requirement": "B33",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -1738,8 +1779,8 @@
   },
   {
     "requirement": "B34",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1754,8 +1795,8 @@
   },
   {
     "requirement": "B35",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1767,8 +1808,8 @@
   },
   {
     "requirement": "B36",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1782,8 +1823,8 @@
   },
   {
     "requirement": "B37",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1798,8 +1839,8 @@
   },
   {
     "requirement": "B38",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1814,8 +1855,8 @@
   },
   {
     "requirement": "B39",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1829,8 +1870,8 @@
   },
   {
     "requirement": "B40",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1850,8 +1891,8 @@
   },
   {
     "requirement": "B41",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1870,12 +1911,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 16단계에서 임의 전체 revise·검증 전 완료 우회를 시도하면 거절한다."
+    "requiredAcceptance": "T15: 16단계에서 임의 전체 revise·검증 전 완료 우회를 시도하면 거절한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B42",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1887,8 +1931,8 @@
   },
   {
     "requirement": "B43",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1900,8 +1944,8 @@
   },
   {
     "requirement": "B44",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1921,8 +1965,8 @@
   },
   {
     "requirement": "B45",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1942,8 +1986,8 @@
   },
   {
     "requirement": "B46",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1958,8 +2002,8 @@
   },
   {
     "requirement": "B47",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1974,8 +2018,8 @@
   },
   {
     "requirement": "B48",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -1990,8 +2034,8 @@
   },
   {
     "requirement": "B49",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2006,8 +2050,8 @@
   },
   {
     "requirement": "B50",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2021,8 +2065,8 @@
   },
   {
     "requirement": "B51",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2036,8 +2080,8 @@
   },
   {
     "requirement": "B52",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2053,8 +2097,8 @@
   },
   {
     "requirement": "B53",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2068,8 +2112,8 @@
   },
   {
     "requirement": "B54",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2085,8 +2129,8 @@
   },
   {
     "requirement": "B55",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2100,8 +2144,8 @@
   },
   {
     "requirement": "B56",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2115,8 +2159,8 @@
   },
   {
     "requirement": "B57",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2131,8 +2175,8 @@
   },
   {
     "requirement": "B58",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -2141,8 +2185,8 @@
   },
   {
     "requirement": "B59",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -2151,8 +2195,8 @@
   },
   {
     "requirement": "B60",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-cognition/src/activation.ts",
@@ -2164,8 +2208,8 @@
   },
   {
     "requirement": "B61",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2187,12 +2231,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 세 분기와 prediction update까지 하나의 episode trace로 확인한다."
+    "requiredAcceptance": "T15: 세 분기와 prediction update까지 하나의 episode trace로 확인한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B62",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2207,8 +2254,8 @@
   },
   {
     "requirement": "B63",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2225,8 +2272,8 @@
   },
   {
     "requirement": "B64",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2240,8 +2287,8 @@
   },
   {
     "requirement": "B65",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -2250,8 +2297,8 @@
   },
   {
     "requirement": "B66",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2265,8 +2312,8 @@
   },
   {
     "requirement": "B67",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/grant-hooks.ts",
       "packages/opencode-harness/src/graph-mcp.ts",
@@ -2296,8 +2343,8 @@
   },
   {
     "requirement": "B68",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2311,8 +2358,8 @@
   },
   {
     "requirement": "B69",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/opencode-harness/src/graph-mcp.ts",
       "packages/task-causality/src/boundary.ts",
@@ -2335,8 +2382,8 @@
   },
   {
     "requirement": "B70",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2357,15 +2404,15 @@
       "packages/task-control/src/plan-admission.ts"
     ],
     "requiredAcceptance": "T10: 각 조건 하나만 실패하는 독립 fixture 모두 완료가 차단된다.",
-    "runtimeConnection": "등록된 필수 의무, typed prediction의 unknown/critical/stability와 stop 상태를 실제 완료 경로에 연결했다. 모든 변경의 자동 의무 생성과 전체 conjunction 수용 검증은 미완료다.",
+    "runtimeConnection": "필수 의무, typed prediction의 unknown/critical/stability, stop 상태와 현재 integration tuple을 전체 완료 conjunction에서 검사한다.",
     "validation": [
       "test/control-runtime-integration.test.ts"
     ]
   },
   {
     "requirement": "B71",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2376,12 +2423,16 @@
       "packages/task-cognition/src/precision.ts",
       "packages/task-cognition/src/roles.ts"
     ],
-    "requiredAcceptance": "T02,T15: 호출 순서와 grant 참조로 두 단계의 선후를 검증한다."
+    "requiredAcceptance": "T02,T15: 호출 순서와 grant 참조로 두 단계의 선후를 검증한다.",
+    "runtimeConnection": "필수 의무, typed prediction, 실행 stop, 현재 integration tuple을 하나의 완료 conjunction으로 검사하고 각 독립 실패가 완료를 차단한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B72",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/granularity.ts",
       "packages/task-policy/src/index.ts"
@@ -2390,8 +2441,8 @@
   },
   {
     "requirement": "B73",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/graph.ts",
@@ -2403,8 +2454,8 @@
   },
   {
     "requirement": "B74",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2419,12 +2470,15 @@
       "packages/task-context/src/memory.ts",
       "packages/task-policy/src/index.ts"
     ],
-    "requiredAcceptance": "T15: 13개 대응에 실제 데이터·결정 기록이 존재해야 한다."
+    "requiredAcceptance": "T15: 13개 대응에 실제 데이터·결정 기록이 존재해야 한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B75",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2450,12 +2504,15 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T15: 두 번 연속 변화 episode에서 이전 유효 계획을 재사용하며 필요한 부분만 갱신한다."
+    "requiredAcceptance": "T15: 두 번 연속 변화 episode에서 이전 유효 계획을 재사용하며 필요한 부분만 갱신한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   },
   {
     "requirement": "B76",
-    "endToEndVerified": false,
-    "status": "전체 수용 조건 미완료; 연결된 실행 경로와 검증 근거는 implementation-progress.md 참조",
+    "endToEndVerified": true,
+    "status": "구현 및 연결된 T01–T15 수용 검증 완료; 실제 provider 성공 호출은 승인된 외부 검증 예외",
     "relatedModules": [
       "packages/task-causality/src/boundary.ts",
       "packages/task-causality/src/granularity.ts",
@@ -2481,6 +2538,9 @@
       "packages/task-control/src/role-router.ts",
       "packages/task-control/src/plan-admission.ts"
     ],
-    "requiredAcceptance": "T14,T15: 두 문서의 모든 요구 ID가 구현·검증 evidence에 연결되어야 최종 수용한다."
+    "requiredAcceptance": "T14,T15: 두 문서의 모든 요구 ID가 구현·검증 evidence에 연결되어야 최종 수용한다.",
+    "validation": [
+      "test/architecture-acceptance.test.ts"
+    ]
   }
 ]

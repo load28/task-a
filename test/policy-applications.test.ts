@@ -13,10 +13,11 @@ test("13개 활성 정책 head는 요청별 불변 bundle로 고정되고 각 ta
   const r=createGraphRuntime(":memory:")
   try {
     const p=profile("base"),higher=profile("higher",4),role=(id:string):RoleVersion=>({id,version:1,name:id,purpose:id,capabilities:[],prompt:id,activationPolicy:{hardTriggers:[],softSignals:{},threshold:1,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:2,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[]})
-    for(const id of ["base-role","specialist","replacement"])r.store.control.put("role_versions",id,1,role(id))
+    for(const id of ["base-role","specialist","replacement"])r.control.roleLifecycle.installConfigured(role(id),"policy application fixture")
     for(const id of ["plan-extra","state-extra","replan-extra","binding",...INTEGRATION_DIMENSIONS])r.store.control.put("validator_versions",id,1,{id,version:1,output:id==="state-extra"?"semantic-state":undefined})
     r.store.control.put("routine_versions","routine",1,{id:"routine",version:1})
     const base:ControllerProgram={id:"program",version:1,authorization:[],policy:{id:"baseline",version:1},planner:{role:{id:"base-role",version:1},profile:p},worker:{role:{id:"base-role",version:1},profile:p},specialists:[{role:{id:"specialist",version:1},profile:p}],planValidators:["plan/v1"],observationValidators:["state/v1"],predictionPolicy:{weights:{contract:.25,behavior:.25,dependency:.25,goal:.25},enter:.5,exit:.1},readScopes:["."],writeScopes:["."],maxTasks:2,grantLifetimeMs:1000,account:"test",tokenLimit:10000,replanner:{role:{id:"base-role",version:1},profile:p,validators:["plan/v1"],maxAttempts:1}}
+    assert.throws(()=>r.control.requests.register({...base,policyControls:{cacheReuse:"disabled"}}),/controller-derived/)
     const effects:Record<typeof POLICY_TARGETS[number],PolicyEffect>={
       activation:{kind:"activation",role:{id:"specialist",version:1},mode:"require"},
       context:{kind:"context",slot:"all",budget:{maxTokens:900,maxDependencyDepth:2,maxEvidenceItems:4,maxHistoricalDecisions:2},requiredContext:[{relation:"depends_on",ports:["inputs"],required:true,depth:2}]},

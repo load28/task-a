@@ -26,6 +26,7 @@ import { RoleRouter } from "./role-router.ts"
 import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 import { RoutineRegistry } from "./routines.ts"
 import { PlanMemory } from "./plan-memory.ts"
+import { ArchitectureAcceptance } from "./acceptance-traces.ts"
 import { digest } from "./value.ts"
 import type { SystemEvent } from "./store.ts"
 import { randomUUID } from "node:crypto"
@@ -43,6 +44,7 @@ export class ControlRuntime {
   readonly roleLifecycle:RoleRegistry
   readonly routines:RoutineRegistry
   readonly planMemory:PlanMemory
+  readonly acceptance:ArchitectureAcceptance
   readonly assumptions:AssumptionLedger
   readonly decisions:DecisionLedger
   readonly validators:ValidatorRegistry
@@ -73,6 +75,7 @@ export class ControlRuntime {
     this.inputs=new ObservedInputs(this)
     this.routines=new RoutineRegistry(this)
     this.planMemory=new PlanMemory(this)
+    this.acceptance=new ArchitectureAcceptance(this)
     this.requests=new RequestController(this)
     this.roles=new RoleRouter(this)
     this.files=new FileObservations(this.store,(taskId,input,evidence)=>{

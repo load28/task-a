@@ -6,6 +6,8 @@ import { canonical, digest, unit } from "../../task-control/src/value.ts"
 import { FEATURES, type ContextBudget, type ContextSelector, type Feature, type ReasoningProfile } from "../../task-cognition/src/model.ts"
 import { RELATIONS, CHANGE_SCOPES, type VersionRef } from "../../task-causality/src/model.ts"
 import type { PredictionPolicy } from "../../task-causality/src/prediction.ts"
+import { validatePredictionPolicy } from "../../task-causality/src/prediction.ts"
+import { validateProfile } from "../../task-cognition/src/precision.ts"
 import { INTEGRATION_DIMENSIONS } from "../../task-evidence/src/integration.ts"
 
 export const POLICY_TARGETS=["activation","context","decomposition","role","validation","integration","escalation","cache","precision","propagation","boundary","expectation","routine"] as const
@@ -58,15 +60,15 @@ export function validateEffect(target:PolicyTarget,effect:PolicyEffect):void {
   if(effect.kind==="activation") {if(!effect.role.id||effect.role.version<1||effect.mode!=="require")throw new Error("Invalid activation effect");return}
   if(effect.kind==="context") {for(const value of Object.values(effect.budget))if(!Number.isSafeInteger(value)||value<0)throw new Error("Invalid context effect");if(effect.requiredContext.some(item=>!item.relation||!item.ports.length||item.depth<0))throw new Error("Invalid context effect");return}
   if(effect.kind==="decomposition") {if(!Number.isSafeInteger(effect.maxTasks)||effect.maxTasks<1)throw new Error("Invalid decomposition effect");return}
-  if(effect.kind==="role") {if(!effect.role.id||effect.role.version<1||effect.profile.level<2)throw new Error("Invalid role effect");return}
+  if(effect.kind==="role") {if(!effect.role.id||effect.role.version<1||effect.profile.level<2)throw new Error("Invalid role effect");validateProfile(effect.profile);return}
   if(effect.kind==="validation") {if(!effect.validators.length||effect.validators.some(value=>!validator(value)))throw new Error("Invalid validation effect");return}
   if(effect.kind==="integration") {if(INTEGRATION_DIMENSIONS.some(dimension=>!validator(effect.validators[dimension])))throw new Error("Invalid integration effect");return}
   if(effect.kind==="escalation") {if([effect.maxClarifications,effect.maxInputReplans,effect.maxLocalRepairs].some(value=>!Number.isSafeInteger(value)||value<0))throw new Error("Invalid escalation effect");return}
   if(effect.kind==="cache")return
-  if(effect.kind==="precision") {if(effect.minimumProfile.level<2)throw new Error("Invalid precision effect");return}
+  if(effect.kind==="precision") {if(effect.minimumProfile.level<2)throw new Error("Invalid precision effect");validateProfile(effect.minimumProfile);return}
   if(effect.kind==="propagation") {unit(effect.threshold,"Propagation threshold");return}
   if(effect.kind==="boundary") {if(effect.requireComplete&&(!effect.bindingValidator||!validator(effect.bindingValidator)||!Number.isSafeInteger(effect.proofMaxAgeMs)||effect.proofMaxAgeMs!<1))throw new Error("Complete boundary effect requires a validator and finite proof lifetime");return}
-  if(effect.kind==="expectation") {for(const value of [effect.policy.enter,effect.policy.exit,...Object.values(effect.policy.weights)])unit(value,"Prediction policy value");return}
+  if(effect.kind==="expectation") {validatePredictionPolicy(effect.policy);return}
   if(effect.kind==="routine") {if(!effect.allow.length||effect.allow.some(ref=>!ref.id||ref.version<1))throw new Error("Invalid routine effect");return}
   const never:never=effect;throw new Error(`Unsupported policy effect ${String(never)}`)
 }

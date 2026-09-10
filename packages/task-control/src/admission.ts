@@ -66,6 +66,7 @@ export class Admission {
       this.store.db.prepare("INSERT INTO activation_grants VALUES(?,?,?,?,?)").run(grant.id,grant.decisionId,grant.taskId,"issued",canonical(grant))
       this.store.db.prepare("INSERT INTO agent_runs VALUES(?,?,?,'candidate',?)").run(randomUUID(),grant.id,grant.taskId,canonical({grant,selectedAt:Date.now()}))
       this.store.db.prepare("INSERT INTO budget_reservations VALUES(?,?,?,NULL,'reserved')").run(grant.id,account,reserved)
+      this.store.event({id:`activation-grant-issued:${grant.id}`,type:"ActivationGrantIssued",entityId:grant.taskId,correlationId:grant.taskId,schemaVersion:1,timestamp:Date.now(),payload:{grantId:grant.id,decisionId:grant.decisionId,role:grant.role,profile:grant.profile,policy:grant.policy}})
       return grant
     })
   }
