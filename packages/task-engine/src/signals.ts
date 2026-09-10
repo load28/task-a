@@ -6,8 +6,9 @@ import { fingerprint } from "./revisions.ts"
 import type { TaskGraphEngine, CompleteTaskInput } from "./index.ts"
 import type { ArtifactVersionRef } from "#task-domain"
 import type { CodeSnapshot } from "../../task-snapshots/src/index.ts"
+import type { VersionVector } from "../../task-causality/src/model.ts"
 export interface InputSnapshot {
-  digest: string; specHash: string; inputRefs: ArtifactVersionRef[]; signatures: unknown[]; reusable: boolean
+  digest: string; specHash: string; inputRefs: ArtifactVersionRef[]; signatures: unknown[]; reusable: boolean; vector:VersionVector
 }
 export interface InputSignal { taskId: string; generation: number; causes: string[]; updatedAt: string }
 export interface SignalStop { id: string; taskId: string; token: string; state: "requested" | "stopped"; evidence?: string }
@@ -76,13 +77,19 @@ export class SignalCoordinator {
     const signatures = inputRefs.map(r => this.signature(r)).sort((a, b) => JSON.stringify(a.value).localeCompare(JSON.stringify(b.value)))
     const plan = this.store.findWorkPlanByRootTask(this.engine.rootOf(taskId).id)
     const specs = plan ? this.store.db.prepare("SELECT n.task_spec_json FROM plan_task_links l JOIN plan_revision_nodes n ON n.plan_id=l.plan_id AND n.revision=l.revision AND n.node_id=l.node_id WHERE l.task_id IN (SELECT value FROM json_each(?)) AND l.plan_id=? AND l.revision=? ORDER BY n.rowid").all(JSON.stringify([taskId,...ancestors.map(a=>a.id)]),plan.id,this.store.activePlanVersion(plan.id)).map(row=>JSON.parse(String(row.task_spec_json))) : []
+    const environmentRow=this.store.db.prepare("SELECT digest FROM task_environments WHERE task_id=?").get(taskId)
+    const environmentHash=environmentRow?String(environmentRow.digest):fingerprint([process.versions.node, process.platform, process.arch])
     const specHash = fingerprint([t.goal, t.category, t.acceptanceCriteria.map(c => c.description), t.contextPolicy, t.assignedRole, t.integrationPolicy,
       this.store.contractsFor(taskId).map(c => [c.id, c.version]),
       ancestors.map(a => a.goal), this.store.requirementsOf([taskId, ...ancestors.map(a => a.id)]).map(r => [r.description, r.kind, r.version]), specs,
-      this.store.db.prepare("SELECT digest FROM task_environments WHERE task_id=?").get(taskId)?.digest ?? fingerprint([process.versions.node, process.platform, process.arch])])
+      environmentHash])
     const observed=observedInputRefs(this.store.control,taskId).map(ref=>({ref,current:observedInputCurrent(this.store.control,ref),valid:observedInputValid(this.store.control,ref)}))
     const values=[...signatures.map(s=>s.value),...observed.map(item=>({registeredInput:item.ref,hash:item.current?.hash??null,valid:item.valid}))]
-    return { specHash, inputRefs, signatures:values, reusable:signatures.every(s=>s.reusable)&&observed.every(item=>item.valid),digest:fingerprint([specHash,values]) }
+    const vector:VersionVector=[{entityId:taskId,port:"specification",view:"task-specification",version:1,hash:specHash},...inputRefs.map(ref=>{
+      const artifact=this.engine.requireArtifactVersion(ref),signature=this.signature(ref)
+      return {entityId:`artifact:${ref.artifactId}`,port:"content",view:`artifact-${artifact.type}`,version:ref.version,hash:fingerprint(signature.value)}
+    }),{entityId:taskId,port:"environment",view:"runtime-platform",version:1,hash:environmentHash}].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    return { specHash, inputRefs, signatures:values, vector, reusable:signatures.every(s=>s.reusable)&&observed.every(item=>item.valid),digest:fingerprint([specHash,values]) }
   }
   pin(taskId: string, attemptId: string) {
     const snapshot = this.capture(taskId)

@@ -9,7 +9,7 @@ import { budgetContext } from "../packages/task-context/src/budget.ts"
 import { activation } from "../packages/task-cognition/src/activation.ts"
 import { FEATURES,type Signals,type RoleVersion,type ActivationGrant } from "../packages/task-cognition/src/model.ts"
 import { digest } from "../packages/task-control/src/value.ts"
-import { controlCompletionMissing } from "../packages/task-control/src/completion.ts"
+import { controlCompletionMissing,currentInputVector } from "../packages/task-control/src/completion.ts"
 import { observedReadsReusable } from "../packages/task-control/src/file-observations.ts"
 
 function setup(r:ReturnType<typeof createGraphRuntime>) {
@@ -25,7 +25,7 @@ function setup(r:ReturnType<typeof createGraphRuntime>) {
     const context=budgetContext({taskId,role,policy,items:changedContext?[{id:"changed",version:1,kind:"task",content:"new context",required:true,depth:0,relevance:1,level:0,dependencies:[],path:[],evidence:[]}]:[],scaffold:role.prompt,outputReservation:10,countTokens:s=>Buffer.byteLength(s)})
     r.store.control.put("context_manifests",context.id,1,context)
     const decision=r.control.admission.record(activation({taskId,eventId:`cache-event-${++sequence}`,eligible:true,role,policy,signals:{...Object.fromEntries(FEATURES.map(feature=>[feature,0])),failure:1} as Signals,now:Date.now(),invocations:0}))
-    return r.control.admission.issue({decisionId:decision.id,taskId,specHash:snapshot.specHash,inputVector:[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}],graphHash:r.control.graph.hash(),role:{id:role.id,version:1},policy,context:{id:context.id,version:1},contextHash:context.hash,profile:{id:"model-profile",level:3,provider:"test",model:"bounded",maxInputTokens:1000,maxOutputTokens:100,maxToolCalls:1,timeoutMs:60000,capability:{usage:true,tokenLimit:true,toolLimit:true,timeout:true},independentRoles:[]},executionMode:"cognition",writeScopes:[],allowedTools:[],obligations:[],expiresAt:Date.now()+60000,generation:1},"cache-account",1110)
+    return r.control.admission.issue({decisionId:decision.id,taskId,specHash:snapshot.specHash,inputVector:currentInputVector(r.engine,taskId),graphHash:r.control.graph.hash(),role:{id:role.id,version:1},policy,context:{id:context.id,version:1},contextHash:context.hash,profile:{id:"model-profile",level:3,provider:"test",model:"bounded",maxInputTokens:1000,maxOutputTokens:100,maxToolCalls:1,timeoutMs:60000,capability:{usage:true,tokenLimit:true,toolLimit:true,timeout:true},independentRoles:[]},executionMode:"cognition",writeScopes:[],allowedTools:[],obligations:[],expiresAt:Date.now()+60000,generation:1},"cache-account",1110)
   }
   const executor={execute:async(id:string)=>{
     const grant=JSON.parse(String(r.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(id)!.payload)) as ActivationGrant

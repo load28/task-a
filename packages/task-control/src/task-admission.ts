@@ -30,7 +30,8 @@ export function withTaskAdmission<T>(engine:TaskGraphEngine,grantId:string,worke
     const db=engine.store.db,row=db.prepare("SELECT state,payload FROM activation_grants WHERE id=?").get(grantId)
     if(!row||row.state!=="issued")throw new Error("Task execution requires an unused grant")
     const grant=JSON.parse(String(row.payload)) as ActivationGrant,snapshot=engine.signals.capture(grant.taskId)
-    const vector=currentInputVector(engine,grant.taskId)
+    const legacy=grant.inputVector.find(input=>input.entityId===grant.taskId&&input.port==="inputs"&&input.view==="legacy-complete-input")
+    const vector=legacy?[{...legacy,hash:snapshot.digest}]:currentInputVector(engine,grant.taskId)
     if(!worker||grant.executionMode!=="task"||grant.expiresAt<=Date.now()||grant.specHash!==snapshot.specHash||digest(grant.inputVector)!==digest(vector)||grant.graphHash!==new CausalGraph(engine.store.control).hash())throw new Error("Task admission has stale or foreign inputs")
     db.prepare("INSERT INTO task_admission_intents VALUES(?,?,?)").run(grant.taskId,grant.id,worker)
     try {return operation()} finally {db.prepare("DELETE FROM task_admission_intents WHERE task_id=?").run(grant.taskId)}

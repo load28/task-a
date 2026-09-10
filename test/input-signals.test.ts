@@ -49,6 +49,10 @@ test("push coalesces H2 and H3, fences old execution immediately, and pull waits
     e.signals.stopped(stopped.id, stopped.token, "PID exit observed")
     e.startTask(b.id)
     assert.deepEqual(e.signals.pinned(b.id)!.inputRefs, e.requireTask(a.id).outputArtifactRefs)
+    const vector=e.signals.pinned(b.id)!.vector
+    assert.ok(vector.some(input=>input.entityId===b.id&&input.port==="environment"&&input.view==="runtime-platform"))
+    assert.ok(vector.some(input=>input.entityId===`artifact:${e.requireTask(a.id).outputArtifactRefs[0]!.artifactId}`&&input.port==="content"&&input.view==="artifact-code"))
+    assert.equal(vector.some(input=>input.view==="legacy-complete-input"),false)
     const before = e.requireTask(b.id).outputArtifactRefs
     e.completeTask({ taskId: b.id, attemptToken: old.attemptToken, summary: "late", artifacts: [{ name: "B", type: "code", content: "late" }], verification: { passed: true } })
     assert.deepEqual(e.requireTask(b.id).outputArtifactRefs, before)
@@ -96,6 +100,21 @@ test("adoption rechecks spec and environment inside the write transaction", () =
     e.completeTask({ taskId: a.id, attemptToken: e.requireTask(a.id).attemptToken, summary: "stale env", artifacts: [{ name: "A", type: "code", content: "old" }], verification: { passed: true } })
     assert.equal(e.requireTask(a.id).status, "stale")
     assert.equal(e.store.findArtifactByName("A"), undefined)
+  } finally { close() }
+})
+
+test("실행 환경은 포괄 digest가 아니라 독립된 입력 view로 고정된다", () => {
+  const { e, a, close } = fixture()
+  try {
+    e.signals.setEnvironment(a.id,{runtime:"node",version:1})
+    const before=e.signals.capture(a.id)
+    const environment=before.vector.find(input=>input.port==="environment")!
+    assert.equal(environment.entityId,a.id)
+    assert.equal(environment.view,"runtime-platform")
+    e.signals.setEnvironment(a.id,{runtime:"node",version:2})
+    const after=e.signals.capture(a.id).vector.find(input=>input.port==="environment")!
+    assert.notEqual(after.hash,environment.hash)
+    assert.equal(after.version,environment.version)
   } finally { close() }
 })
 

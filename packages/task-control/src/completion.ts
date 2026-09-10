@@ -10,16 +10,19 @@ import { digest } from "./value.ts"
 export interface PinnedExpectation extends TaskExpectation { predictionPolicy: PredictionPolicy; observationValidators?:string[] }
 export interface PredictionState { error: PredictionError; policy: PredictionPolicy; stability: Stability }
 
+function snapshotVector(snapshot:ReturnType<TaskGraphEngine["signals"]["capture"]>,taskId:string):VersionVector {
+  return snapshot.vector??[{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest}]
+}
 export function currentInputVector(engine:TaskGraphEngine,taskId:string):VersionVector {
   const snapshot=engine.signals.capture(taskId)
-  return [{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest},...observedInputVector(engine.store.control,taskId)]
+  return [...snapshotVector(snapshot,taskId),...observedInputVector(engine.store.control,taskId)]
 }
-/** The legacy snapshot remains explicitly coarse; registered external views are
- * separate exact inputs and can therefore invalidate execution independently. */
+/** New attempts pin specification, artifact and environment views separately.
+ * The legacy fallback is read only for snapshots persisted before this schema. */
 export function attemptInputVector(engine:TaskGraphEngine,taskId:string):VersionVector {
   const snapshot=engine.signals.pinned(taskId)
   if(!snapshot)throw new Error("Execution has no pinned input snapshot")
-  return [{entityId:taskId,port:"inputs",view:"legacy-complete-input",version:1,hash:snapshot.digest},...observedInputVector(engine.store.control,taskId)]
+  return [...snapshotVector(snapshot,taskId),...observedInputVector(engine.store.control,taskId)]
 }
 
 export function observationInputVector(engine:TaskGraphEngine,taskId:string):VersionVector {

@@ -30,8 +30,9 @@ test("코드·도구·환경·외부 값은 각각 독립된 실행 입력 view�
     r.control.inputs.bind(task.id,definitions);definitions.forEach(definition=>r.control.inputs.refresh(definition))
     await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:5000})
     const current=currentInputVector(r.engine,task.id)
-    assert.deepEqual(current.slice(1).map(item=>item.port).sort(),["code","environment","external","tool"])
-    assert.ok(current.slice(1).every(item=>item.entityId.startsWith("observed-input:")&&item.view==="input/v1"))
+    const observed=current.filter(item=>item.entityId.startsWith("observed-input:"))
+    assert.deepEqual(observed.map(item=>item.port).sort(),["code","environment","external","tool"])
+    assert.ok(observed.every(item=>item.view==="input/v1"))
     r.engine.startTask(task.id)
     assert.deepEqual(attemptInputVector(r.engine,task.id),current)
   }finally{r.close();rmSync(dir,{recursive:true,force:true})}

@@ -169,7 +169,7 @@ export class ControlRuntime {
     // A retired projection can return; immutable historical versions stay intact.
     const historical=this.store.db.prepare("SELECT version FROM causal_edge_versions WHERE id=? ORDER BY version DESC LIMIT 1").get(id)
     if(historical)this.store.db.prepare("INSERT INTO causal_edges VALUES(?,?)").run(id,Number(historical.version))
-    else this.graph.put({id,version:1,source:{entityId:source,port:"outputs",view:"legacy-complete-input"},target:{entityId:target,port:"inputs",view:"legacy-complete-input"},relation,changeTypes:[...CHANGE_SCOPES],impactWeight:1,critical:true,completeness:"unknown",evidence:[],observedPropagationRate:{successes:0,trials:0,estimate:1,modelVersion:"unobserved-conservative/v1"}},0)
+    else this.graph.put({id,version:1,source:{entityId:source,port:"outputs",view:"unverified-task-output"},target:{entityId:target,port:"inputs",view:"unverified-task-input"},relation,changeTypes:[...CHANGE_SCOPES],impactWeight:1,critical:true,completeness:"unknown",evidence:[],observedPropagationRate:{successes:0,trials:0,estimate:1,modelVersion:"unobserved-conservative/v1"}},0)
     this.store.db.prepare("INSERT OR IGNORE INTO control_projection_edges VALUES(?)").run(id)
   }
   pinExpectation(expectation:TaskExpectation,policy:PredictionPolicy,observationValidators:string[]=[]):void {

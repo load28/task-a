@@ -54,7 +54,8 @@ export class PodAuthority {
         if(grant.executionMode==="task")withTaskAdmission(engine,grant.id,worker,()=>new TaskScheduler(engine,this.maxWorkers).claim(grant.taskId,{agent:"opencode-granted-pod",sessionId:worker,role:undefined}))
         else if(grant.writeScopes.length)throw new Error("Cognition Pod cannot write task files")
         const snapshot=engine.signals.capture(grant.taskId)
-        const inputs=grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):currentInputVector(engine,grant.taskId)
+        const legacy=grant.inputVector.some(input=>input.entityId===grant.taskId&&input.port==="inputs"&&input.view==="legacy-complete-input")
+        const inputs=legacy?grant.inputVector:grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):currentInputVector(engine,grant.taskId)
         const claimed=this.runtime.admission.claim(grant.id,{worker,specHash:snapshot.specHash,inputVector:inputs,graphHash:this.runtime.graph.hash(),generation:grant.generation,now:Date.now()})
         this.guard.bind(worker,grant.id);return claimed
       })
@@ -101,7 +102,9 @@ export class PodAuthority {
       return engine.atomic(()=>{
         const snapshot=engine.signals.capture(grant.taskId)
         const pinned=grant.inputVector.find(input=>input.entityId===grant.taskId&&input.port==="inputs"&&input.view==="legacy-complete-input")
-        if(snapshot.specHash!==grant.specHash||(pinned?pinned.hash!==snapshot.digest:!engine.signals.matches(grant.taskId))||!engine.store.executionAllowed(grant.taskId))throw new Error("Pod result inputs changed")
+        const exact=grant.inputVector.some(input=>input.entityId===grant.taskId&&input.port==="environment"&&input.view==="runtime-platform")
+        const current=grant.executionMode==="task"?attemptInputVector(engine,grant.taskId):currentInputVector(engine,grant.taskId)
+        if(snapshot.specHash!==grant.specHash||(exact?digest(grant.inputVector)!==digest(current):pinned?pinned.hash!==snapshot.digest:!engine.signals.matches(grant.taskId))||!engine.store.executionAllowed(grant.taskId))throw new Error("Pod result inputs changed")
         assertGrantObservedInputsCurrent(this.runtime.store,grant)
         const session=this.runtime.store.db.prepare("SELECT input_used,output_used,tool_used FROM grant_sessions WHERE session_id=?").get(grant.worker!)!
         const run=this.runtime.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)!
