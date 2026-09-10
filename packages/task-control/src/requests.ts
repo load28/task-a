@@ -20,6 +20,7 @@ import { RequestQuestions } from "./request-questions.ts"
 import { RegionalRepairs } from "./regional-repairs.ts"
 import { assertControlledPlanActivation } from "./plan-admission.ts"
 import type { RoutineProposalItem,RoutineUse } from "./routines.ts"
+import { inputBoundaryEvidence } from "./input-boundary.ts"
 
 export interface ControllerProgram {
   id:string; version:number; authorization:VersionRef[]; policy:VersionRef
@@ -276,8 +277,10 @@ export class RequestController {
       this.store.db.prepare("INSERT INTO controlled_plans VALUES(?,1)").run(plan.planId)
       this.store.db.prepare("INSERT INTO request_plan_admissions VALUES(?,?,'validating')").run(plan.planId,request.id)
       const content={request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],planId:plan.planId,proposal}
-      const reason=this.runtime.evidence.put({id:`proposal:${request.id}:${plan.planId}`,version:1,type:"agent",source:request.plannerGrant!,producer:program.planner.role.id,validatorVersion:"structured-proposal/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:[],confidence:output.confidence,expiresAt:null})
-      const obligation=this.runtime.evidence.createObligation({entityId:request.taskId,tuple:[{entityId:plan.planId,port:"proposal",view:"request-plan",version:1,hash:digest(content)}],kind:"request-plan",mandatory:true,validators:program.planValidators,reason:[request.evidence,...(request.clarifications??[]).map(item=>item.evidence),...this.runtime.routines.evidenceFor(request.routineUses??[]),reason]})
+      const planner=JSON.parse(String(this.store.db.prepare("SELECT payload FROM activation_grants WHERE id=?").get(request.plannerGrant!)!.payload)) as ActivationGrant
+      const tuple=[...planner.inputVector,{entityId:plan.planId,port:"proposal",view:"request-plan",version:1,hash:digest(content)}]
+      const reason=this.runtime.evidence.put({id:`proposal:${request.id}:${plan.planId}`,version:1,type:"agent",source:request.plannerGrant!,producer:program.planner.role.id,validatorVersion:"structured-proposal/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:planner.inputVector,confidence:output.confidence,expiresAt:null})
+      const obligation=this.runtime.evidence.createObligation({entityId:request.taskId,tuple,kind:"request-plan",mandatory:true,validators:program.planValidators,reason:[request.evidence,...(request.clarifications??[]).map(item=>item.evidence),...this.runtime.routines.evidenceFor(request.routineUses??[]),...inputBoundaryEvidence(planner),reason]})
       this.store.db.prepare("UPDATE request_draft_replacements SET new_plan_id=?,new_obligation_id=? WHERE request_id=? AND new_plan_id IS NULL").run(plan.planId,obligation.id,request.id)
       request.obligationId=obligation.id;request.state="validating";this.save(request);return
     }

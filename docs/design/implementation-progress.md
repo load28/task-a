@@ -226,6 +226,8 @@ Pod 생성 전에도 grant 벡터와 현재 관찰을 비교한다. 불변 `Inst
 
 실제 모델 profile은 제공자 내부 난수를 통제하거나 관찰하지 못하므로 전체 판정을 `unknown`으로 유지한다. 캐시가 만료되면 모델 fallback이 가능한 L0 grant도 같은 보수적 판정을 유지한다. 모델 호출과 fallback이 없는 L1 실행만 모든 채널이 고정되었을 때 `complete`가 될 수 있다. 이는 미관측 입력을 완전하다고 가장하지 않는 locality 전제를 실행 계약으로 만든 것이다.
 
+입력 경계 증거는 계획 proposal 의무, 역할 결과 의무, L5 specialist 활성화 판단에 원인 근거로 전파한다. 계획 검증 tuple은 planner의 전체 입력 벡터와 proposal을 함께 고정한다. 요청 outcome은 각 실행의 경계 계약과 `inputCoverage`를 기록하므로 이후 정책 측정이 `unknown` 채널을 완전한 관찰 표본으로 취급할 수 없다. grant 만료 뒤 결과를 검증할 수 있도록 경계 증거는 역사 기록으로 유지하되, 실행 허가는 grant 만료를 계속 적용하고 증거 철회는 후속 검증을 차단한다.
+
 ## 검증된 경계 보존과 keep/switch 판단
 
 완전 경계는 구성 task, 모든 실제 교차 causal edge, invariant, 전용 binding 검증기와 증거 수명을 불변 버전에 고정한다. 교차 edge 목록이 현재 그래프와 정확히 일치하고 모든 edge의 completeness가 verified인 경우만 등록한다. 현재 attempt의 의미 관찰에 대해 binding 검증과 behavior/interface/data/temporal/error propagation/resource contention/semantic 일곱 검증을 실제 프로세스로 모두 통과해야 scope별 `BoundaryProof`를 만든다. proof는 현재 그래프 hash·관찰 tuple·모든 출구·검증 receipt와 권한에 묶인다.

@@ -26,7 +26,7 @@ export function executionInputContract(grant:Pick<ActivationGrant,"profile"|"reu
 
 export function attachExecutionInputBoundary(store:ControlStore,grantId:string,grant:Omit<ActivationGrant,"id">):Boundary {
   const contract=executionInputContract(grant),contractHash=digest(contract),content={grantId,contract,inputVector:grant.inputVector,readScopes:grant.readScopes??[],writeScopes:grant.writeScopes,allowedTools:grant.allowedTools}
-  const evidence=new EvidenceStore(store).put({id:`execution-input-boundary:${grantId}`,version:1,type:"runtime",source:"controller-enforced cognitive execution surface",producer:"admission",validatorVersion:"execution-input-boundary/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:grant.inputVector,confidence:contract.verdict==="complete"?1:0,expiresAt:grant.expiresAt})
+  const evidence=new EvidenceStore(store).put({id:`execution-input-boundary:${grantId}`,version:1,type:"runtime",source:"controller-enforced cognitive execution surface",producer:"admission",validatorVersion:"execution-input-boundary/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:grant.inputVector,confidence:contract.verdict==="complete"?1:0,expiresAt:null})
   store.db.exec("CREATE TABLE IF NOT EXISTS execution_input_boundaries(grant_id TEXT PRIMARY KEY,contract_hash TEXT NOT NULL,evidence_id TEXT NOT NULL,evidence_version INTEGER NOT NULL)")
   store.db.prepare("INSERT INTO execution_input_boundaries VALUES(?,?,?,?)").run(grantId,contractHash,evidence.id,evidence.version)
   return {...contract,contractHash,evidence}
@@ -42,7 +42,7 @@ export function assertExecutionInputBoundary(store:ControlStore,grant:Activation
   const {contractHash,evidence,...contract}=grant.inputBoundary
   if(!row||row.contract_hash!==contractHash||row.evidence_id!==evidence.id||Number(row.evidence_version)!==evidence.version||digest(contract)!==contractHash||canonical(contract)!==canonical(executionInputContract(grant)))throw new Error("Execution input boundary contract changed")
   const evidenceStore=new EvidenceStore(store),proof=evidenceStore.require(evidence)
-  if(!evidenceStore.valid(evidence,now)||proof.producer!=="admission"||proof.validatorVersion!=="execution-input-boundary/v1"||proof.expiresAt===null||proof.expiresAt<=now||digest(proof.inputVector)!==digest(grant.inputVector)||(proof.content as {grantId?:string}).grantId!==grant.id)throw new Error("Execution input boundary evidence is invalid")
+  if(!evidenceStore.valid(evidence,now)||proof.producer!=="admission"||proof.validatorVersion!=="execution-input-boundary/v1"||proof.timestamp>grant.expiresAt||digest(proof.inputVector)!==digest(grant.inputVector)||(proof.content as {grantId?:string}).grantId!==grant.id)throw new Error("Execution input boundary evidence is invalid")
 }
 
 export function inputBoundaryEvidence(grant:ActivationGrant):VersionRef[]{return grant.inputBoundary?[grant.inputBoundary.evidence]:[]}

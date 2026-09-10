@@ -5,6 +5,7 @@ import { FEATURES } from "../../task-cognition/src/model.ts"
 import type { VersionRef } from "../../task-causality/src/model.ts"
 import { observationInputVector } from "./completion.ts"
 import { canonical,digest } from "./value.ts"
+import { inputBoundaryEvidence } from "./input-boundary.ts"
 
 /** L5 is an execution protocol: separate read-only grants and a joint verdict. */
 export class AdversarialReview {
@@ -35,7 +36,7 @@ export class AdversarialReview {
           const entry=program.specialists!.find(entry=>entry.role.id===id)!,role=store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
           const prior=store.db.prepare("SELECT d.payload FROM activation_decisions d JOIN activation_grants g ON g.decision_id=d.id WHERE d.task_id=? AND d.role_id=? ORDER BY d.rowid DESC").all(grant.taskId,id)
           const signals=Object.fromEntries(FEATURES.map(feature=>[feature,null])) as Signals
-          const decision=this.runtime.policyReplay.recordActivation({taskId:grant.taskId,eventId:`adversarial:${grant.id}:${id}`,eligible:this.runtime.engine.store.executionAllowed(grant.taskId),role,policy:grant.policy,signals,now:event.timestamp,invocations:prior.length,lastInvocation:prior[0]?JSON.parse(String(prior[0].payload)).timestamp:undefined,requiredBy:proof},request.id,[proof])
+          const decision=this.runtime.policyReplay.recordActivation({taskId:grant.taskId,eventId:`adversarial:${grant.id}:${id}`,eligible:this.runtime.engine.store.executionAllowed(grant.taskId),role,policy:grant.policy,signals,now:event.timestamp,invocations:prior.length,lastInvocation:prior[0]?JSON.parse(String(prior[0].payload)).timestamp:undefined,requiredBy:proof},request.id,[proof,...inputBoundaryEvidence(grant)])
           decisions.push(decision.id)
           store.db.prepare("INSERT INTO specialist_demands VALUES(?,?,1,'deferred',NULL,NULL,?)").run(decision.id,grant.taskId,canonical({requestId:request.id,entry,proofRef:proof,obligationId:observation.id,signals,budget:"",kind:"adversarial",sourceGrant:grant.id,requiredBy:proof}))
         }

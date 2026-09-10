@@ -8,6 +8,7 @@ import type { RegisteredValidator } from "../../task-evidence/src/registry.ts"
 import { digest } from "./value.ts"
 import { observedReadsReusable } from "./file-observations.ts"
 import { currentInputVector } from "./completion.ts"
+import { inputBoundaryEvidence } from "./input-boundary.ts"
 
 type GrantInput=Omit<ActivationGrant,"id">
 type CachedContent={key:string;sourceGrant:string;obligationId:string;output:AgentOutput}
@@ -92,7 +93,7 @@ export class CognitiveResultCache {
         // immutable cause/tuple prevents duplicate or weaker validation paths.
         const content={grantId,output}
         const proof=evidence.put({id:`role-output:${grant.id}`,version:1,type:"agent",source:grant.worker!,producer:input.role.id,validatorVersion:"role-result/v1",timestamp:event.timestamp,content,contentHash:digest(content),inputVector:grant.inputVector,confidence:output.confidence,expiresAt:null})
-        evidence.createObligation({entityId:grant.taskId,tuple:[...grant.inputVector,{entityId:grant.id,port:"role-result",view:"structured-output",version:1,hash:digest(content)}],kind:"role-output",mandatory:true,validators:input.role.validators,reason:[proof]})
+        evidence.createObligation({entityId:grant.taskId,tuple:[...grant.inputVector,{entityId:grant.id,port:"role-result",view:"structured-output",version:1,hash:digest(content)}],kind:"role-output",mandatory:true,validators:input.role.validators,reason:[proof,...inputBoundaryEvidence(grant)]})
         return
       }
       if(event.type!=="ValidationSatisfied")return

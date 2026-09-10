@@ -67,10 +67,17 @@ test("요청 해석→실제 계획 validator→worker grant→파일 검증→�
       assert.ok(row)
       const outcome=JSON.parse(String(row.payload))
       assert.equal(outcome.runs.length,2)
+      assert.ok(outcome.runs.every((run:any)=>run.inputBoundary?.verdict==="unknown"))
+      assert.deepEqual(outcome.inputCoverage,{complete:false,unknownChannels:["random"]})
       assert.deepEqual(outcome.cost,{inputTokens:2,outputTokens:2,toolCalls:0,elapsedWorkMs:2,complete:true})
       assert.equal(outcome.sampleType,"synthetic")
       assert.equal(outcome.quality.usefulActivations,null)
       assert.equal(outcome.quality.missedFailures,null)
+      const planner=JSON.parse(String(measured.store.db.prepare("SELECT payload FROM activation_grants WHERE json_extract(payload,'$.executionMode')='cognition'").get()!.payload)) as ActivationGrant
+      const planObligation=JSON.parse(String(measured.store.db.prepare("SELECT payload FROM validation_obligations WHERE json_extract(payload,'$.kind')='request-plan'").get()!.payload))
+      assert.ok(planObligation.reason.some((ref:any)=>ref.id===planner.inputBoundary!.evidence.id&&ref.version===planner.inputBoundary!.evidence.version))
+      assert.deepEqual(planObligation.tuple.slice(0,planner.inputVector.length),planner.inputVector)
+      assert.ok(planObligation.tuple.some((input:any)=>input.port==="proposal"&&input.view==="request-plan"))
       for(let i=0;i<3;i++)measured.engine.atomic(()=>measured.control.outcomes.ingest())
       assert.equal(measured.store.db.prepare("SELECT count(*) n FROM outcome_labels").get()!.n,1)
     }finally{measured.close()}

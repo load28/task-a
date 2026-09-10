@@ -8,6 +8,7 @@ import { FEATURES } from "../../task-cognition/src/model.ts"
 import { activation } from "../../task-cognition/src/activation.ts"
 import { controlledContext } from "../../task-context/src/controlled.ts"
 import { digest } from "./value.ts"
+import { inputBoundaryEvidence } from "./input-boundary.ts"
 
 /** Optional specialists are reactions to measured evidence, never a fixed sequence. */
 export class RoleRouter {
@@ -49,7 +50,7 @@ export class RoleRouter {
         const role=store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
         const content={grantId:grant.id,output:payload.output}
         const reason=runtime.evidence.put({id:`role-output:${grant.id}`,version:1,type:"agent",source:grant.worker!,producer:role.id,validatorVersion:"role-result/v1",timestamp:event.timestamp,content,contentHash:digest(content),inputVector:grant.inputVector,confidence:payload.output.confidence,expiresAt:null})
-        const obligation=runtime.evidence.createObligation({entityId:grant.taskId,tuple:[...grant.inputVector,{entityId:grant.id,port:"role-result",view:"structured-output",version:1,hash:digest(content)}],kind:"role-output",mandatory:true,validators:role.validators,reason:[reason]})
+        const obligation=runtime.evidence.createObligation({entityId:grant.taskId,tuple:[...grant.inputVector,{entityId:grant.id,port:"role-result",view:"structured-output",version:1,hash:digest(content)}],kind:"role-output",mandatory:true,validators:role.validators,reason:[reason,...inputBoundaryEvidence(grant)]})
         store.db.prepare("UPDATE specialist_demands SET state='validating',obligation_id=? WHERE grant_id=?").run(obligation.id,grant.id)
         return
       }
