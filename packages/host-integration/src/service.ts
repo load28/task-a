@@ -16,6 +16,7 @@ import { KubernetesApi } from "../../task-instances/src/api.ts"
 import { GrantDispatcher,type GrantedExecutor } from "../../task-control/src/dispatch.ts"
 import { GrantedOpenCodeExecutor } from "../../opencode-harness/src/granted-executor.ts"
 import { GrantedPodExecutor } from "../../task-control/src/pod-dispatch.ts"
+import { migrateLegacyWorkers } from "./rolling-migration.ts"
 
 export function workspaceDatabase(config: HostConfig, workspace: string): string {
   if (config.workspaces[0]?.path === workspace) return config.database
@@ -401,6 +402,7 @@ export class HostService {
       if (!graph) { graph = createGraphRuntime(database); this.graphs.set(workspace, graph) }
       const k = this.config.kubernetes
       if(!this.store.active().some(r=>r.workspace===workspace&&r.phase==="cancelling")) {
+        if(this.harness.stopWorker)await migrateLegacyWorkers(graph.control,workspace,this.config.maxWorkers??3,sessionId=>this.harness.stopWorker!(workspace,sessionId))
         for(const row of graph.store.db.prepare("SELECT payload FROM control_requests WHERE state NOT IN ('completed','cancelled','failed')").all()) {
           const request=JSON.parse(String(row.payload)) as {program?:{id:string;version:number}}
           const program=request.program&&graph.store.control.get<import("../../task-control/src/requests.ts").ControllerProgram>("controller_programs",request.program.id,request.program.version)
