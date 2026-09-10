@@ -44,13 +44,17 @@ Pod gateway는 read-prepared journal을 보존한 뒤 controller에 읽은 해�
 
 `OutcomeRecorder`는 RequestCompleted에서 해당 요청 소유의 grant/role/policy/profile·승인된 사용량·출력 해시·완료 근거를 불변 outcome_labels에 저장한다. 알려진 input/output tokens·tool calls·elapsed work를 합산하고 누락 사용량이 있으면 complete=false로 남긴다. 병렬 작업 시간 합계를 wall-clock latency로 표시하지 않는다. 테스트 provider의 결과는 synthetic으로 구분한다. 유용한 활성화·필요한 활성화·놓친 실패는 아직 counterfactual/holdout 관측이 없으므로 null이다. 이 기록만으로 학습 정책을 활성화하거나 품질 향상을 증명하지 않는다.
 
-`PolicyReplay`는 실제 specialist router의 activate/skip/defer 판단 시 신호·역할/정책 버전·호출 횟수·cooldown·eligibility·task snapshot·당시 인과 그래프·근거를 불변 frame으로 보존한다. 후보 등록 시 outbox cutoff와 episode 단위 training/holdout 분할을 고정한다. 과거 frame은 historical, 이후 frame은 shadow로 재현하며 재시작·재전달에 동일한 판단과 분할을 유지한다. 현재 실행 의미가 정의된 대상은 activation의 additional-trigger 후보다. 기존 hard trigger·quota·cooldown·eligibility를 약화하지 않으며 다른 target을 지원한다고 가장하지 않는다. 관측하지 않은 relation/scope는 false가 아니라 unknown이다.
+`PolicyReplay`는 실제 specialist router의 activate/skip/defer 판단 시 신호·역할/정책 버전·호출 횟수·cooldown·eligibility·task snapshot·당시 인과 그래프·근거를 불변 frame으로 보존한다. 후보 등록 시 outbox cutoff와 episode 단위 training/holdout 분할을 고정한다. 과거 frame은 historical, 이후 frame은 shadow로 재현하며 재시작·재전달에 동일한 판단과 분할을 유지한다. activation의 additional-trigger 후보는 기존 hard trigger·quota·cooldown·eligibility를 약화하지 않는다. 관측하지 않은 relation/scope는 false가 아니라 unknown이다.
+
+`PolicyApplications`는 요청 생성 시 activation/context/decomposition/role/validation/integration/escalation/cache/precision/propagation/boundary/expectation/routine의 13개 head와 revision을 하나의 불변 bundle로 고정한다. 이후 head가 이동해도 진행 중 요청과 grant는 이 bundle을 유지한다. 구조 규칙은 현재 feature·relation·change scope에 대해 true/false/unknown으로 평가하며 true일 때만 target과 같은 discriminated effect를 합성한다. 자유 형식 invariant 문자열은 실행 설정이 될 수 없다. 각 평가와 effective program은 수정 불가능한 원장 및 `PolicyApplied` event에 남는다.
+
+각 효과는 기존 실행 경계에 직접 연결된다. activation은 등록 specialist 요구, context는 role selector와 네 budget, decomposition은 계획 task 상한, role은 planner/worker/replanner의 등록 role/profile, validation은 단계별 validator obligation, integration은 일곱 validator, escalation은 질문·입력 재계획·국소 복구 quota를 바꾼다. cache는 L0 재사용 허용, precision은 worker 최저 profile, propagation은 인과 임계값, boundary는 실제 verified crossing edge와 binding validator를 요구하는 완전 경계, expectation은 실행 전 prediction policy, routine은 허용된 불변 routine 집합을 제어한다. 등록되지 않은 role·validator·routine 참조는 실행 전에 거절한다. 합성된 프로그램 hash를 grant와 L1 preflight에 고정해 기본 프로그램과 정책 적용 결과를 혼동하지 않는다.
 
 shadow 보고서는 원래 decision의 실제 grant·context·profile·usage·요청 완료 근거를 연결한다. 후보가 추가 활성화를 예측하더라도 실제 허가·context·policy head를 변경하거나 도구를 실행하지 않는다. 후보 비용·유용성·실패 예방 효과는 null이며 promotionEligible=false다. 실제 specialist 실패→shadow 비교→원래 QA 허가→사용량 기록 연결을 검증했다. 이 비교는 후보가 실패를 예방했을 것이라는 증거가 아니다. 정책 평가 lifecycle은 proposal 버전별로 분리하고 shadow에서 고정한 평가 기준·episode partition을 중간에 바꾸지 못하게 했다. 기존 집계 평가 수치를 실제 paired outcome에서 산출하는 승격 경로는 아직 남아 있다.
 
 `PolicyRegression`은 controller가 현재 정책·그 정책에 고정된 rollback 버전·회귀 조건 근거·실제 등록 검증기·최대 sample 수를 지정한 경우 동작한다. 등록 이후 해당 정책을 사용한 accepted grant 결과만 검증 의무로 만든다. synthetic과 observed 표본은 설정에서 구분하며 observed 감시는 test provider 결과를 채택하지 않는다. 실제 검증기의 완전한 typed verdict가 regressed=true인 경우에만 이전 immutable policy로 head를 이동하고 event를 기록한다. 미등록 감시나 후보의 예상 판단만으로 rollback하지 않는다.
 
-정책 head의 변경 횟수는 DB trigger로 보존한다. 검증 대기 중 다른 정책으로 이동했거나 원래 버전으로 돌아온 경우에도 오래된 rollback을 거절한다. 진행 중 grant의 정책·context·상태는 변경하지 않는다. sample 한도 소진과 superseded 상태는 명시적인 종료 event로 기록한다. 명령 실패·실행 오류·비구조 응답·출력 잘림은 unknown이며 회귀 증명이 아니다. 실행 오류 event에는 실패한 job과 obligation을 남겨 대기 sample을 종료한다. 이 경로는 등록된 조건의 회귀에 대한 자동 head 복구이며 모든 13개 target의 실행 적용이나 통계적 품질 평가를 완성한 것은 아니다.
+정책 head의 변경 횟수는 DB trigger로 보존한다. 검증 대기 중 다른 정책으로 이동했거나 원래 버전으로 돌아온 경우에도 오래된 rollback을 거절한다. 진행 중 grant의 bundle·context·상태는 변경하지 않는다. sample 한도 소진과 superseded 상태는 명시적인 종료 event로 기록한다. 명령 실패·실행 오류·비구조 응답·출력 잘림은 unknown이며 회귀 증명이 아니다. 실행 오류 event에는 실패한 job과 obligation을 남겨 대기 sample을 종료한다.
 
 
 
@@ -90,7 +94,7 @@ native 검증은 macOS seatbelt 또는 Linux bubblewrap 안에서 실행한다. 
 
 ## 검증 근거
 
-- `npm run check`: TypeScript 검사와 전체 426개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 독립 region 병렬 계획과 합성 검증, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
+- `npm run check`: TypeScript 검사와 전체 429개 테스트 통과, 실패·skip 0. 초기 요청→실제 plan validator→허가된 worker→실제 파일 관찰→완료, QA 조건부 활성화, 국소 복구, 독립 region 병렬 계획과 합성 검증, 검증된 재계획→대체 실행, 방향 수정의 목표 보존을 포함한다. 모델 부분은 합성 executor를 사용한다.
 - `test/policy-regression.test.ts`: 실제 격리 검증기와 합성 grant 결과로 회귀 rollback, 회귀 미관측, malformed/명령 실패/실행 오류/출력 잘림의 unknown 처리, head 교체 및 원복 뒤 stale 차단, 재시작, synthetic 표본 제외의 10개 경로를 확인했다. 진행 중 허가 보존·sample 한도·중복 event 방지도 확인했다. 실제 모델 요청은 없다.
 - 추가 통합 검증: 실제 native 파일 관찰·채택 전 freshness 검사·이전 소비 task 무효화, 인증된 Pod 읽기 보고, program의 실제 7차원 통합 검증, finite search의 40개 전수 oracle 비교, 실제 후보 validator→replanner 경로 및 unknown 차단, host 완료 결과의 비용 귀속·멱등성을 확인했다. 새 Pod 읽기 보고는 로컬 HTTP/gateway 테스트이며 기존 kind 영수증을 새 이미지 검증으로 재사용하지 않는다.
 - `scripts/smoke-granted-validation.ts`: 실제 로컬 `kind-task-agent-local`에서 별도 namespace/PVC/Pod를 생성해 검증했다. 읽기 전용 결과·인증 제외·상속되는 네트워크 차단·같은 image ID·snapshot 유지·실제 semantic receipt를 확인했다. 봉인된 합성 모델 결과와 실제 Pod 검증 영수증을 합쳐 controller의 verified 전이까지 통과했다. 외부 모델 호출 0회이며 임시 namespace 정리도 확인했다. 결과는 `kubernetes-grant-validation.json`에 보존한다.
@@ -180,7 +184,7 @@ L1의 허가는 유효한 preflight receipt에 묶이며 모델 도구와 모델
 
 검증은 실제 파일이 이미 만족된 경우, 값 불일치·누락, receipt 수명 초과, worker 모델 예산 부족, 근거 철회, 사전 검증 후 파일 변경, 검증 대기 중 재시작을 포함한다. 이 구현은 임의의 쓰기 작업을 실행하는 solver나 모든 판단의 정적 해결을 제공하지 않는다. 등록 프로그램의 preflight 적용이 필요하며, 아직 적용하지 않은 운영 프로그램을 자동 변경하지 않는다.
 
-최신 검증: 타입 검사와 전체 426개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
+최신 검증: 타입 검사와 전체 429개 테스트 통과(`npm run check`). 원문 추적 검사에서 4,997행의 누락·중복과 미매핑 필드는 0이다. 같은 최신 소스를 별도 로컬 이미지로 빌드하고 호스트·이미지의 source hash 일치를 확인했다. 해당 이미지로 실제 kind에서 읽기 전용 PVC·자격 증명 제외·커널 네트워크 차단·semantic receipt·controller의 verified 채택을 다시 검증했고 임시 namespace 삭제를 확인했다. 이미지 ID와 source hash는 `kubernetes-grant-validation.json`에 기록했다. 실제 provider 호출은 추가하지 않았다.
 
 ## 검증 중 초안 대체와 native 계획 입력 복구
 
@@ -266,7 +270,7 @@ region 후보 검증기는 같은 `costUnit`으로 planning·reasoning·context�
 
 1. 파일 gateway 밖의 등록된 코드·도구·환경·외부 입력 관찰은 실행 벡터와 native/Pod 복구 identity에 연결했다. 등록 watcher의 경계 밖 변경 보고도 소유 task의 보수적 무효화와 재계획으로 연결했다. host의 1초 운영 제어 루프가 활성 요청에 등록된 유한 파일 관찰 예산으로 이전 gateway 입력을 자동 재측정한다. 실제 모델 제공자의 난수 채널은 `unknown`이다.
 2. finite 영역 선택과 keep/switch, 독립 region 병렬 계획, 모델·integration·expected failure 및 adapter가 제출한 운영 비용 영수증의 보정은 연결했다. dispatcher 중단 전이는 append-only 원장을 남기며 interruption과 중단 전 discarded work를 자동 측정한다. native 교체 세션 생성 시간과 Pod 교체 worker 준비 시간은 warm session loss로, 검증된 archive 복원·중지 PVC 복사·reuse archive 복원은 data migration으로 각 실행 adapter가 불변 영수증을 생산한다.
-3. worker·planner·replanner L5와 plan-node memory는 연결했다. 측정 연구로 승격된 활성 정책은 같은 validator·조건·권한·표본 유형과 고정 rollback을 쓰는 회귀 watch를 자동 등록한다. 모든 13개 정책 target의 target별 runtime adapter, 파일 밖 외부 입력 attribution과 observed paired holdout 운영 표본, 모든 판단 경로의 L1 우선 적용은 남아 있다. PolicyProposal은 supporting cases, counterexamples, structural abstraction, holdout criteria, rollback condition을 필수로 검증한다.
-4. 구버전 모든 원시 레코드와 task 계보의 무손실 격리 이관, macOS·Linux native 격리와 unsupported 환경의 Pod 강제는 연결했다. host는 grant 이전 worker를 한 번씩 중지하고 실제 abort·idle 확인 뒤에만 예약을 해제하며, 같은 task/spec을 새 activation grant 대기로 복귀시킨다. 이전 attempt와 이관 증거는 append-only로 보존한다. T01–T15를 각각 완전한 단일 trace로 묶는 수용 검사는 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
+3. worker·planner·replanner L5와 plan-node memory는 연결했다. 측정 연구로 승격된 활성 정책은 같은 validator·조건·권한·표본 유형과 고정 rollback을 쓰는 회귀 watch를 자동 등록한다. 모든 13개 정책 target은 요청별 고정 bundle과 target별 typed runtime adapter를 통해 실제 제어 경로에 연결했다. PolicyProposal은 supporting cases, counterexamples, structural abstraction, holdout criteria, rollback condition과 target 일치 effect를 필수로 검증한다. observed paired holdout의 성공 실행은 실제 provider 호출 예외에 포함된다.
+4. 구버전 모든 원시 레코드와 task 계보의 무손실 격리 이관, macOS·Linux native 격리와 unsupported 환경의 Pod 강제는 연결했다. host는 grant 이전 worker를 한 번씩 중지하고 실제 abort·idle 확인 뒤에만 예약을 해제하며, 같은 task/spec을 새 activation grant 대기로 복귀시킨다. 이전 attempt와 이관 증거는 append-only로 보존한다. T15의 세 전체 시나리오를 각각 단일 trace로 묶는 수용 검사는 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
 
 `implementation-status.json`의 endToEndVerified는 위 전체 수용 조건을 기준으로 유지한다. 단위 함수나 새 경로 일부의 테스트 통과만으로 원문 요구 전체를 완료 처리하지 않는다.

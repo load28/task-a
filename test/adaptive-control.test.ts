@@ -200,7 +200,7 @@ test("T11 정책은 shadow·검증 없이 활성화되지 않으며 회귀 후�
   const store=new TaskGraphStore()
   try {
     const learning=new PolicyLearning(store.control)
-    const proposal={id:"candidate",version:1,target:"activation" as const,observedPattern:"공유 계약 누락",rootCause:"consumer 검토 누락",proposedInvariant:"공유 contract 소비자 검증",proposedRule:{op:"relation" as const,value:"shares_contract" as const},expectedBenefit:1,regressionRisk:.1,evidence:[{id:"e",version:1}],supportingCases:[{id:"e",version:1}],counterexamples:[],structuralAbstraction:"shared contract relation",holdoutCriteria:["isomorphic graph"],rollbackCondition:"critical regression",rollback:{id:"old",version:1}}
+    const proposal={id:"candidate",version:1,target:"activation" as const,observedPattern:"공유 계약 누락",rootCause:"consumer 검토 누락",proposedInvariant:"공유 contract 소비자 검증",proposedRule:{op:"relation" as const,value:"shares_contract" as const},effect:{kind:"activation" as const,role:{id:"reviewer",version:1},mode:"require" as const},expectedBenefit:1,regressionRisk:.1,evidence:[{id:"e",version:1}],supportingCases:[{id:"e",version:1}],counterexamples:[],structuralAbstraction:"shared contract relation",holdoutCriteria:["isomorphic graph"],rollbackCondition:"critical regression",rollback:{id:"old",version:1}}
     assert.throws(()=>learning.propose({...proposal,structuralAbstraction:""},()=>true),/Incomplete structural/)
     learning.propose(proposal,()=>true)
     const evaluation={id:"eval",version:1,proposal:{id:proposal.id,version:1},stage:"shadow" as const,episodes:["train"],holdoutEpisodes:["held"],usefulGainLowerBound:1,qualityLowerBound:1,missedCriticalUpperBound:0,effectiveSamples:10,confidenceWidth:.1,criticalStrata:["security"],evidence:[{id:"e",version:1}],authorized:true}

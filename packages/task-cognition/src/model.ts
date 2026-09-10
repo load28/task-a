@@ -1,4 +1,5 @@
 import type { VersionRef, VersionVector } from "../../task-causality/src/model.ts"
+import type { PolicyBundle } from "../../task-policy/src/index.ts"
 export const FEATURES = ["risk","uncertainty","dependencyImpact","failure","integrationRisk","publicAPI","sharedDependency","architectureViolation","moduleBoundary","dependencyDirection","infrastructure","externalFact","unfamiliarTechnology","versionDependent","weakEvidence","irreversible","repeatedFailure"] as const
 export type Feature = typeof FEATURES[number]
 export type Signals = Record<Feature,number|null>
@@ -34,6 +35,9 @@ export interface ActivationGrant {
   reuse?:{record:VersionRef;requestedProfile:ReasoningProfile;accountLimit:number}
   preflight?:{id:string;requestedProfile:ReasoningProfile}
   replanLease?:VersionRef
+  policyProgram?:VersionRef&{hash:string}
+  policyBundle?:PolicyBundle
+  policyControls?:{cacheReuse?:"validated"|"disabled";propagationThreshold?:number;requireCompleteBoundary?:boolean;boundaryBindingValidator?:string;boundaryProofMaxAgeMs?:number;allowedRoutines?:VersionRef[]}
   inputBoundary?:{
     version:1;surface:"cognitive-gateway/v1";verdict:"complete"|"unknown"
     channels:Record<"filesystem"|"tools"|"environment"|"network"|"time"|"random"|"external","observed"|"pinned"|"denied"|"bounded"|"unknown">

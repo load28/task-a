@@ -14,7 +14,7 @@ function setup(r:ReturnType<typeof createGraphRuntime>) {
   const proof=r.control.evidence.put({id:"source",version:1,type:"user",source:"fixture",producer:"test",validatorVersion:"fixture/v1",timestamp:Date.now(),confidence:1,content,contentHash:digest(content),inputVector:[],expiresAt:null})
   const role:RoleVersion={id:"qa",version:1,name:"QA",purpose:"검증",capabilities:[],prompt:"검증",activationPolicy:{hardTriggers:["failure"],softSignals:{risk:1},threshold:.8,cooldownMs:100,maxInvocationsPerTask:2},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[proof]}
   r.control.roleLifecycle.installConfigured(role,"policy replay fixture")
-  const proposal:PolicyProposal={id:"candidate",version:1,target:"activation",observedPattern:"중간 위험 관찰",rootCause:"활성화 임계값",proposedInvariant:"필수 검증 보존",proposedRule:{op:"gte",feature:"risk",value:.3},expectedBenefit:1,regressionRisk:.1,evidence:[proof],supportingCases:[proof],counterexamples:[],structuralAbstraction:"risk band",holdoutCriteria:["independent episode"],rollbackCondition:"quality regression",rollback:{id:"baseline",version:1}}
+  const proposal:PolicyProposal={id:"candidate",version:1,target:"activation",observedPattern:"중간 위험 관찰",rootCause:"활성화 임계값",proposedInvariant:"필수 검증 보존",proposedRule:{op:"gte",feature:"risk",value:.3},effect:{kind:"activation",role:{id:"qa",version:1},mode:"require"},expectedBenefit:1,regressionRisk:.1,evidence:[proof],supportingCases:[proof],counterexamples:[],structuralAbstraction:"risk band",holdoutCriteria:["independent episode"],rollbackCondition:"quality regression",rollback:{id:"baseline",version:1}}
   new PolicyLearning(r.store.control).propose(proposal,ref=>r.control.evidence.valid(ref))
   const task=r.engine.createTask({title:"입력 보존",goal:"과거 판단 재현"})
   const input={taskId:task.id,eventId:"first",eligible:true,role,policy:{id:"baseline",version:1},signals:{...Object.fromEntries(FEATURES.map(feature=>[feature,0])),risk:.5} as Signals,now:Date.now(),invocations:0}
@@ -75,14 +75,14 @@ test("추가 활성화 후보는 필수 trigger·quota·cooldown·eligibility를
 test("미관측 relation은 false나 성공 label이 되지 않으며 지원하지 않는 target은 거절한다",()=>{
   const r=createGraphRuntime(":memory:")
   try {
-    const {input,proof,trial,proposal}=setup(r),learning=new PolicyLearning(r.store.control)
+    const {input,proof,trial,proposal,role}=setup(r),learning=new PolicyLearning(r.store.control)
     learning.propose({...proposal,id:"relation",proposedRule:{op:"relation",value:"shares_contract"}},ref=>r.control.evidence.valid(ref))
     r.control.policyReplay.register({...trial,proposal:{id:"relation",version:1}})
     r.control.policyReplay.recordActivation(input,"unknown-relation",[proof])
     const report=r.control.policyReplay.report(trial.id)[0]!
     assert.equal(report.ruleResult,null);assert.equal(report.predicted,"defer")
     assert.equal(report.preventedFailure,null);assert.equal(report.counterfactualOutcome,null)
-    learning.propose({...proposal,id:"context",target:"context"},ref=>r.control.evidence.valid(ref))
+    learning.propose({...proposal,id:"context",target:"context",effect:{kind:"context",slot:"all",budget:role.contextBudget,requiredContext:role.requiredContext}},ref=>r.control.evidence.valid(ref))
     assert.throws(()=>r.control.policyReplay.register({...trial,id:"unsupported",proposal:{id:"context",version:1}}),/activation proposal/)
   }finally{r.close()}
 })

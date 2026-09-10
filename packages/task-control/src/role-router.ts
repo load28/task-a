@@ -38,7 +38,7 @@ export class RoleRouter {
       if(!row)return
       const request=JSON.parse(String(row.payload)) as ControlledRequest
       if(["completed","cancelled"].includes(request.state)||!request.program)return
-      const program=store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version)
+      let program=runtime.requests.resolveProgram(request)
       if(!program?.specialists?.length)return
       if(event.type==="AgentCompleted") {
         const payload=event.payload as {grantId:string;output:AgentOutput}
@@ -75,10 +75,12 @@ export class RoleRouter {
       const evidence=runtime.evidence.require(proofRef)
       if(!["test","runtime"].includes(evidence.type)||event.type==="ValidatorFailed"&&(evidence.content as {passed?:boolean}).passed!==false||digest(evidence.inputVector)!==digest(obligation.tuple)||digest(obligation.tuple)!==digest(observationInputVector(runtime.engine,event.entityId))||!runtime.engine.signals.matches(event.entityId))return
       const signals=Object.fromEntries(FEATURES.map(feature=>[feature,feature==="failure"?1:null])) as Signals
-      for(const entry of program.specialists) {
+      program=runtime.requests.resolveProgram(request,signals,event.entityId)
+      for(const entry of program.specialists??[]) {
         const role=store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
         const previous=store.db.prepare("SELECT d.payload FROM activation_decisions d JOIN activation_grants g ON g.decision_id=d.id WHERE d.task_id=? AND d.role_id=? ORDER BY d.rowid DESC").all(event.entityId,role.id)
-        const decision=runtime.policyReplay.recordActivation({taskId:event.entityId,eventId:event.id,eligible:runtime.engine.store.executionAllowed(event.entityId),role,policy:program.policy,signals,now:event.timestamp,lastInvocation:previous[0]?JSON.parse(String(previous[0].payload)).timestamp:undefined,invocations:previous.length},request.id,[proofRef])
+        const policyRole=program.policyControls?.requiredSpecialistRoles?.includes(role.id)?{...role,activationPolicy:{...role.activationPolicy,threshold:0}}:role
+        const decision=runtime.policyReplay.recordActivation({taskId:event.entityId,eventId:event.id,eligible:runtime.engine.store.executionAllowed(event.entityId),role:policyRole,policy:program.policy,signals,now:event.timestamp,lastInvocation:previous[0]?JSON.parse(String(previous[0].payload)).timestamp:undefined,invocations:previous.length},request.id,[proofRef])
         if(decision.action==="skip"||decision.action==="defer"&&!decision.hard.length)continue
         const demand={requestId:request.id,entry,proofRef,obligationId:obligation.id,signals,budget:this.budget(program.account)}
         store.db.prepare("INSERT OR IGNORE INTO specialist_demands VALUES(?,?,?,'deferred',NULL,NULL,?)").run(decision.id,event.entityId,Number(decision.hard.length>0),JSON.stringify(demand))
@@ -89,7 +91,7 @@ export class RoleRouter {
             const snapshot=runtime.engine.signals.capture(event.entityId),inputVector=currentInputVector(runtime.engine,event.entityId)
             const context=controlledContext(runtime,event.entityId,role,program.policy,entry.profile,[{id:proofRef.id,version:proofRef.version,kind:"evidence",content:JSON.stringify({failedValidation:evidence,expectation:store.get("task_expectations",event.entityId,store.head("task_expectations",event.entityId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,event.entityId],evidence:[proofRef]}])
             store.put("context_manifests",context.id,1,context)
-            const grant=runtime.admission.issue({taskId:event.entityId,decisionId:decision.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:[obligation.id],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
+            const grant=runtime.admission.issue({taskId:event.entityId,decisionId:decision.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,policyBundle:request.policyBundle,policyProgram:{id:program.id,version:program.version,hash:digest(program)},policyControls:program.policyControls,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:[obligation.id],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
             store.db.prepare("UPDATE specialist_demands SET state='issued',grant_id=? WHERE decision_id=?").run(grant.id,decision.id)
           })
         }catch(error) {
@@ -108,7 +110,7 @@ export class RoleRouter {
     for(const row of store.db.prepare("SELECT * FROM specialist_demands WHERE state='deferred'").all())store.atomic(()=>{
       const demand=JSON.parse(String(row.payload)),request=runtime.requests.get(demand.requestId),taskId=String(row.task_id)
       if(!request?.program||["completed","cancelled"].includes(request.state))return
-      const program=store.get<ControllerProgram>("controller_programs",request.program.id,request.program.version)!
+      const program=runtime.requests.resolveProgram(request,demand.signals,taskId)
       let authorization=JSON.parse(String(store.db.prepare("SELECT payload FROM activation_decisions WHERE id=?").get(demand.authorizationDecisionId??String(row.decision_id))!.payload)) as ActivationDecision
       const entry=demand.entry as ControllerProgram["planner"],role=store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
       const previous=store.db.prepare("SELECT d.payload FROM activation_decisions d JOIN activation_grants g ON g.decision_id=d.id WHERE d.task_id=? AND d.role_id=? ORDER BY d.rowid DESC").all(taskId,role.id)
@@ -146,7 +148,7 @@ export class RoleRouter {
         const proof=runtime.evidence.require(demand.proofRef),snapshot=runtime.engine.signals.capture(taskId),inputVector=currentInputVector(runtime.engine,taskId)
         const context=controlledContext(runtime,taskId,role,program.policy,entry.profile,[{id:proof.id,version:proof.version,kind:"evidence",content:JSON.stringify({reviewKind:demand.kind??"measured-failure",reviewInput:proof,expectation:store.get("task_expectations",taskId,store.head("task_expectations",taskId))}),required:true,depth:0,relevance:1,level:0,dependencies:inputVector,path:[request.id,taskId],evidence:[demand.proofRef]}])
         store.put("context_manifests",context.id,1,context)
-        const grant=runtime.admission.issue({taskId,decisionId:authorization.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:obligation?[obligation.id]:[],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
+        const grant=runtime.admission.issue({taskId,decisionId:authorization.id,specHash:snapshot.specHash,inputVector,graphHash:runtime.graph.hash(),role:entry.role,policy:program.policy,policyBundle:request.policyBundle,policyProgram:{id:program.id,version:program.version,hash:digest(program)},policyControls:program.policyControls,profile:entry.profile,context:{id:context.id,version:1},contextHash:context.hash,readScopes:program.readScopes,writeScopes:[],allowedTools:role.allowedTools,obligations:obligation?[obligation.id]:[],expiresAt:Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs),generation:1,executionMode:"cognition"},program.account,program.tokenLimit)
         store.db.prepare("UPDATE specialist_demands SET state='issued',grant_id=? WHERE decision_id=?").run(grant.id,String(row.decision_id))
       })}catch(error){
         store.event({id:randomUUID(),type:"SpecialistAdmissionDeferred",entityId:taskId,correlationId:request.id,schemaVersion:1,timestamp:Date.now(),payload:{decisionId:String(row.decision_id),reason:error instanceof Error?error.message:"Specialist admission remains deferred"}})

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { PlanNode } from "#task-domain"
 import type { ControlRuntime } from "./runtime.ts"
 import type { VersionRef, TaskExpectation } from "../../task-causality/src/model.ts"
-import type { RoleVersion, ReasoningProfile, AgentOutput, Signals, ActivationGrant } from "../../task-cognition/src/model.ts"
+import type { RoleVersion, ReasoningProfile, AgentOutput, Signals, ActivationGrant, ContextBudget, ContextSelector } from "../../task-cognition/src/model.ts"
 import { FEATURES } from "../../task-cognition/src/model.ts"
 import { validateProfile } from "../../task-cognition/src/precision.ts"
 import { validatePredictionPolicy, type PredictionPolicy } from "../../task-causality/src/prediction.ts"
@@ -22,13 +22,20 @@ import { assertControlledPlanActivation } from "./plan-admission.ts"
 import type { RoutineProposalItem,RoutineUse } from "./routines.ts"
 import { inputBoundaryEvidence } from "./input-boundary.ts"
 import { RequestPermissions } from "./request-permissions.ts"
+import { PolicyApplications } from "./policy-applications.ts"
+import type { PolicyBundle } from "../../task-policy/src/index.ts"
 
 export interface PermissionTransition {id:string;kind:"capability"|"quota";permission:string;patterns:string[];program:VersionRef;authorization:VersionRef[]}
+export interface ProgramRole {role:VersionRef;profile:ReasoningProfile;contextPolicy?:{budget:ContextBudget;requiredContext:ContextSelector[]}}
+export interface PolicyControls {
+  requiredSpecialistRoles?:string[];cacheReuse?:"validated"|"disabled";minimumWorkerProfile?:ReasoningProfile
+  propagationThreshold?:number;requireCompleteBoundary?:boolean;boundaryBindingValidator?:string;boundaryProofMaxAgeMs?:number;allowedRoutines?:VersionRef[]
+}
 
 export interface ControllerProgram {
   id:string; version:number; authorization:VersionRef[]; policy:VersionRef
-  planner:{role:VersionRef;profile:ReasoningProfile}; worker:{role:VersionRef;profile:ReasoningProfile}
-  specialists?:Array<{role:VersionRef;profile:ReasoningProfile}>
+  planner:ProgramRole; worker:ProgramRole
+  specialists?:ProgramRole[]
   planValidators:string[]; observationValidators:string[]; predictionPolicy:PredictionPolicy
   readScopes:string[]; writeScopes:string[]; maxTasks:number; grantLifetimeMs:number
   account:string; tokenLimit:number
@@ -42,6 +49,7 @@ export interface ControllerProgram {
   deterministicPreflight?:{maxAgeMs:number}
   permissionTransitions?:PermissionTransition[]
   maxLocalRepairs?:number
+  policyControls?:PolicyControls
   replanner?:{role:VersionRef;profile:ReasoningProfile;validators:string[];maxAttempts:number;selection?:{validator:string;candidateLimit:number;evaluationBudget:number;costUnit:string;calibration?:{version:number;minimumSamples:number;maximumRelativeError:number;inputTokensPerUnit:number;outputTokensPerUnit:number;toolCallsPerUnit:number;elapsedMsPerUnit:number}}}
 }
 type Expected = Omit<TaskExpectation,"id"|"version"|"taskId"|"specHash"|"evidence">
@@ -55,6 +63,7 @@ export interface ControlledRequest {
   parentId?:string; amendments?:Array<{text:string;evidence:VersionRef}>
   inputReplan?:{cause:string;evidence:VersionRef;previousGrant:string;generation:number;pending:boolean;superseded:string[]}
   routineUses?:RoutineUse[]
+  policyBundle?:PolicyBundle
 }
 const allowedTools=new Set(["task_graph_cognitive_context","task_graph_cognitive_read","task_graph_cognitive_write"])
 const validScope=(scope:string)=>scope==="."||!!scope&&!scope.startsWith("/")&&!scope.includes("\\")&&!scope.includes("\0")&&!scope.split("/").some(p=>["",".","..",".git",".codex",".agents",".task-agent"].includes(p))
@@ -69,8 +78,10 @@ export class RequestController {
   readonly permissions:RequestPermissions
   readonly workerQuestions:WorkerQuestions
   readonly specialistQuestions:SpecialistQuestions
+  readonly policies:PolicyApplications
   constructor(runtime:ControlRuntime) {
     this.runtime=runtime
+    this.policies=new PolicyApplications(runtime)
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS control_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,task_id TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS control_request_session ON control_requests(session_id);
       CREATE INDEX IF NOT EXISTS control_request_task ON control_requests(task_id);
@@ -159,7 +170,7 @@ export class RequestController {
       this.store.db.prepare("INSERT INTO controlled_tasks VALUES(?,?)").run(task.id,input.id)
       const content={text:input.text,planOnly:input.planOnly}
       const evidence=this.runtime.evidence.put({id:`request:${input.id}`,version:1,type:"user",source:input.sessionId,producer:"request-controller",validatorVersion:"request-intake/v1",timestamp:Date.now(),content,contentHash:digest(content),confidence:1,inputVector:[],expiresAt:null})
-      const request:ControlledRequest={...input,taskId:task.id,evidence,state:"pending"}
+      const request:ControlledRequest={...input,taskId:task.id,evidence,state:"pending",policyBundle:this.policies.snapshot(input.id)}
       this.store.db.prepare("INSERT INTO control_requests VALUES(?,?,?,?,?)").run(input.id,input.sessionId,task.id,request.state,canonical(request))
       this.store.event({id:input.id,type:"RequestSubmitted",entityId:task.id,correlationId:input.id,schemaVersion:1,timestamp:Date.now(),payload:{requestId:input.id,evidence}})
       return request
@@ -243,14 +254,18 @@ export class RequestController {
       })
     }
   }
-  private program(request:ControlledRequest):ControllerProgram {
+  resolveProgram(request:ControlledRequest,signals?:Signals,entityId=request.taskId):ControllerProgram {
     const ref=request.program,program=ref&&this.store.get<ControllerProgram>("controller_programs",ref.id,ref.version)
     if(!program)throw new Error("등록된 제어 정책·역할·모델 상한·검증기 설정이 필요합니다.")
     program.authorization.forEach(ref=>this.runtime.evidence.require(ref))
-    return program
+    const bundle=request.policyBundle??this.policies.snapshot(request.id)
+    if(!request.policyBundle){request.policyBundle=bundle;this.save(request)}
+    const edges=this.runtime.graph.all().filter(edge=>edge.source.entityId===entityId||edge.target.entityId===entityId)
+    const relations=[...new Set(edges.map(edge=>edge.relation))],scopes=[...new Set(["implementation" as const,...edges.flatMap(edge=>edge.changeTypes)])]
+    return this.policies.apply(request.id,bundle,program,{entityId,features:signals??Object.fromEntries(FEATURES.map(feature=>[feature,null])) as Signals,relations,scopes}).program
   }
   private advance(request:ControlledRequest):void {
-    const program=this.program(request),engine=this.runtime.engine
+    const program=this.resolveProgram(request),engine=this.runtime.engine
     this.runtime.inputs.bind(request.taskId,program.observedInputs??[])
     if(!this.runtime.inputs.ensure(program.observedInputs??[]))return
     if(request.state==="pending"||request.state==="resuming") {
@@ -277,7 +292,7 @@ export class RequestController {
           request.state="executing";delete request.reason;this.save(request);return
         }
       }
-      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availablePermissionTransitions:(program.permissionTransitions??[]).map(({id,kind,permission,patterns,program})=>({id,kind,permission,patterns,program})),availableRoutines:this.runtime.routines.available(),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability or quota transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
+      request.plannerGrant=this.issue(request,program,request.taskId,"planner",{request:request.text,amendments:request.amendments??[],clarifications:request.clarifications??[],permissionChanges:request.permissionChanges??[],availablePermissionTransitions:(program.permissionTransitions??[]).map(({id,kind,permission,patterns,program})=>({id,kind,permission,patterns,program})),availableRoutines:this.runtime.routines.available(program.policyControls?.allowedRoutines),contract:"For missing user information, return unresolvedQuestions as {kind: user, question: string}, with requiresEscalation=false. A required registered capability or quota transition must return exactly {kind: permission, transitionId: string} with requiresEscalation=true. Never invent a transition. Return proposedTasks as {node: PlanNode, expectation: six typed expected dimensions}, or {routineUse:{routine,namespace,inputs,parentNodeId?}} from availableRoutines. Routine inputs must bind every entry node to existing proposed node IDs. Every acceptance criterion needs an explicit id and expectedBehavior[id]=true. Preserve the original objective and apply explicit user amendments."},request.inputReplan?.pending?`input-change:${request.inputReplan.cause}`:request.permissionChanges?.at(-1)?.reply==="once"?`permission:${request.permissionChanges.at(-1)!.permissionId}`:request.clarifications?.length?`answer:${request.clarifications.at(-1)!.questionId}`:undefined).id
       if(request.inputReplan)request.inputReplan.pending=false
       request.state="planning";delete request.reason;this.save(request);return
     }
@@ -301,7 +316,7 @@ export class RequestController {
         this.questions.ask(request,program,output)
         request.state="waiting";request.reason="계획에 필요한 사용자 답변을 기다리고 있습니다.";this.save(request);return
       }
-      const expanded=this.runtime.routines.expand(output.proposedTasks as RoutineProposalItem[],request.text,request.id),proposal=expanded.proposal
+      const expanded=this.runtime.routines.expand(output.proposedTasks as RoutineProposalItem[],request.text,request.id,program.policyControls?.allowedRoutines),proposal=expanded.proposal
       this.validateProposal(proposal,program)
       const plan=engine.createDraftPlan({title:request.text.slice(0,160),goal:request.text,requestText:request.text,summary:"Controller-validated structured proposal",nodes:proposal.map(item=>item.node)})
       request.proposal=proposal;request.routineUses=expanded.uses;request.planId=plan.planId
@@ -373,7 +388,9 @@ export class RequestController {
     const members=this.tasks(request.id).filter(id=>!this.runtime.engine.store.childTasks(id).length)
     if(!members.length)return
     const id=`integration:${request.planId}`
-    this.runtime.boundaries.register({id,version:this.store.head("planning_boundaries",id)+1,members,exits:[],invariants:["All registered integration dimensions must pass for the exact current observation tuple"],bindingsComplete:false,validators:program.integrationValidators,authorization:program.authorization})
+    const complete=program.policyControls?.requireCompleteBoundary===true,memberSet=new Set(members)
+    const exits=complete?this.runtime.graph.all().filter(edge=>memberSet.has(edge.source.entityId)!==memberSet.has(edge.target.entityId)).map(edge=>edge.id):[]
+    this.runtime.boundaries.register({id,version:this.store.head("planning_boundaries",id)+1,members,exits,invariants:["All registered integration dimensions must pass for the exact current observation tuple"],bindingsComplete:complete,validators:program.integrationValidators,authorization:program.authorization,...(complete?{bindingValidator:program.policyControls!.boundaryBindingValidator,proofMaxAgeMs:program.policyControls!.boundaryProofMaxAgeMs}:{})})
   }
   private finish(request:ControlledRequest):void {
     const content={requestId:request.id,planId:request.planId,tasks:this.tasks(request.id),planValidation:request.obligationId,planOnly:request.planOnly}
@@ -416,7 +433,9 @@ export class RequestController {
   }
   private issue(request:ControlledRequest,program:ControllerProgram,taskId:string,kind:"planner"|"worker",content:unknown,causeId?:string,override?:ControllerProgram["planner"],deadline=Infinity,preflightId?:string):ActivationGrant {
     const precision=kind==="worker"&&!override&&program.workerPrecision?selectWorkerPrecision(this.store,program,taskId):undefined
-    const entry=override??(precision?{...program.worker,profile:precision.profile}:program[kind]),role=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!
+    let entry=override??(precision?{...program.worker,profile:precision.profile}:program[kind])
+    if(kind==="worker"&&program.policyControls?.minimumWorkerProfile&&entry.profile.level<program.policyControls.minimumWorkerProfile.level)entry={...entry,profile:program.policyControls.minimumWorkerProfile}
+    const storedRole=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)!,role=entry.contextPolicy?{...storedRole,contextBudget:entry.contextPolicy.budget,requiredContext:entry.contextPolicy.requiredContext}:storedRole
     const snapshot=this.runtime.engine.signals.capture(taskId)
     this.runtime.drain()
     const vector=currentInputVector(this.runtime.engine,taskId)
@@ -426,7 +445,7 @@ export class RequestController {
     // signal is manufactured to cross an optional specialist threshold.
     const decision=this.runtime.admission.record({id:randomUUID(),eventId:causeId??`${request.id}:${taskId}:${kind}`,taskId,role:entry.role,policy:program.policy,signals:{...Object.fromEntries(FEATURES.map(feature=>[feature,null])),...(causeId&&kind==="worker"&&!causeId.startsWith("answer:")?{failure:1}:{})} as Signals,score:0,hard:[],action:"activate",reasons:[causeId?.startsWith("answer:")?"explicit user clarification under unchanged validated scope":override?"evidence-bound scoped planning":causeId?"measured leaf failure under unchanged validated goal":kind==="planner"?"explicit request interpretation":"validated request plan leaf"],timestamp:Date.now()})
     const generation=Number(this.store.db.prepare("SELECT coalesce(max(json_extract(payload,'$.generation')),0)+1 n FROM activation_grants WHERE task_id=?").get(taskId)!.n)
-    return this.runtime.admission.issue({taskId,decisionId:decision.id,specHash:snapshot.specHash,inputVector:vector,graphHash:this.runtime.graph.hash(),role:entry.role,policy:program.policy,context:{id:context.id,version:1},contextHash:context.hash,profile:entry.profile,...(preflightId?{preflight:{id:preflightId,requestedProfile:entry.profile}}:{}),writeScopes:kind==="worker"?(this.runtime.engine.requireTask(taskId).writeScopes??[]):[],readScopes:program.readScopes,allowedTools:role.allowedTools.filter(tool=>kind==="worker"||tool!=="task_graph_cognitive_write"),obligations:request.obligationId?[request.obligationId]:[],expiresAt:Math.min(deadline,Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs)),generation,executionMode:kind==="worker"?"task":"cognition"},program.account,program.tokenLimit)
+    return this.runtime.admission.issue({taskId,decisionId:decision.id,specHash:snapshot.specHash,inputVector:vector,graphHash:this.runtime.graph.hash(),role:entry.role,policy:program.policy,policyBundle:request.policyBundle,policyProgram:{id:program.id,version:program.version,hash:digest(program)},policyControls:program.policyControls,context:{id:context.id,version:1},contextHash:context.hash,profile:entry.profile,...(preflightId?{preflight:{id:preflightId,requestedProfile:entry.profile}}:{}),writeScopes:kind==="worker"?(this.runtime.engine.requireTask(taskId).writeScopes??[]):[],readScopes:program.readScopes,allowedTools:role.allowedTools.filter(tool=>kind==="worker"||tool!=="task_graph_cognitive_write"),obligations:request.obligationId?[request.obligationId]:[],expiresAt:Math.min(deadline,Date.now()+Math.min(program.grantLifetimeMs,entry.profile.timeoutMs)),generation,executionMode:kind==="worker"?"task":"cognition"},program.account,program.tokenLimit)
   }
   cancel(id:string):void {
     this.store.atomic(()=>{

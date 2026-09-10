@@ -3,17 +3,35 @@ import { EvidenceStore } from "../../task-evidence/src/index.ts"
 import { randomUUID } from "node:crypto"
 import { ControlStore } from "../../task-control/src/store.ts"
 import { canonical, digest, unit } from "../../task-control/src/value.ts"
-import { FEATURES, type Feature } from "../../task-cognition/src/model.ts"
+import { FEATURES, type ContextBudget, type ContextSelector, type Feature, type ReasoningProfile } from "../../task-cognition/src/model.ts"
 import { RELATIONS, CHANGE_SCOPES, type VersionRef } from "../../task-causality/src/model.ts"
+import type { PredictionPolicy } from "../../task-causality/src/prediction.ts"
+import { INTEGRATION_DIMENSIONS } from "../../task-evidence/src/integration.ts"
 
 export const POLICY_TARGETS=["activation","context","decomposition","role","validation","integration","escalation","cache","precision","propagation","boundary","expectation","routine"] as const
 export type PolicyTarget=typeof POLICY_TARGETS[number]
 export type StructuralRule = {op:"all"|"any";rules:StructuralRule[]} | {op:"gte"|"lte";feature:Feature;value:number} | {op:"relation";value:typeof RELATIONS[number]} | {op:"scope";value:typeof CHANGE_SCOPES[number]}
+export type PolicyEffect =
+  | {kind:"activation";role:VersionRef;mode:"require"}
+  | {kind:"context";slot:"planner"|"worker"|"all";budget:ContextBudget;requiredContext:ContextSelector[]}
+  | {kind:"decomposition";maxTasks:number}
+  | {kind:"role";slot:"planner"|"worker"|"replanner";role:VersionRef;profile:ReasoningProfile}
+  | {kind:"validation";phase:"plan"|"observation"|"replan";validators:string[]}
+  | {kind:"integration";validators:Record<typeof INTEGRATION_DIMENSIONS[number],string>}
+  | {kind:"escalation";maxClarifications:number;maxInputReplans:number;maxLocalRepairs:number}
+  | {kind:"cache";reuse:"validated"|"disabled"}
+  | {kind:"precision";minimumProfile:ReasoningProfile}
+  | {kind:"propagation";threshold:number}
+  | {kind:"boundary";requireComplete:boolean;bindingValidator?:string;proofMaxAgeMs?:number}
+  | {kind:"expectation";policy:PredictionPolicy}
+  | {kind:"routine";allow:VersionRef[]}
 export interface PolicyProposal {
   id:string;version:number;target:PolicyTarget;observedPattern:string;rootCause:string;proposedInvariant:string;proposedRule:StructuralRule
+  effect:PolicyEffect
   expectedBenefit:number;regressionRisk:number;evidence:VersionRef[];supportingCases:VersionRef[];counterexamples:VersionRef[]
   structuralAbstraction:string;holdoutCriteria:string[];rollbackCondition:string;rollback:VersionRef
 }
+export interface PolicyBundle {id:string;version:1;heads:Record<PolicyTarget,{policy:VersionRef|null;revision:number}>;hash:string}
 export interface Evaluation {
   id:string;version:number;proposal:VersionRef;stage:"shadow"|"validated"|"active";episodes:string[];holdoutEpisodes:string[]
   usefulGainLowerBound:number;qualityLowerBound:number;missedCriticalUpperBound:number;effectiveSamples:number;confidenceWidth:number
@@ -33,6 +51,24 @@ export function validateRule(rule:StructuralRule):void {
   } else if(rule.op==="scope") {
     if(keys!=="op,value"||!CHANGE_SCOPES.includes(rule.value))throw new Error("Unknown change scope")
   } else throw new Error("Case-specific or executable rules are forbidden")
+}
+function validator(value:string):boolean{return /^[a-z][a-z0-9-]*\/v[1-9][0-9]*$/.test(value)}
+export function validateEffect(target:PolicyTarget,effect:PolicyEffect):void {
+  if(effect.kind!==target)throw new Error("Policy effect must match its target")
+  if(effect.kind==="activation") {if(!effect.role.id||effect.role.version<1||effect.mode!=="require")throw new Error("Invalid activation effect");return}
+  if(effect.kind==="context") {for(const value of Object.values(effect.budget))if(!Number.isSafeInteger(value)||value<0)throw new Error("Invalid context effect");if(effect.requiredContext.some(item=>!item.relation||!item.ports.length||item.depth<0))throw new Error("Invalid context effect");return}
+  if(effect.kind==="decomposition") {if(!Number.isSafeInteger(effect.maxTasks)||effect.maxTasks<1)throw new Error("Invalid decomposition effect");return}
+  if(effect.kind==="role") {if(!effect.role.id||effect.role.version<1||effect.profile.level<2)throw new Error("Invalid role effect");return}
+  if(effect.kind==="validation") {if(!effect.validators.length||effect.validators.some(value=>!validator(value)))throw new Error("Invalid validation effect");return}
+  if(effect.kind==="integration") {if(INTEGRATION_DIMENSIONS.some(dimension=>!validator(effect.validators[dimension])))throw new Error("Invalid integration effect");return}
+  if(effect.kind==="escalation") {if([effect.maxClarifications,effect.maxInputReplans,effect.maxLocalRepairs].some(value=>!Number.isSafeInteger(value)||value<0))throw new Error("Invalid escalation effect");return}
+  if(effect.kind==="cache")return
+  if(effect.kind==="precision") {if(effect.minimumProfile.level<2)throw new Error("Invalid precision effect");return}
+  if(effect.kind==="propagation") {unit(effect.threshold,"Propagation threshold");return}
+  if(effect.kind==="boundary") {if(effect.requireComplete&&(!effect.bindingValidator||!validator(effect.bindingValidator)||!Number.isSafeInteger(effect.proofMaxAgeMs)||effect.proofMaxAgeMs!<1))throw new Error("Complete boundary effect requires a validator and finite proof lifetime");return}
+  if(effect.kind==="expectation") {for(const value of [effect.policy.enter,effect.policy.exit,...Object.values(effect.policy.weights)])unit(value,"Prediction policy value");return}
+  if(effect.kind==="routine") {if(!effect.allow.length||effect.allow.some(ref=>!ref.id||ref.version<1))throw new Error("Invalid routine effect");return}
+  const never:never=effect;throw new Error(`Unsupported policy effect ${String(never)}`)
 }
 export function evaluateRule(rule:StructuralRule,state:{features:Partial<Record<Feature,number|null>>;relations:string[];scopes:string[]}):boolean|null {
   validateRule(rule)
@@ -55,9 +91,13 @@ export class PolicyLearning {
   constructor(store:ControlStore){this.store=store}
   propose(proposal:PolicyProposal,validEvidence:(r:VersionRef)=>boolean):void {
     if(!POLICY_TARGETS.includes(proposal.target)||![proposal.observedPattern,proposal.rootCause,proposal.proposedInvariant,proposal.structuralAbstraction,proposal.rollbackCondition].every(s=>s.trim())||!proposal.evidence.length||!proposal.supportingCases.length||!proposal.holdoutCriteria.length||proposal.holdoutCriteria.some(value=>!value.trim())||![...proposal.evidence,...proposal.supportingCases,...proposal.counterexamples].every(validEvidence))throw new Error("Incomplete structural policy proposal")
-    validateRule(proposal.proposedRule);unit(proposal.regressionRisk,"Regression risk")
+    validateRule(proposal.proposedRule);validateEffect(proposal.target,proposal.effect);unit(proposal.regressionRisk,"Regression risk")
     if(!Number.isFinite(proposal.expectedBenefit))throw new Error("Invalid expected benefit")
-    this.store.put("policy_proposals",proposal.id,proposal.version,proposal)
+    this.store.atomic(()=>{
+      const existing=this.store.get<PolicyProposal>("policy_proposals",proposal.id,proposal.version)
+      this.store.put("policy_proposals",proposal.id,proposal.version,proposal)
+      if(!existing)this.store.event({id:`policy-proposed:${proposal.id}:${proposal.version}`,type:"PolicyProposed",entityId:proposal.target,correlationId:proposal.id,schemaVersion:1,timestamp:Date.now(),payload:{proposal:{id:proposal.id,version:proposal.version},supportingCases:proposal.supportingCases,counterexamples:proposal.counterexamples,evidence:proposal.evidence}})
+    })
   }
   evaluate(evaluation:Evaluation,gate:EvaluationGate,validEvidence:(r:VersionRef)=>boolean):void {
     this.store.atomic(()=>{

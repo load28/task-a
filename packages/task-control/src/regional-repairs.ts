@@ -89,7 +89,7 @@ export class RegionalRepairs {
     const sources=eventSources(events)
     const scopes=["implementation","behavior","contract","dependency","assumption","subgoal","goal"] as const
     const provenUniverse=runtime.boundaries.containment(sources,[...scopes],links.map(link=>link.taskId))
-    const closure=propagate({sources,scopes:[...scopes],graphComplete:false,universe:provenUniverse??links.map(link=>link.taskId),outgoing:id=>runtime.graph.outgoing(id),threshold:()=>1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:events.some(event=>(event.payload.error?.criticalViolations.length??0)>0)})
+    const closure=propagate({sources,scopes:[...scopes],graphComplete:false,universe:provenUniverse??links.map(link=>link.taskId),outgoing:id=>runtime.graph.outgoing(id),threshold:()=>program.policyControls?.propagationThreshold??1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:events.some(event=>(event.payload.error?.criticalViolations.length??0)>0)})
     let boundary=links.filter(link=>closure.affected.includes(link.taskId)).map(link=>link.nodeId),changed=links.filter(link=>sources.includes(link.taskId)).map(link=>link.nodeId)
     const evidence=[...new Map(events.flatMap(event=>event.payload.evidence).map(ref=>[canonical(ref),ref])).values()]
     const cause=digest({requestId:request.id,events:events.map(event=>event.id),revision:plan.currentRevision})
@@ -120,7 +120,7 @@ export class RegionalRepairs {
     const sharedRelations=new Set(["shares_contract","shares_resource","integrates_with","conflicts_with"]),allTaskIds=links.map(link=>link.taskId),individual=events.map(event=>{
       const eventSource=eventSources([event]),universe=eventSource.length?runtime.boundaries.containment(eventSource,[...scopes],allTaskIds):undefined
       if(!universe)return
-      const affected=propagate({sources:eventSource,scopes:[...scopes],graphComplete:false,universe,outgoing:id=>runtime.graph.outgoing(id),threshold:()=>1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:(event.payload.error?.criticalViolations.length??0)>0}).affected
+      const affected=propagate({sources:eventSource,scopes:[...scopes],graphComplete:false,universe,outgoing:id=>runtime.graph.outgoing(id),threshold:()=>program.policyControls?.propagationThreshold??1,preserved:(edge,scope)=>runtime.boundaries.preserves(edge,scope),sourceCritical:(event.payload.error?.criticalViolations.length??0)>0}).affected
       const resources=runtime.graph.all().filter(edge=>sharedRelations.has(edge.relation)&&(affected.includes(edge.source.entityId)||affected.includes(edge.target.entityId))).map(edge=>`${edge.relation}:${edge.id}`)
       const physicalLocks=db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_reservations'").get()?db.prepare("SELECT task_id FROM task_reservations WHERE task_id IN (SELECT value FROM json_each(?))").all(canonical(affected)).map(row=>String(row.task_id)):[]
       return {id:event.id,nodes:affected,boundaries:[digest(universe)],resources,writeScopes:[...new Set(affected.flatMap(id=>engine.store.findTask(id)?.writeScopes??["."]))],physicalLocks}

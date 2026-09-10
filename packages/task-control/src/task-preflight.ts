@@ -15,15 +15,15 @@ import { selectWorkerPrecision } from "./worker-precision.ts"
 import { currentInputVector,attemptInputVector } from "./completion.ts"
 
 type Input=Omit<ActivationGrant,"id">
-type Preflight={taskId:string;program:VersionRef;expectation:TaskExpectation;specHash:string;inputVector:ActivationGrant["inputVector"];obligationId:string}
+type Preflight={taskId:string;program:VersionRef;programHash:string;expectation:TaskExpectation;specHash:string;inputVector:ActivationGrant["inputVector"];obligationId:string}
 const result=(taskId:string,evidence:VersionRef[]):AgentOutput=>({taskId,findings:["Registered deterministic observations match every pinned expected dimension"],decisions:[],risks:[],unresolvedQuestions:[],evidence,proposedTasks:[],confidence:1,requiresEscalation:false})
 export function preflightResult(store:ControlStore,id:string,input?:Input):{evidence:VersionRef[];elapsedMs:number}|undefined {
   if(!store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_preflights'").get())return
   const row=store.db.prepare("SELECT payload FROM task_preflights WHERE id=?").get(id)
   if(!row)return
   const value=JSON.parse(String(row.payload)) as Preflight,evidence=new EvidenceStore(store)
-  const program=store.get<ControllerProgram>("controller_programs",value.program.id,value.program.version)
-  if(!program?.deterministicPreflight||program.authorization.some(ref=>!evidence.valid(ref)))return
+  const effectiveRow=store.db.prepare("SELECT payload FROM effective_policy_programs WHERE hash=?").get(value.programHash),program=effectiveRow?JSON.parse(String(effectiveRow.payload)) as ControllerProgram:store.get<ControllerProgram>("controller_programs",value.program.id,value.program.version)
+  if(!program?.deterministicPreflight||program.id!==value.program.id||program.version!==value.program.version||digest(program)!==value.programHash||program.authorization.some(ref=>!evidence.valid(ref)))return
   if(input&&(input.executionMode!=="task"||input.taskId!==value.taskId||input.specHash!==value.specHash||digest(input.inputVector)!==digest(value.inputVector)||digest(input.role)!==digest(program.worker.role)||digest(input.policy)!==digest(program.policy)||digest(input.profile)!==digest(program.worker.profile)))return
   if(store.head("task_expectations",value.taskId)!==value.expectation.version)return
   const obligation=evidence.obligation(value.obligationId)
@@ -62,11 +62,12 @@ export class TaskPreflight {
   private checkCurrent(taskId:string,program:ControllerProgram):{state:"pending"|"unresolved"}|{state:"solved";id:string} {
     if(!program.deterministicPreflight)return {state:"unresolved"}
     const {engine,store,evidence}=this.runtime,snapshot=engine.signals.capture(taskId)
-    if(digest(store.get("controller_programs",program.id,program.version))!==digest(program))throw new Error("Preflight policy is not the registered program")
+    const effective=store.db.prepare("SELECT payload FROM effective_policy_programs WHERE hash=?").get(digest(program))
+    if(!effective&&digest(store.get("controller_programs",program.id,program.version))!==digest(program))throw new Error("Preflight policy is not a pinned effective program")
     if(program.workerPrecision&&digest(selectWorkerPrecision(store,program,taskId).profile)!==digest(program.worker.profile))return {state:"unresolved"}
     const expectation=store.get<TaskExpectation>("task_expectations",taskId,store.head("task_expectations",taskId))!
     const inputVector=currentInputVector(engine,taskId)
-    const identity={taskId,program:{id:program.id,version:program.version},expectation,specHash:snapshot.specHash,inputVector},id=digest(identity)
+    const identity={taskId,program:{id:program.id,version:program.version},programHash:digest(program),expectation,specHash:snapshot.specHash,inputVector},id=digest(identity)
     if(!store.db.prepare("SELECT 1 FROM task_preflights WHERE id=?").get(id)) {
       const proof=evidence.put({id:`task-preflight:${id}`,version:1,type:"runtime",source:"registered deterministic preflight",producer:"task-preflight",validatorVersion:"task-preflight/v1",timestamp:Date.now(),content:identity,contentHash:digest(identity),inputVector,confidence:1,expiresAt:null})
       const obligation=evidence.createObligation({entityId:taskId,tuple:[...inputVector,{entityId:taskId,port:"preflight",view:"expectation",version:expectation.version,hash:digest(expectation)}],kind:"task-preflight",mandatory:false,validators:program.observationValidators,reason:[proof,...program.authorization,...expectation.evidence]})

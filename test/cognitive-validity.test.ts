@@ -25,7 +25,7 @@ for(const change of ["retraction","expiration","rollback"] as const)test(`실제
       assert.equal(r.control.evidence.valid(proof),false)
     }else if(change==="expiration")r.engine.atomic(()=>r.control.evidence.expire())
     else {
-      const policy:PolicyProposal={id:"policy",version:1,target:"activation",observedPattern:"pattern",rootCause:"cause",proposedInvariant:"invariant",proposedRule:{op:"gte",feature:"risk",value:.5},expectedBenefit:1,regressionRisk:0,evidence:[auth],supportingCases:[auth],counterexamples:[],structuralAbstraction:"risk relation",holdoutCriteria:["independent episode"],rollbackCondition:"quality regression",rollback:{id:"policy",version:1}}
+      const policy:PolicyProposal={id:"policy",version:1,target:"activation",observedPattern:"pattern",rootCause:"cause",proposedInvariant:"invariant",proposedRule:{op:"gte",feature:"risk",value:.5},effect:{kind:"activation",role:{id:"role",version:1},mode:"require"},expectedBenefit:1,regressionRisk:0,evidence:[auth],supportingCases:[auth],counterexamples:[],structuralAbstraction:"risk relation",holdoutCriteria:["independent episode"],rollbackCondition:"quality regression",rollback:{id:"policy",version:1}}
       r.store.control.put("policy_versions",policy.id,1,policy)
       r.store.control.put("policy_versions",policy.id,2,{...policy,version:2})
       r.store.db.prepare("INSERT INTO policy_heads VALUES('activation','policy',2)").run()
