@@ -59,6 +59,7 @@ for(const mode of ["measured","restart","malformed","failed","truncated","unreso
     await r.control.validators.run(dir,{maxJobs:4,maxDurationMs:10000})
     let report=r.control.policyMeasurements.report(study)
     assert.equal(report.complete,["measured","restart","retracted"].includes(mode))
+    assert.deepEqual(report.inputCoverage,{complete:false,unknownChannels:["environment","random"]})
     assert.equal(report.promotionEligible,false,"Synthetic samples never authorize observed policy promotion")
     assert.throws(()=>r.control.policyMeasurements.evaluate({id:study.id,version:1},"validated"),/promotion gates/)
     if(report.complete) {

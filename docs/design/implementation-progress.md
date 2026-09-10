@@ -228,6 +228,8 @@ Pod 생성 전에도 grant 벡터와 현재 관찰을 비교한다. 불변 `Inst
 
 입력 경계 증거는 계획 proposal 의무, 역할 결과 의무, L5 specialist 활성화 판단에 원인 근거로 전파한다. 계획 검증 tuple은 planner의 전체 입력 벡터와 proposal을 함께 고정한다. 요청 outcome은 각 실행의 경계 계약과 `inputCoverage`를 기록하므로 이후 정책 측정이 `unknown` 채널을 완전한 관찰 표본으로 취급할 수 없다. grant 만료 뒤 결과를 검증할 수 있도록 경계 증거는 역사 기록으로 유지하되, 실행 허가는 grant 만료를 계속 적용하고 증거 철회는 후속 검증을 차단한다.
 
+paired 정책 측정도 baseline과 candidate의 경계 증거를 독립 측정 의무에 포함한다. 보고서는 모든 고정 실행의 경계 계약을 다시 검증해 `inputCoverage`를 계산한다. legacy 계약, 철회·위변조된 경계 증거, 하나 이상의 `unknown` 채널이 있으면 측정값과 신뢰구간은 관찰 결과로 보존하되 정책 승격에는 사용할 수 없다.
+
 ## 검증된 경계 보존과 keep/switch 판단
 
 완전 경계는 구성 task, 모든 실제 교차 causal edge, invariant, 전용 binding 검증기와 증거 수명을 불변 버전에 고정한다. 교차 edge 목록이 현재 그래프와 정확히 일치하고 모든 edge의 completeness가 verified인 경우만 등록한다. 현재 attempt의 의미 관찰에 대해 binding 검증과 behavior/interface/data/temporal/error propagation/resource contention/semantic 일곱 검증을 실제 프로세스로 모두 통과해야 scope별 `BoundaryProof`를 만든다. proof는 현재 그래프 hash·관찰 tuple·모든 출구·검증 receipt와 권한에 묶인다.

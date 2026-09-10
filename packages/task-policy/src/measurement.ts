@@ -7,6 +7,7 @@ import type { ValidationReceipt } from "../../task-evidence/src/validators.ts"
 import type { ActivationGrant,AgentOutput } from "../../task-cognition/src/model.ts"
 import type { VersionRef } from "../../task-causality/src/model.ts"
 import { PolicyLearning,type Evaluation,type EvaluationGate,type PolicyProposal } from "./index.ts"
+import { assertExecutionInputBoundary,inputBoundaryEvidence } from "../../task-control/src/input-boundary.ts"
 
 export interface PolicyPair {episode:string;partition:"training"|"holdout";stratum:string;baseline:string;candidate:string}
 export interface PolicyStudy {
@@ -52,6 +53,18 @@ function grant(store:ControlStore,id:string):ActivationGrant {
 function accepted(store:ControlStore,id:string):Run|undefined {
   const row=store.db.prepare("SELECT r.payload FROM agent_runs r JOIN activation_grants g ON g.id=r.grant_id WHERE g.id=? AND g.state='completed' AND r.state='completed'").get(id)
   return row?JSON.parse(String(row.payload)):undefined
+}
+function studyInputCoverage(store:ControlStore,study:PolicyStudy) {
+  const unknown=new Set<string>()
+  for(const id of new Set(study.pairs.flatMap(pair=>[pair.baseline,pair.candidate]))) {
+    const execution=grant(store,id)
+    if(!execution.inputBoundary) {unknown.add("legacy-boundary");continue}
+    try {assertExecutionInputBoundary(store,execution)}catch {unknown.add("invalid-boundary-evidence");continue}
+    for(const [channel,state] of Object.entries(execution.inputBoundary.channels))if(state==="unknown")unknown.add(channel)
+    if(execution.inputBoundary.verdict!=="complete"&&!Object.values(execution.inputBoundary.channels).includes("unknown"))unknown.add("boundary-verdict")
+  }
+  const unknownChannels=[...unknown].sort()
+  return {complete:unknownChannels.length===0,unknownChannels}
 }
 function measured(store:ControlStore,study:PolicyStudy,pair:PolicyPair):{value:PairedValue;evidence:VersionRef[]}|undefined {
   const evidence=new EvidenceStore(store)
@@ -106,8 +119,9 @@ export function policyStudyReport(store:ControlStore,ref:VersionRef) {
   const held=samples.filter(sample=>sample.pair.partition==="holdout")
   const complete=held.length>0&&held.every(sample=>!!sample.measurement)
   const bounds=complete?pairedBounds(held.map(sample=>sample.measurement!.value),study.confidence,study.gate.criticalStrata):null
+  const inputCoverage=studyInputCoverage(store,study)
   const passes=(bound:NonNullable<typeof bounds>["overall"]|null)=>!!bound&&bound.effectiveSamples>=study.gate.minimumSamples&&bound.confidenceWidth<=study.gate.maxConfidenceWidth&&bound.usefulGainLowerBound>0&&bound.qualityLowerBound>=study.gate.qualityFloor&&bound.missedCriticalUpperBound<=study.gate.maxMissedCritical
-  return {study,samples,bounds,complete,evidence:[...sources,...samples.flatMap(sample=>sample.measurement?.evidence??[])],promotionEligible:study.sampleType==="observed"&&!!bounds&&passes(bounds.overall)&&Object.values(bounds.strata).every(passes)}
+  return {study,samples,bounds,complete,inputCoverage,evidence:[...sources,...samples.flatMap(sample=>sample.measurement?.evidence??[])],promotionEligible:study.sampleType==="observed"&&inputCoverage.complete&&!!bounds&&passes(bounds.overall)&&Object.values(bounds.strata).every(passes)}
 }
 
 /** Enrollment is fixed before either arm completes. No executor is called here;
@@ -178,7 +192,7 @@ export class PolicyMeasurements {
         const content={study:{id:study.id,version:1},episode:pair.episode,condition:evidence.require(study.condition),baseline:{grant:grant(store,pair.baseline),result:a},candidate:{grant:grant(store,pair.candidate),result:b},contract:"Return {baseline:{contribution:number,quality:number,criticalMiss:boolean,reason:string},candidate:{contribution:number,quality:number,criticalMiss:boolean,reason:string}}. Scores must be factual [0,1] measurements under the registered attribution condition. Required assurance may contribute without new findings. Missing causal evidence is unknown: fail the measurement rather than invent usefulness or missed failures."}
         const tuple=[{entityId:study.id,port:"paired-results",view:pair.episode,version:1,hash:digest(content)}]
         const proof=evidence.put({id:`policy-pair:${study.id}:${pair.episode}`,version:1,type:"runtime",source:"paired accepted results",producer:"policy-measurements",validatorVersion:"paired-input/v1",timestamp:event.timestamp,content,contentHash:digest(content),inputVector:tuple,confidence:1,expiresAt:null})
-        const obligation=evidence.createObligation({entityId:study.id,tuple,kind:"policy-measurement",mandatory:false,validators:[study.validator],reason:[...study.authorization,study.condition,study.samplingDesign,proof]})
+        const obligation=evidence.createObligation({entityId:study.id,tuple,kind:"policy-measurement",mandatory:false,validators:[study.validator],reason:[...study.authorization,study.condition,study.samplingDesign,proof,...inputBoundaryEvidence(content.baseline.grant),...inputBoundaryEvidence(content.candidate.grant)]})
         store.db.prepare("UPDATE policy_measurement_pairs SET obligation_id=? WHERE study_id=? AND episode=?").run(obligation.id,study.id,pair.episode)
       }
     },1000)
