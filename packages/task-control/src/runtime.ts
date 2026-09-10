@@ -22,6 +22,7 @@ import { BoundaryValidation } from "./boundary-validation.ts"
 import { ObservedInputs } from "./observed-inputs.ts"
 import { FileObservations } from "./file-observations.ts"
 import { RoleRouter } from "./role-router.ts"
+import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 import { digest } from "./value.ts"
 import type { SystemEvent } from "./store.ts"
 import { randomUUID } from "node:crypto"
@@ -36,6 +37,7 @@ export class ControlRuntime {
   readonly cognitiveCache:CognitiveResultCache
   readonly preflight:TaskPreflight
   readonly admission:Admission
+  readonly roleLifecycle:RoleRegistry
   readonly assumptions:AssumptionLedger
   readonly decisions:DecisionLedger
   readonly validators:ValidatorRegistry
@@ -56,7 +58,8 @@ export class ControlRuntime {
     this.graph=new CausalGraph(engine.store.control)
     this.evidence=new EvidenceStore(engine.store.control)
     this.memory=new CognitiveMemory(engine.store.control)
-    this.admission=new Admission(engine.store.control)
+    this.roleLifecycle=new RoleRegistry(engine.store.control)
+    this.admission=new Admission(engine.store.control,this.roleLifecycle)
     this.cognitiveCache=new CognitiveResultCache(this)
     this.preflight=new TaskPreflight(this)
     this.validators=new ValidatorRegistry(engine.store.control)

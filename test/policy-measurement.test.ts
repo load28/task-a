@@ -19,7 +19,7 @@ function setup(r:ReturnType<typeof createGraphRuntime>,command?:string) {
   new PolicyLearning(r.store.control).propose(proposal,ref=>r.control.evidence.valid(ref))
   r.control.validators.register({id:"measurement",version:1,command:[process.execPath,"-e",command??`let s='';for await(const c of process.stdin)s+=c;const input=JSON.parse(s);const pair=input.evidence.find(e=>e.producer==='policy-measurements').content;const score=arm=>({contribution:1,quality:Number(arm.result.output.decisions.includes('expected')),criticalMiss:false,reason:'Required assurance measured against the fixture contract'});console.log(JSON.stringify({baseline:score(pair.baseline),candidate:score(pair.candidate)}));`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[authorization]})
   const role:RoleVersion={id:"reviewer",version:1,name:"reviewer",purpose:"review",capabilities:[],prompt:"review",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:3},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[authorization]}
-  r.store.control.put("role_versions",role.id,1,role)
+  r.control.roleLifecycle.installConfigured(role,"policy measurement fixture")
   const grants:ActivationGrant[]=[]
   const pairs=(["training","holdout"] as const).map(partition=>{
     const task=r.engine.createTask({title:"독립 에피소드",goal:"independent test episode"})

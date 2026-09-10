@@ -18,8 +18,8 @@ import { validatorPod } from "../packages/task-control/src/pod-validation.ts"
 
 function fixture(taskMode=false) {
   const r=createGraphRuntime(":memory:"),task=r.engine.createTask({title:"Pod",goal:"Pod",writeScopes:["output.txt"]}),policy={id:"fixture",version:1}
-  const role:RoleVersion={id:"pod",version:1,name:"Pod",purpose:"Test adapter",capabilities:[],prompt:"Return structured output",activationPolicy:{hardTriggers:[],softSignals:{},threshold:1,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:30000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:["task_graph_cognitive_context","task_graph_cognitive_read","task_graph_cognitive_write"],lifecycle:"temporary",evidence:[]}
-  r.store.control.put("role_versions",role.id,1,role)
+  const role:RoleVersion={id:"pod",version:1,name:"Pod",purpose:"Test adapter",capabilities:[],prompt:"Return structured output",activationPolicy:{hardTriggers:[],softSignals:{},threshold:1,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:30000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:["task_graph_cognitive_context","task_graph_cognitive_read","task_graph_cognitive_write"],lifecycle:"persistent",evidence:[]}
+  r.control.roleLifecycle.installConfigured(role,"pod contract fixture")
   const context=budgetContext({taskId:task.id,role,policy,items:[],scaffold:role.prompt,outputReservation:1000,countTokens:text=>Buffer.byteLength(text)})
   r.store.control.put("context_manifests",context.id,1,context)
   const decision=r.control.admission.record({id:"decision",eventId:"event",taskId:task.id,role:{id:role.id,version:1},policy,signals:Object.fromEntries(FEATURES.map(feature=>[feature,null])) as Signals,score:0,hard:[],action:"activate",reasons:["explicit fixture"],timestamp:Date.now()})

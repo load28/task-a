@@ -20,7 +20,7 @@ function setup() {
   new TaskScheduler(r.engine,1,workspace).claim(task.id,{agent:"native",sessionId:worker})
   const tools=["task_graph_cognitive_read","task_graph_cognitive_write","task_graph_cognitive_context"]
   const role:RoleVersion={id:"editor",version:1,name:"Editor",purpose:"edit",capabilities:[],prompt:"Edit only granted files",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:2},requiredContext:[],contextBudget:{maxTokens:20000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:tools,lifecycle:"persistent",evidence:[]}
-  r.store.control.put("role_versions",role.id,1,role)
+  r.control.roleLifecycle.installConfigured(role,"granted-gateway fixture")
   const context=budgetContext({taskId:task.id,role,policy:{id:"p",version:1},items:[],scaffold:role.prompt,outputReservation:100,countTokens:s=>Buffer.byteLength(s)})
   r.store.control.put("context_manifests",context.id,1,context)
   const decision=r.control.admission.record(activation({taskId:task.id,eventId:"change",eligible:true,role,policy:{id:"p",version:1},signals:{...Object.fromEntries(FEATURES.map(f=>[f,0])),failure:1} as Signals,now:Date.now(),invocations:0}))

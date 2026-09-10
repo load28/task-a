@@ -25,7 +25,7 @@ function obligation(r:Runtime,entityId:string,mandatory=true) {
 }
 function grant(r:Runtime,taskId:string,worker:string) {
   const role:RoleVersion={id:"review",version:1,name:"Review",purpose:"critical verification",capabilities:[],prompt:"verify",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:10},requiredContext:[],contextBudget:{maxTokens:4000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[]}
-  r.store.control.put("role_versions",role.id,1,role)
+  r.control.roleLifecycle.installConfigured(role,"control runtime fixture")
   const manifest=budgetContext({taskId,role,policy:{id:"p",version:1},items:[],scaffold:"review",outputReservation:100,countTokens:s=>Buffer.byteLength(s)})
   r.store.control.put("context_manifests",manifest.id,1,manifest)
   const decision=r.control.admission.record(activation({taskId,eventId:randomUUID(),eligible:true,role,policy:{id:"p",version:1},signals:{...Object.fromEntries(FEATURES.map(f=>[f,0])),failure:1} as Signals,now:Date.now(),invocations:0}))

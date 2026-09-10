@@ -156,7 +156,7 @@ test("T02 grant는 한 worker만 소비하고 입력 변경·위조 context를 �
   const store=new TaskGraphStore()
   try {
     const admission=new Admission(store.control)
-    store.control.put("role_versions",role.id,role.version,role)
+    admission.roles.installConfigured(role,"adaptive control fixture")
     const manifest=budgetContext({taskId:"t",role,policy:{id:"p",version:1},items:[],scaffold:"system",outputReservation:100,countTokens:s=>Buffer.byteLength(s)})
     store.control.put("context_manifests",manifest.id,manifest.version,manifest)
     const decision=admission.record(activation({taskId:"t",eventId:"e",eligible:true,role,policy:{id:"p",version:1},signals:{...signals(),failure:1},now:Date.now(),invocations:0}))

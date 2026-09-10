@@ -17,7 +17,7 @@ function setup(r:ReturnType<typeof createGraphRuntime>) {
   const authorization=r.control.evidence.put({id:"cache-operator",version:1,type:"code",source:"test controller",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),content,contentHash:digest(content),confidence:1,inputVector:[],expiresAt:null})
   r.control.validators.register({id:"cognition",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');const input=JSON.parse(fs.readFileSync(0,'utf8')),output=input.evidence.find(e=>e.validatorVersion==='role-result/v1').content.output;process.exit(fs.readFileSync('gate.txt','utf8')==='pass'&&output.findings[0]==='supported'?0:2);`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[authorization]})
   const role:RoleVersion={id:"reviewer",version:1,name:"reviewer",purpose:"review",capabilities:[],prompt:"review",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:10},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:["cognition/v1"],allowedTools:[],lifecycle:"persistent",evidence:[authorization]}
-  r.store.control.put("role_versions",role.id,1,role)
+  r.control.roleLifecycle.installConfigured(role,"cognitive cache fixture")
   const task=r.engine.createTask({title:"same input",goal:"same input"})
   let sequence=0,modelCalls=0
   const issue=(changedContext=false,taskId=task.id)=>{

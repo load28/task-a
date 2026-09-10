@@ -112,8 +112,8 @@ test("인지 역할은 adapter가 고정한 lease로만 patch를 제안하며 �
   const f=fixture(),{r}=f
   try {
     const lease=f.issue(),taskId=r.store.findWorkPlan(f.planId)!.rootTaskId!,tool="task_graph_cognitive_replan_stage"
-    const role:RoleVersion={id:"replanner",version:1,name:"Replanner",purpose:"Scoped repair",capabilities:[],prompt:"Propose the scoped patch",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:10000,maxDependencyDepth:1,maxEvidenceItems:2,maxHistoricalDecisions:2},outputSchema:{type:"object"},validators:["coverage/v1"],allowedTools:[tool],lifecycle:"temporary",evidence:[]}
-    r.store.control.put("role_versions",role.id,1,role)
+    const role:RoleVersion={id:"replanner",version:1,name:"Replanner",purpose:"Scoped repair",capabilities:[],prompt:"Propose the scoped patch",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:10000,maxDependencyDepth:1,maxEvidenceItems:2,maxHistoricalDecisions:2},outputSchema:{type:"object"},validators:["coverage/v1"],allowedTools:[tool],lifecycle:"persistent",evidence:[]}
+    r.control.roleLifecycle.installConfigured(role,"scoped replanning fixture")
     const context=budgetContext({taskId,role,policy:{id:"test",version:1},items:[],scaffold:role.prompt,outputReservation:100,countTokens:s=>Buffer.byteLength(s)})
     r.store.control.put("context_manifests",context.id,1,context)
     const decision=r.control.admission.record(activation({taskId,eventId:"change",eligible:true,role,policy:{id:"test",version:1},signals:{...Object.fromEntries(FEATURES.map(f=>[f,0])),failure:1} as Signals,now:Date.now(),invocations:0}))

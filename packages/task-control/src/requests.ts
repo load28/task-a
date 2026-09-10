@@ -99,7 +99,7 @@ export class RequestController {
       validateProfile(entry.profile)
       if(entry.profile.level<2)throw new Error("Request roles require a model profile")
       const role=this.store.get<RoleVersion>("role_versions",entry.role.id,entry.role.version)
-      if(!role||role.lifecycle==="candidate"||role.allowedTools.some(tool=>!allowedTools.has(tool)))throw new Error("Request role exceeds the cognitive gateway")
+      if(!role||!this.runtime.roleLifecycle.executable(entry.role,ref=>this.runtime.evidence.valid(ref))||role.allowedTools.some(tool=>!allowedTools.has(tool)))throw new Error("Request role exceeds the cognitive gateway or lacks lifecycle certification")
       if(program.specialists?.includes(entry)&&(role.allowedTools.includes("task_graph_cognitive_write")||!role.validators.length))throw new Error("Specialists require read-only capabilities and independent result validators")
     }
     for(const entry of [program.planner,...(program.specialists??[]),...(program.replanner?[program.replanner]:[])])if(entry.profile.level===5)throw new Error("L5 execution currently requires the worker adversarial protocol")

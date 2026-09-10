@@ -25,7 +25,7 @@ for(const mode of ["regressed","unchanged","malformed","failed","stale","aba","r
     const watchInput={id:"watch",target:"activation" as const,policy:{id:"learned",version:2},rollback:{id:"learned",version:1},validator:"regression/v1",condition:authorization,authorization:[authorization],maxSamples:1,sampleType:mode==="observed-only"?"observed" as const:"synthetic" as const}
     const watch=r.control.policyRegression.register(watchInput)
     const role:RoleVersion={id:"worker",version:1,name:"worker",purpose:"work",capabilities:[],prompt:"work",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:3},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[authorization]}
-    r.store.control.put("role_versions",role.id,1,role)
+    r.control.roleLifecycle.installConfigured(role,"policy regression fixture")
     const issue=()=>{
       const task=r.engine.createTask({title:"sample",goal:"sample"})
       const context=budgetContext({taskId:task.id,role,policy:watch.policy,items:[],scaffold:role.prompt,outputReservation:10,countTokens:s=>Buffer.byteLength(s)})

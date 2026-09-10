@@ -19,8 +19,8 @@ function install(r:ReturnType<typeof createGraphRuntime>):ControllerProgram {
   const content={authorization:"explicit test program"},authorization=r.control.evidence.put({id:"operator",version:1,type:"user",source:"test operator",producer:"fixture",validatorVersion:"fixture/v1",timestamp:Date.now(),confidence:1,content,contentHash:digest(content),inputVector:[],expiresAt:null})
   r.control.validators.register({id:"plan",version:1,command:[process.execPath,"-e",`let input='';for await(const chunk of process.stdin)input+=chunk;const data=JSON.parse(input);const proposal=data.evidence.find(e=>e.type==='agent').content; if(proposal.request!=='Write done'||proposal.proposal[0].node.taskSpec.goal!=='Write done')process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[authorization]})
   r.control.validators.register({id:"state",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');const value=fs.readFileSync('result.txt','utf8');console.log(JSON.stringify({state:{artifacts:{'result.txt':value},contract:{},behavior:{'file-correct':value==='done'},dependencies:{},goals:{},risk:0},criticalViolations:[]}));`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:2000,authorization:[authorization],output:"semantic-state"})
-  const role:RoleVersion={id:"bounded",version:1,name:"Bounded",purpose:"Perform requested work",capabilities:[],prompt:"Return structured output",activationPolicy:{hardTriggers:[],softSignals:{},threshold:1,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:30000,maxDependencyDepth:2,maxEvidenceItems:10,maxHistoricalDecisions:2},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"temporary",evidence:[authorization]}
-  r.store.control.put("role_versions",role.id,1,role)
+  const role:RoleVersion={id:"bounded",version:1,name:"Bounded",purpose:"Perform requested work",capabilities:[],prompt:"Return structured output",activationPolicy:{hardTriggers:[],softSignals:{},threshold:1,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:30000,maxDependencyDepth:2,maxEvidenceItems:10,maxHistoricalDecisions:2},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[authorization]}
+  r.control.roleLifecycle.installConfigured(role,"request controller fixture")
   r.store.control.put("policy_versions","operator-policy",1,{id:"operator-policy",version:1,authorization:[authorization]})
   const entry={role:{id:role.id,version:1},profile:{id:"synthetic",level:3 as const,provider:"test",model:"test",maxInputTokens:32000,maxOutputTokens:1000,maxToolCalls:2,timeoutMs:60000,capability:{usage:true,tokenLimit:true,toolLimit:true,timeout:true},independentRoles:[]}}
   const program:ControllerProgram={id:"program",version:1,authorization:[authorization],policy:{id:"operator-policy",version:1},planner:entry,worker:entry,planValidators:["plan/v1"],observationValidators:["state/v1"],predictionPolicy:{weights:{contract:.25,behavior:.25,dependency:.25,goal:.25},enter:.5,exit:.1},readScopes:["result.txt"],writeScopes:["result.txt"],maxTasks:2,grantLifetimeMs:60000,account:"test",tokenLimit:100000}
@@ -99,7 +99,7 @@ test("실제 의미 실패는 필요한 QA만 깨우며 quota와 결과 검증 �
   try {
     const baseline=install(r),base=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
     r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const chunk of process.stdin)value+=chunk;const data=JSON.parse(value);if(!data.evidence[0].content.output.findings.includes('file mismatch confirmed'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
-    for(const [id,hard] of [["qa",true],["architect",false]] as const)r.store.control.put("role_versions",id,1,{...base,id,validators:["review/v1"],activationPolicy:{...base.activationPolicy,hardTriggers:hard?["failure"]:[],softSignals:hard?{}:{architectureViolation:1}}})
+    for(const [id,hard] of [["qa",true],["architect",false]] as const)r.control.roleLifecycle.installConfigured({...base,id,validators:["review/v1"],activationPolicy:{...base.activationPolicy,hardTriggers:hard?["failure"]:[],softSignals:hard?{}:{architectureViolation:1}}},"request specialist fixture")
     new PolicyLearning(r.store.control).propose({id:"architect-trigger",version:1,target:"activation",observedPattern:"실패 관찰",rootCause:"구조 검토 판단",proposedInvariant:"필수 의무 보존",proposedRule:{op:"gte",feature:"failure",value:.5},expectedBenefit:1,regressionRisk:.1,evidence:[{id:"operator",version:1}],counterexamples:[],rollback:baseline.policy},ref=>r.control.evidence.valid(ref))
     r.control.policyReplay.register({id:"architect-shadow",proposal:{id:"architect-trigger",version:1},role:{id:"architect",version:1},effect:"additional-trigger",split:{seed:"pre-outcome",holdoutBuckets:25}})
     r.control.policyReplay.register({id:"qa-shadow",proposal:{id:"architect-trigger",version:1},role:{id:"qa",version:1},effect:"additional-trigger",split:{seed:"pre-outcome",holdoutBuckets:25}})
@@ -407,7 +407,7 @@ for(const stale of [false,true])test(stale?"cooldown 종료는 대기 중 변경
   let r=createGraphRuntime(database)
   try {
     const baseline=install(r),base=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
-    r.store.control.put("role_versions","qa",1,{...base,id:"qa",validators:["plan/v1"],activationPolicy:{...base.activationPolicy,hardTriggers:["failure"],cooldownMs:60000,maxInvocationsPerTask:2}})
+    r.control.roleLifecycle.installConfigured({...base,id:"qa",validators:["plan/v1"],activationPolicy:{...base.activationPolicy,hardTriggers:["failure"],cooldownMs:60000,maxInvocationsPerTask:2}},"request QA fixture")
     const program:ControllerProgram={...baseline,version:2,tokenLimit:200000,specialists:[{role:{id:"qa",version:1},profile:baseline.worker.profile}]}
     r.control.requests.register(program)
     r.control.requests.submit({id:"request",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
@@ -693,7 +693,7 @@ for(const mode of ["repeat","quota","stale"] as const)test(`전문 검토 질문
   try {
     const base=install(r),role=r.store.control.get<RoleVersion>("role_versions","bounded",1)!
     r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const chunk of process.stdin)value+=chunk;const data=JSON.parse(value);if(!data.evidence[0].content.output.findings.includes('verified review'))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
-    r.store.control.put("role_versions","qa",1,{...role,id:"qa",validators:["review/v1"],activationPolicy:{...role.activationPolicy,hardTriggers:["failure"],maxInvocationsPerTask:mode==="quota"?1:3}})
+    r.control.roleLifecycle.installConfigured({...role,id:"qa",validators:["review/v1"],activationPolicy:{...role.activationPolicy,hardTriggers:["failure"],maxInvocationsPerTask:mode==="quota"?1:3}},"request QA quota fixture")
     const program={...base,version:2,maxClarifications:2,maxLocalRepairs:1,specialists:[{role:{id:"qa",version:1},profile:base.worker.profile}]};r.control.requests.register(program)
     r.control.requests.submit({id:"review-request",sessionId:"user",text:"Write done",planOnly:false,program:{id:program.id,version:2}})
     r.control.requests.tick();accept(r,r.control.requests.get("review-request")!.plannerGrant!,proposal);r.control.requests.tick()
@@ -753,7 +753,7 @@ for(const mode of ["pass","conflict","question","repair","adaptive"] as const)te
     r.control.validators.register({id:"review",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value);if(!input.evidence[0].content.output.findings.length)process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
     r.control.validators.register({id:"joint",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value),joint=input.evidence.find(e=>e.validatorVersion==='adversarial-joint/v1').content;if(joint.reviews.length!==2||new Set(joint.reviews.map(r=>r.role.id)).size!==2||joint.reviews.some(r=>!r.output.findings.includes('contract confirmed')))process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
     if(mode==="repair")r.control.validators.register({id:"adversarial-repair",version:1,command:[process.execPath,"-e",`let value='';for await(const c of process.stdin)value+=c;const input=JSON.parse(value),p=input.evidence.find(e=>e.validatorVersion==='scoped-proposal/v1').content;if(p.metadata.goal!=='Write done'||p.metadata.expectations[0].expectation.expectedArtifacts['result.txt']!=='done')process.exit(1);`],cwd:".",environment:{},timeoutMs:1000,maxOutputBytes:1000,authorization:[{id:"operator",version:1}]})
-    for(const id of ["qa","critic"])r.store.control.put("role_versions",id,1,{...role,id,validators:["review/v1"],activationPolicy:{...role.activationPolicy,maxInvocationsPerTask:2}})
+    for(const id of ["qa","critic"])r.control.roleLifecycle.installConfigured({...role,id,validators:["review/v1"],activationPolicy:{...role.activationPolicy,maxInvocationsPerTask:2}},"adversarial reviewer fixture")
     const program:ControllerProgram={...base,version:2,maxClarifications:1,...(mode==="repair"?{maxLocalRepairs:0,replanner:{...base.planner,validators:["adversarial-repair/v1"],maxAttempts:1}}:{}),adversarialValidator:"joint/v1",worker:{...base.worker,profile:{...base.worker.profile,level:5,independentRoles:["qa","critic"]}},specialists:["qa","critic"].map(id=>({role:{id,version:1},profile:base.worker.profile}))}
     if(mode==="adaptive") {
       program.maxLocalRepairs=3
@@ -991,7 +991,7 @@ for(const mode of ["pass","new-fails","chain","receipt-withdrawn","quota","plann
     if(mode==="planner-role") {
       const role=r.store.control.get<RoleVersion>("role_versions",baseline.planner.role.id,1)!
       r.control.validators.register({id:"draft-role",version:1,command:[process.execPath,"-e",`const fs=require('node:fs');process.exit(fs.readFileSync('plan-gate.txt','utf8')==='pass'?0:2)`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization})
-      r.store.control.put("role_versions",role.id,2,{...role,version:2,validators:["draft-role/v1"]})
+      r.control.roleLifecycle.installConfigured({...role,version:2,validators:["draft-role/v1"]},"draft role revision fixture")
       baseline.planner={...baseline.planner,role:{id:role.id,version:2}}
     }
     r.control.requests.register({...baseline,version:2,observedInputs:[input],planValidators:["draft-plan/v1"],maxInputReplans:mode==="quota"?0:2})

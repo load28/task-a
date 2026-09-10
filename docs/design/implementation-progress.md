@@ -196,7 +196,15 @@ scoped revision의 저장과 최종 활성화는 실제 등록 검증 작업, �
 
 중단 대기 중 연속 변경은 다음 episode의 현재 원인으로 병합한다. 원래 요청·기대치·이미 사용한 모델 예산·repair 횟수는 유지하며 quota 소진 시 미해결 상태를 유지한다. DB 재시작, 폐기 트랜잭션의 강제 실패와 rollback, 중복 폐기, 종료 확인 전 발급 차단, 폐기된 revision의 재승인 차단, 새 revision 실행과 최종 완료를 검증했다. 독립 region 병렬 처리는 이 경로에 아직 연결되지 않았다.
 
-최신 전체 검사 408개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 같은 source hash의 이미지를 실제 kind에서 다시 검증했으며 `kubernetes-grant-validation.json`에 격리 receipt와 namespace 삭제 결과를 기록했다.
+최신 전체 검사 412개에는 승인 전이, causal edge completeness 승격, 경계 보존, keep/switch, dispatcher 소유권 lease, granted write lineage, 역할 생명주기 회귀 시나리오가 포함된다. 실제 native 검증 프로세스와 합성 worker를 사용했다. 같은 source hash의 이미지를 실제 kind에서 다시 검증했으며 `kubernetes-grant-validation.json`에 격리 receipt와 namespace 삭제 결과를 기록했다.
+
+## 역할 생명주기 실행 게이트
+
+역할 정의와 실행 신뢰를 분리했다. `role_versions`에 행만 직접 저장해도 실행할 수 없으며, 정확한 역할 hash와 lifecycle을 고정한 불변 `role_lifecycle_records`가 있어야 한다. 코드로 구성한 초기 catalog는 이름이 있는 persistent baseline으로만 설치한다. 동적 역할은 반복된 독립 episode, 기존 capability gap, 재사용 가능성, 실제 근거를 candidate부터 고정한다. temporary, validated, persistent 순서를 건너뛸 수 없다.
+
+validated와 persistent 승격은 고정된 minimum effective samples, 순효용 하한, 기존 역할 overlap 상한을 통과해야 한다. 정책이 요구하면 현재 code/user authorization 근거가 있어야 persistent가 된다. Admission과 request program 등록은 이 기록을 확인한다. claim과 결과 채택 때도 다시 확인하므로 근거가 철회된 역할 허가를 실행하거나 완료할 수 없다. 각 실행은 고정한 역할 버전을 유지하며 새 버전이 과거 실행의 의미를 바꾸지 않는다. candidate는 lifecycle 기록이 있어도 실행되지 않는다.
+
+단계 건너뛰기, 승인 없는 persistent 승격, 미인증 직접 저장, 근거 철회, lifecycle 기록 변경 시도를 실제 저장소에서 검증했다. 역할은 등록 시 process를 만들지 않는다. grant 발급 때만 run이 candidate가 되고 worker claim 뒤 active가 되며, 취소·입력 변경은 candidate와 active를 모두 fence한다. 완료된 run은 이력으로 남고 다음 역할 실행은 별도 grant 전까지 dormant 상태를 유지한다.
 
 ## 검증된 경계 보존과 keep/switch 판단
 
@@ -214,7 +222,7 @@ region 후보 검증기는 같은 `costUnit`으로 planning·reasoning·context�
 
 1. 파일 gateway 밖의 실제 코드·도구·환경 입력 관찰과 완전성 증거, Pod source lineage와 모든 외부 입력 유형의 관찰·복구를 연결하고 legacy 전체 snapshot/스캔을 대체해야 한다. 등록하지 않은 경계 밖 변경의 7차원 검증 적용도 남아 있다.
 2. 실제 boundary 보존 증거를 활용한 보수적 영역 축소와 불확실성 포함 keep/switch 판단은 연결했다. finite 후보·등록 검증기의 feasibility/공통 단위 비용·최적성 gap 경로도 연결했으나 비용 모델의 실제 성능 calibration은 남아 있다. 독립 region의 병렬 복구는 남아 있다. 승인 전이 중 episode 병합은 미활성 revision 폐기와 source/head 분리로 연결했다. 질문 대기 중 입력 변경 병합은 연결했다. 등록 decision의 증거 기반 무효화와 유효 가정·결정의 대체 task 바인딩 보존은 연결했다. native 관찰 입력 및 등록 가정의 유효성 손실, 진행 중 repair의 최신 원인 교체는 연결했다.
-3. activation additional-trigger의 historical/shadow 비교와 gateway 파일 쓰기의 실제 attribution은 연결했으나, 모든 13개 정책 target의 실행 적용, 파일 밖 외부 입력의 attribution 및 observed paired holdout 운영 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory/routine의 실제 graph mutation과 역할 lifecycle 학습은 아직 전체 실행 루프에 연결되지 않았다.
+3. activation additional-trigger의 historical/shadow 비교, gateway 파일 쓰기의 실제 attribution, 역할 lifecycle의 실행 게이트는 연결했으나, 모든 13개 정책 target의 실행 적용, 파일 밖 외부 입력의 attribution 및 observed paired holdout 운영 평가·모든 정책 적용 경로의 회귀 감시 설정, 모든 판단 경로의 L1 우선 적용과 worker 이외 역할의 L5 실행, memory/routine의 실제 graph mutation은 아직 전체 실행 루프에 연결되지 않았다.
 4. 기존 운영 데이터/worker의 전면 이관, 권한 변경 reply 재개, quota 증액의 정책 변경 경로, 다른 native OS의 격리 지원, T01–T15 전체 수용 시나리오가 남아 있다. 성공한 실제 provider 호출은 사용자가 유지하기로 한 예외다.
 
 `implementation-status.json`의 endToEndVerified는 위 전체 수용 조건을 기준으로 유지한다. 단위 함수나 새 경로 일부의 테스트 통과만으로 원문 요구 전체를 완료 처리하지 않는다.

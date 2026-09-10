@@ -102,9 +102,10 @@ export class ControlStore {
         WHEN json_extract(NEW.payload,'$.state') IN ('fenced','failed') BEGIN
           UPDATE activation_grants SET state='fenced' WHERE task_id=NEW.task_id AND state IN ('issued','claimed');
         END;
-        CREATE TRIGGER IF NOT EXISTS control_grant_fence AFTER UPDATE OF state ON activation_grants
+        DROP TRIGGER IF EXISTS control_grant_fence;
+        CREATE TRIGGER control_grant_fence AFTER UPDATE OF state ON activation_grants
         WHEN NEW.state='fenced' AND OLD.state IN ('issued','claimed') BEGIN
-          UPDATE agent_runs SET state='fenced' WHERE grant_id=NEW.id AND state='active';
+          UPDATE agent_runs SET state='fenced' WHERE grant_id=NEW.id AND state IN ('candidate','active','waiting');
           UPDATE budget_reservations SET spent=0,state='settled' WHERE id=NEW.id AND OLD.state='issued';
         END;
         CREATE TRIGGER IF NOT EXISTS control_dependency_insert AFTER INSERT ON task_dependencies BEGIN

@@ -8,12 +8,14 @@ import type { ActivationDecision, ActivationGrant, AgentOutput, ContextManifest,
 import type { VersionVector } from "../../task-causality/src/model.ts"
 import { validateProfile } from "../../task-cognition/src/precision.ts"
 import { EvidenceStore } from "../../task-evidence/src/index.ts"
+import { RoleRegistry } from "../../task-cognition/src/roles.ts"
 
 export class AdmissionBudgetUnavailableError extends Error {}
 
 export class Admission {
   readonly store:ControlStore
-  constructor(store:ControlStore){this.store=store}
+  readonly roles:RoleRegistry
+  constructor(store:ControlStore,roles=new RoleRegistry(store)){this.store=store;this.roles=roles}
   record(decision:ActivationDecision):ActivationDecision {
     const row=this.store.db.prepare("SELECT payload FROM activation_decisions WHERE event_id=? AND task_id=? AND role_id=? AND policy_version=?").get(decision.eventId,decision.taskId,decision.role.id,canonical(decision.policy))
     if(row) return JSON.parse(String(row.payload))
@@ -38,7 +40,7 @@ export class Admission {
       }
       const role=this.store.get<RoleVersion>("role_versions",input.role.id,input.role.version)
       const context=this.store.get<ContextManifest>("context_manifests",input.context.id,input.context.version)
-      if(!role||role.lifecycle==="candidate"||!context||context.hash!==input.contextHash||context.taskId!==input.taskId||digest(context.role)!==digest(input.role)||digest(context.policy)!==digest(input.policy)) throw new Error("Unpinned role/context")
+      if(!role||!this.roles.executable(input.role,ref=>new EvidenceStore(this.store).valid(ref))||!context||context.hash!==input.contextHash||context.taskId!==input.taskId||digest(context.role)!==digest(input.role)||digest(context.policy)!==digest(input.policy)) throw new Error("Uncertified role or unpinned context")
       const { hash: contextHash, ...contextValue } = context
       if(digest(contextValue)!==contextHash)throw new Error("Corrupted context manifest")
       if(context.tokens>input.profile.maxInputTokens+input.profile.maxOutputTokens)throw new Error("Context exceeds profile budget")
@@ -58,6 +60,7 @@ export class Admission {
       if(used+reserved>limit) throw new AdmissionBudgetUnavailableError("Budget unavailable; obligations remain pending")
       const grant={...selected,id:randomUUID()}
       this.store.db.prepare("INSERT INTO activation_grants VALUES(?,?,?,?,?)").run(grant.id,grant.decisionId,grant.taskId,"issued",canonical(grant))
+      this.store.db.prepare("INSERT INTO agent_runs VALUES(?,?,?,'candidate',?)").run(randomUUID(),grant.id,grant.taskId,canonical({grant,selectedAt:Date.now()}))
       this.store.db.prepare("INSERT INTO budget_reservations VALUES(?,?,?,NULL,'reserved')").run(grant.id,account,reserved)
       return grant
     })
@@ -68,9 +71,12 @@ export class Admission {
       if(!row||row.state!=="issued") throw new Error("Grant is unknown, fenced or already consumed")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
       if(!input.worker||grant.worker&&grant.worker!==input.worker||grant.expiresAt<=input.now||grant.specHash!==input.specHash||grant.graphHash!==input.graphHash||grant.generation!==input.generation||digest(grant.inputVector)!==digest(input.inputVector)) throw new Error("Stale or mismatched activation grant")
+      if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Grant role lifecycle is no longer executable")
       grant.worker=input.worker
       this.store.db.prepare("UPDATE activation_grants SET state='claimed',payload=? WHERE id=?").run(canonical(grant),id)
-      this.store.db.prepare("INSERT INTO agent_runs VALUES(?,?,?,'active',?)").run(randomUUID(),id,grant.taskId,canonical({grant,startedAt:input.now}))
+      const run=this.store.db.prepare("SELECT state FROM agent_runs WHERE grant_id=?").get(id)
+      if(run?.state!=="candidate")throw new Error("Grant has no dormant role candidate")
+      this.store.db.prepare("UPDATE agent_runs SET state='active',payload=? WHERE grant_id=?").run(canonical({grant,startedAt:input.now}),id)
       return grant
     })
   }
@@ -81,6 +87,7 @@ export class Admission {
       if(!row||row.state!=="claimed") throw new Error("Result has no active grant")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
       if(grant.worker!==worker||output.taskId!==grant.taskId||grant.expiresAt<=Date.now()) throw new Error("Late or foreign role result")
+      if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Grant role lifecycle is no longer executable")
       for(const value of Object.values(usage)) if(!Number.isFinite(value)||value<0) throw new Error("Missing actual usage")
       const p=grant.profile
       if(usage.inputTokens>p.maxInputTokens||usage.outputTokens>p.maxOutputTokens||usage.toolCalls>p.maxToolCalls||usage.elapsedMs>p.timeoutMs) throw new Error("Execution exceeded granted budget")

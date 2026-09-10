@@ -13,8 +13,8 @@ import type { HarnessServer } from "../packages/opencode-harness/src/server.ts"
 
 function fixture(database=":memory:") {
   const r=createGraphRuntime(database)
-  const role:RoleVersion={id:"reader",version:1,name:"Reader",purpose:"Inspect",capabilities:[],prompt:"Return structured findings",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"temporary",evidence:[]}
-  r.store.control.put("role_versions",role.id,1,role)
+  const role:RoleVersion={id:"reader",version:1,name:"Reader",purpose:"Inspect",capabilities:[],prompt:"Return structured findings",activationPolicy:{hardTriggers:["failure"],softSignals:{},threshold:.5,cooldownMs:0,maxInvocationsPerTask:1},requiredContext:[],contextBudget:{maxTokens:1000,maxDependencyDepth:1,maxEvidenceItems:1,maxHistoricalDecisions:1},outputSchema:{type:"object"},validators:[],allowedTools:[],lifecycle:"persistent",evidence:[]}
+  r.control.roleLifecycle.installConfigured(role,"grant dispatcher fixture")
   function issue() {
     const task=r.engine.createTask({title:"Inspect",goal:"Inspect",writeScopes:[]})
     const context=budgetContext({taskId:task.id,role,policy:{id:"p",version:1},items:[],scaffold:role.prompt,outputReservation:100,countTokens:s=>Buffer.byteLength(s)})
@@ -26,7 +26,9 @@ function fixture(database=":memory:") {
   return {r,issue}
 }
 function claim(r:ReturnType<typeof createGraphRuntime>,grant:ActivationGrant) {
+  assert.equal(r.store.db.prepare("SELECT state FROM agent_runs WHERE grant_id=?").get(grant.id)!.state,"candidate")
   r.control.admission.claim(grant.id,{worker:`worker-${grant.id}`,specHash:grant.specHash,inputVector:grant.inputVector,graphHash:grant.graphHash,generation:grant.generation,now:Date.now()})
+  assert.equal(r.store.db.prepare("SELECT state FROM agent_runs WHERE grant_id=?").get(grant.id)!.state,"active")
 }
 function adapter(r:ReturnType<typeof createGraphRuntime>,wait:()=>Promise<void>=async()=>{}) {
   const calls:string[]=[],stops:string[]=[]

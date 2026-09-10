@@ -4,12 +4,16 @@ import { ControlStore } from "./store.ts"
 import { canonical } from "./value.ts"
 import { cognitiveTools } from "./gateway.ts"
 import { randomUUID } from "node:crypto"
+import { RoleRegistry } from "../../task-cognition/src/roles.ts"
+import { EvidenceStore } from "../../task-evidence/src/index.ts"
 
 /** The authority reads live fencing state for every model/tool admission. */
 export class GuardAuthority implements GrantAuthority {
   readonly store:ControlStore
+  readonly roles:RoleRegistry
   constructor(store:ControlStore) {
     this.store=store
+    this.roles=new RoleRegistry(store)
     store.db.exec(`CREATE TABLE IF NOT EXISTS grant_sessions(session_id TEXT PRIMARY KEY,grant_id TEXT NOT NULL UNIQUE REFERENCES activation_grants(id),input_used INTEGER NOT NULL,output_used INTEGER NOT NULL,tool_used INTEGER NOT NULL,input_bound INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS grant_tool_calls(session_id TEXT NOT NULL,call_id TEXT NOT NULL,tool TEXT NOT NULL,output_bytes INTEGER,PRIMARY KEY(session_id,call_id));
       CREATE TABLE IF NOT EXISTS grant_model_usage(session_id TEXT NOT NULL,message_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(session_id,message_id));`)
@@ -35,6 +39,7 @@ export class GuardAuthority implements GrantAuthority {
       if(!row||row.state!=="claimed")throw new Error("Execution was fenced or completed")
       const grant=JSON.parse(String(row.payload)) as ActivationGrant
       if(grant.expiresAt<=Date.now()||grant.worker!==sessionId)throw new Error("Expired or foreign session grant")
+      if(!this.roles.executable(grant.role,ref=>new EvidenceStore(this.store).valid(ref)))throw new Error("Role lifecycle authorization was withdrawn")
       const run=this.store.db.prepare("SELECT payload FROM agent_runs WHERE grant_id=?").get(grant.id)
       if(!run||Date.now()-Number(JSON.parse(String(run.payload)).startedAt)>=grant.profile.timeoutMs)throw new Error("Execution time budget exhausted")
       const remainingInputTokens=grant.profile.maxInputTokens-Number(session.input_used),remainingOutputTokens=grant.profile.maxOutputTokens-Number(session.output_used)
