@@ -45,3 +45,44 @@ test("불완전하거나 실제 crossing edge와 다른 경계는 보존 증거�
     assert.equal(r.store.control.head("planning_boundaries","bad"),0)
   }finally{r.close()}
 })
+
+test("causal edge completeness는 고정된 버전의 실제 검증 뒤에만 승격된다",async()=>{
+  const r=createGraphRuntime(":memory:")
+  try {
+    const source=r.engine.createTask({title:"source",goal:"source"}),target=r.engine.createTask({title:"target",goal:"target"})
+    const authorization=r.control.evidence.put({id:"edge-authority",version:1,type:"user",source:"fixture",producer:"fixture",validatorVersion:"user/v1",timestamp:Date.now(),content:{allow:true},contentHash:digest({allow:true}),inputVector:[],confidence:1,expiresAt:null})
+    const candidate={id:"candidate-edge",version:1,source:{entityId:source.id,port:"out",view:"behavior"},target:{entityId:target.id,port:"in",view:"behavior"},relation:"depends_on" as const,changeTypes:["behavior" as const],impactWeight:1,critical:true,observedPropagationRate:{successes:1,trials:1,estimate:1,modelVersion:"measured/v1"},evidence:[authorization],completeness:"declared" as const}
+    r.control.graph.put(candidate,0)
+    r.control.validators.register({id:"edge-completeness",version:1,command:[process.execPath,"-e",`let text='';for await(const c of process.stdin)text+=c;const input=JSON.parse(text),p=input.evidence.find(e=>e.validatorVersion==='causal-edge-input/v1');process.exit(p?.content.edge.id==='candidate-edge'&&p.content.edge.completeness==='declared'?0:2)`],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[authorization]})
+    const first=r.control.boundaries.certifyEdge({edgeId:candidate.id,validator:"edge-completeness/v1",authorization:[authorization]})
+    assert.deepEqual(r.control.boundaries.certifyEdge({edgeId:candidate.id,validator:"edge-completeness/v1",authorization:[authorization]}),first)
+    assert.equal(r.control.graph.all().find(edge=>edge.id===candidate.id)!.completeness,"declared")
+    await r.control.validators.run(process.cwd(),{maxJobs:2,maxDurationMs:10000})
+    r.engine.atomic(()=>r.control.boundaries.ingest())
+    const verified=r.control.graph.all().find(edge=>edge.id===candidate.id)!
+    assert.equal(verified.version,2)
+    assert.equal(verified.completeness,"verified")
+    assert.ok(verified.evidence.length>=3)
+    assert.equal(r.store.db.prepare("SELECT state FROM causal_edge_certifications WHERE edge_id=? AND edge_version=1").get(candidate.id)!.state,"verified")
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='CausalEdgeVerified'").get()!.n,1)
+  }finally{r.close()}
+})
+
+test("실패하거나 검증 중 바뀐 causal edge는 verified로 승격되지 않는다",async()=>{
+  const r=createGraphRuntime(":memory:")
+  try {
+    const a=r.engine.createTask({title:"a",goal:"a"}),b=r.engine.createTask({title:"b",goal:"b"})
+    const authorization=r.control.evidence.put({id:"stale-edge-authority",version:1,type:"user",source:"fixture",producer:"fixture",validatorVersion:"user/v1",timestamp:Date.now(),content:{allow:true},contentHash:digest({allow:true}),inputVector:[],confidence:1,expiresAt:null})
+    const edge={id:"stale-edge",version:1,source:{entityId:a.id,port:"out",view:"behavior"},target:{entityId:b.id,port:"in",view:"behavior"},relation:"depends_on" as const,changeTypes:["behavior" as const],impactWeight:1,critical:true,observedPropagationRate:{successes:0,trials:0,estimate:1,modelVersion:"unknown/v1"},evidence:[authorization],completeness:"declared" as const}
+    r.control.graph.put(edge,0)
+    r.control.validators.register({id:"stale-edge-check",version:1,command:[process.execPath,"-e","process.exit(0)"],cwd:".",environment:{},timeoutMs:2000,maxOutputBytes:2000,authorization:[authorization]})
+    r.control.boundaries.certifyEdge({edgeId:edge.id,validator:"stale-edge-check/v1",authorization:[authorization]})
+    r.control.graph.put({...edge,version:2,impactWeight:.8,critical:false},1)
+    await r.control.validators.run(process.cwd(),{maxJobs:2,maxDurationMs:10000})
+    r.engine.atomic(()=>r.control.boundaries.ingest())
+    assert.equal(r.control.graph.all().find(item=>item.id===edge.id)!.version,2)
+    assert.equal(r.control.graph.all().find(item=>item.id===edge.id)!.completeness,"declared")
+    assert.equal(r.store.db.prepare("SELECT state FROM causal_edge_certifications WHERE edge_id=? AND edge_version=1").get(edge.id)!.state,"superseded")
+    assert.equal(r.store.db.prepare("SELECT count(*) n FROM event_outbox WHERE type='CausalEdgeVerified'").get()!.n,0)
+  }finally{r.close()}
+})

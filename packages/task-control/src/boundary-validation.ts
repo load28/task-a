@@ -12,6 +12,9 @@ export interface ValidatedBoundary extends Boundary {
   bindingValidator?:string
   proofMaxAgeMs?:number
 }
+export interface EdgeCertification {
+  edgeId:string;edgeVersion:number;validator:string;authorization:VersionRef[];obligationId:string
+}
 export function integrationTuple(boundary:ValidatedBoundary,observations:Observation[]):VersionVector {
   return [{entityId:boundary.id,port:"boundary",view:"integration-policy",version:boundary.version,hash:digest(boundary)},...observations.map(item=>({entityId:item.taskId,port:"observed-output",view:"semantic-state",version:item.version,hash:digest(item)}))].sort((a,b)=>canonical(a).localeCompare(canonical(b)))
 }
@@ -21,7 +24,36 @@ export class BoundaryValidation {
     this.runtime=runtime
     runtime.store.db.exec(`CREATE TABLE IF NOT EXISTS boundary_validation_state(boundary_id TEXT PRIMARY KEY,version INTEGER NOT NULL,tuple_hash TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS boundary_preservation_state(boundary_id TEXT NOT NULL,version INTEGER NOT NULL,scope TEXT NOT NULL,tuple_hash TEXT NOT NULL,proof_id TEXT NOT NULL,proof_version INTEGER NOT NULL,PRIMARY KEY(boundary_id,version,scope,tuple_hash));
-      CREATE INDEX IF NOT EXISTS boundary_preservation_exit ON boundary_preservation_state(boundary_id,version,scope);`)
+      CREATE INDEX IF NOT EXISTS boundary_preservation_exit ON boundary_preservation_state(boundary_id,version,scope);
+      CREATE TABLE IF NOT EXISTS causal_edge_certifications(edge_id TEXT NOT NULL,edge_version INTEGER NOT NULL,state TEXT NOT NULL,obligation_id TEXT NOT NULL UNIQUE,payload TEXT NOT NULL,PRIMARY KEY(edge_id,edge_version));`)
+  }
+  /** Completeness is promoted only from an independently executed validator over
+   * the exact immutable edge version. A declaration cannot mark itself verified. */
+  certifyEdge(input:{edgeId:string;validator:string;authorization:VersionRef[]}):EdgeCertification {
+    const {store,evidence,graph}=this.runtime
+    return store.atomic(()=>{
+      const edge=graph.all().find(item=>item.id===input.edgeId)
+      if(!edge)throw new Error("Unknown causal edge")
+      if(edge.completeness==="verified")throw new Error("Causal edge is already verified")
+      if(!input.authorization.length||input.authorization.some(ref=>!["user","code"].includes(evidence.require(ref).type)))throw new Error("Edge certification requires operator authorization")
+      const match=/^([a-z][a-z0-9-]*)\/v([1-9][0-9]*)$/.exec(input.validator)
+      const validator=match&&store.get<RegisteredValidator>("validator_versions",match[1]!,Number(match[2]))
+      if(!validator||validator.authorization.some(ref=>!evidence.valid(ref)))throw new Error("Edge certification requires a current registered validator")
+      const existing=store.db.prepare("SELECT payload FROM causal_edge_certifications WHERE edge_id=? AND edge_version=?").get(edge.id,edge.version)
+      if(existing) {
+        const certification=JSON.parse(String(existing.payload)) as EdgeCertification
+        if(certification.validator!==input.validator||canonical(certification.authorization)!==canonical(input.authorization))throw new Error("Edge certification identity conflict")
+        return certification
+      }
+      const tuple=[{entityId:edge.id,port:"causal-edge",view:"completeness",version:edge.version,hash:digest(edge)}]
+      const content={edge,contract:"Verify that this exact edge lists every relevant source and target binding, relation, change scope, criticality and propagation observation for its declared domain. Missing bindings or an unbounded domain must fail."}
+      const snapshot=evidence.put({id:`causal-edge-input:${digest({edge,authorization:input.authorization})}`,version:1,type:"runtime",source:"immutable causal edge candidate",producer:"boundary-validation",validatorVersion:"causal-edge-input/v1",timestamp:Date.now(),content,contentHash:digest(content),inputVector:tuple,confidence:1,expiresAt:null})
+      const obligation=evidence.createObligation({entityId:edge.id,tuple,kind:"causal-edge-completeness",mandatory:true,validators:[input.validator],reason:[...input.authorization,snapshot]})
+      const certification:EdgeCertification={edgeId:edge.id,edgeVersion:edge.version,validator:input.validator,authorization:input.authorization,obligationId:obligation.id}
+      store.db.prepare("INSERT INTO causal_edge_certifications VALUES(?,?,'pending',?,?)").run(edge.id,edge.version,obligation.id,canonical(certification))
+      store.event({id:`causal-edge-certification:${edge.id}:${edge.version}`,type:"CausalEdgeCertificationRequested",entityId:edge.id,correlationId:edge.id,schemaVersion:1,timestamp:Date.now(),payload:{certification}})
+      return certification
+    })
   }
   register(boundary:ValidatedBoundary):void {
     const {store,evidence,engine}=this.runtime
@@ -74,6 +106,7 @@ export class BoundaryValidation {
   ingest():number {
     const {store}=this.runtime
     return store.consume("boundary-validation/v1","seven-dimension/v1",event=>{
+      if(["ValidationSatisfied","ValidatorFailed","ValidatorExecutionFailed"].includes(event.type))this.updateEdgeCertification(event)
       if(event.type==="PredictionObserved")for(const row of store.db.prepare("SELECT b.boundary_id,b.version FROM planning_boundary_members b JOIN control_heads h ON h.collection='planning_boundaries' AND h.id=b.boundary_id AND h.version=b.version JOIN boundary_validation_state s ON s.boundary_id=b.boundary_id WHERE b.task_id=?").all(event.entityId))this.refresh(store.get<ValidatedBoundary>("planning_boundaries",String(row.boundary_id),Number(row.version))!)
       if(event.type==="ValidatorFailed") {
         const payload=event.payload as {obligationId:string;evidence:VersionRef}
@@ -104,6 +137,26 @@ export class BoundaryValidation {
         boundary.members.forEach(id=>this.runtime.completeObserved(id))
       }
     },1000)
+  }
+  private updateEdgeCertification(event:{id:string;type:string;timestamp:number;payload:unknown}):void {
+    const {store,evidence,graph}=this.runtime,obligationId=(event.payload as {obligationId?:string}).obligationId
+    if(!obligationId)return
+    const row=store.db.prepare("SELECT * FROM causal_edge_certifications WHERE obligation_id=? AND state='pending'").get(obligationId)
+    if(!row)return
+    if(event.type!=="ValidationSatisfied") {
+      store.db.prepare("UPDATE causal_edge_certifications SET state=? WHERE obligation_id=? AND state='pending'").run("failed",obligationId)
+      return
+    }
+    const certification=JSON.parse(String(row.payload)) as EdgeCertification,obligation=evidence.obligation(obligationId)
+    const edge=graph.all().find(item=>item.id===certification.edgeId)
+    if(!obligation||!evidence.independentlySatisfied(obligation)||!edge||edge.version!==certification.edgeVersion||digest(edge)!==obligation.tuple[0]?.hash||certification.authorization.some(ref=>!evidence.valid(ref))) {
+      store.db.prepare("UPDATE causal_edge_certifications SET state='superseded' WHERE obligation_id=? AND state='pending'").run(obligationId)
+      return
+    }
+    const refs=[...new Map([...edge.evidence,...certification.authorization,...obligation.reason,...obligation.evidence].map(ref=>[canonical(ref),ref])).values()]
+    graph.put({...edge,version:edge.version+1,completeness:"verified",evidence:refs},edge.version)
+    store.db.prepare("UPDATE causal_edge_certifications SET state='verified' WHERE obligation_id=? AND state='pending'").run(obligationId)
+    store.event({id:`causal-edge-verified:${edge.id}:${edge.version+1}`,type:"CausalEdgeVerified",entityId:edge.id,correlationId:edge.id,causationId:event.id,schemaVersion:1,timestamp:event.timestamp,payload:{edge:{id:edge.id,version:edge.version+1},certification}})
   }
   private publishPreservation(boundary:ValidatedBoundary):void {
     if(!boundary.bindingsComplete)return
