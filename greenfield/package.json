@@ -1,0 +1,23 @@
+{
+  "name": "task-agent-greenfield",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test": "node --test contracts/*.test.ts kernel/*.test.ts store/*.test.ts artifacts/*.test.ts runtime/*.test.ts validation/*.test.ts control/*.test.ts planner/*.test.ts cli/*.test.ts test/*.test.ts",
+    "check": "tsc --noEmit -p tsconfig.json && npm test",
+    "task": "node cli/main.ts",
+    "test:docker": "TASK_AGENT_DOCKER_TEST=1 node --test runtime/*.test.ts validation/*.test.ts cli/*.test.ts test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  }
+}
