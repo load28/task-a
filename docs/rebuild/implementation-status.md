@@ -1,8 +1,53 @@
 # 신규 구현 상태와 검증 근거
 
+## 2026-09-27 — AX 실행 경로와 전역 진입점 전환
+
+최신 기준은 [engine/extensions.md](../../engine/extensions.md)다. AX 원본 65개 중 60개는 해시가 같고, 5개는 [잠금 파일](../../engine/upstream.lock.json)에 사유와 수정 해시를 기록했다. 원본 Go runner·gRPC·Redis Streams·controller·workspace·Substrate를 사용한다. AX의 옛 클라이언트에는 native credential injector가 없어 Substrate 클라이언트/인프라를 `ed6d2a1fc8ae8337eb055d51b0b767b023cb3b5c`로 일치시켰다.
+
+Go 그래프 CLI는 프로젝트별 Redis 상태와 이벤트, 불변 AX Task 신원, 입력 의존성, 별도 검증 Task, 실제 Substrate 중단 관측, revision 변경과 동일 출력 재사용을 구현한다. golden template 준비 중 업무 명령을 실행하지 않도록 `task-agent-exec`가 기다린다. 준비된 실제 actor에 AX guest API로 activation을 전달한 뒤 syscall.Exec로 업무 명령을 시작한다. AX의 프로세스 감독을 재작성하지 않는다.
+
+검증 근거:
+
+- 전체 `go test ./...` 통과. 실제 Redis를 지정한 저장·재접속·state/event·동시 lock 검사 포함. 기본 테스트에서 Redis opt-in을 건너뛴 결과와 구분한다.
+- 전용 `task-agent-ax-source` 클러스터에 원본 Substrate gVisor·RustFS snapshot·egress·credential provider 및 우리 AX server/controller와 Redis AOF/PVC를 배포했다. 기존 `task-agent-local` 클러스터는 변경하지 않았다.
+- 최종 이미지 `localhost:5001/task-agent/codex@sha256:f2dab91d75c0399a9f67020354aefdfa0ee357bd4f3e18edae2905db95504976`에서 `ax-final-smoke` 의존 작업 2개와 각각의 별도 validator가 완료됐다. revision 2에서 produce는 재실행하고 동일 출력 `AX`를 받은 consume은 재사용했다. 통합 결과는 `AX-child`다.
+- `ax-final-resume` revision 2는 중단 전 실제 명령이 count=1을 쓴 것을 AX guest로 확인했다. DATA 중단·재개 후 같은 actor에서 count=2를 만들고 별도 validator까지 통과했다. 제어 상태의 Running만으로 시험 시작을 판단하지 않았다.
+- 네트워크를 끈 Docker 안에서 fake Codex 실행 파일로 activation 전 실행 안 됨, activation 후 시작, 정확한 session id로 resume, auth.json 없음 확인. 실제 모델 추론이나 로그인 검증의 근거로 세지 않는다.
+- 전역 스킬과 역할을 AX 경로로 전환했다. 별도 프로젝트 context·문자 그대로의 argv·기존 SQLite --state 거절·TOML 및 실제 AX 래퍼 실행을 확인했다. named-role 로더를 통한 새 서브에이전트 호출은 별도 검증하지 않았다.
+
+시험 계획과 상태는 로컬 `engine/.state/smoke/`의 `final-dag-proof.json`, `final-reuse-proof.json`, `final-resume-proof.json` 등에 보존한다. 이전 image·준비 대기·실패 시험은 같은 폴더와 임시 로그에 남아 있으며 최종 성공 근거와 구분한다.
+
+실제 ChatGPT 로그인은 아직 클러스터에 동기화하지 않았다. 자동 승인 검토가 access token과 account id를 `task-agent-ax-source`의 Kubernetes Secret에 저장할 명시적 승인 근거가 없다는 이유로 거절했다. refresh token은 전송 대상이 아니다. 실행할 [Codex 시험 생성기](../../engine/examples/codex-smoke.mjs)와 로컬 `engine/.state/smoke/codex-plan.json`은 준비·정적 검증했다. 실제 Codex 추론·native 인증 주입의 종단 검증은 대기다.
+
+이 버전은 UTF-8 파일 계약의 연결 구현이다. read-only 입력 mount, 대용량 artifact 전송, 분산 fencing·자동 crash lock 회수, C01–C12 전체 수용을 완료했다고 주장하지 않는다. 아래 기록은 이전 구현의 이력이다.
+
+---
+
+## 2026-09-27 — AX 원본 우선 기반 도입
+
+최신 실행 기반은 [engine/ax](../../engine/ax/)다. `d0bc38bcf90bb2ad9c012ff1be9d68ff05347ba9`의 추적 파일 65개를 보존했고, `node engine/verify-upstream.mjs`에서 unchanged 65 / modified 0을 확인했다. 라이선스와 원본 파일 해시는 [engine](../../engine/README.md)에 기록한다.
+
+가져온 디렉터리에서 Go 1.27.1로 `go test ./...`를 실행했다. 테스트가 있는 10개 패키지 모두 통과했고, 나머지 8개 패키지는 테스트 파일 없음으로 빌드됐다. 공개 모듈 다운로드와 로컬 테스트 서버 접근을 허용한 실행 결과다. `git diff --check`와 기존 계약 그래프 검증도 통과했다. 이 Go 테스트는 실제 Redis·Substrate 클러스터 종단 검증을 의미하지 않는다.
+
+[AX01–AX05](ax-implementation-adoption.md)의 AX01만 완료했다. 원본 인프라 배포, 계약 그래프의 AX 연결, AX 경로의 Codex 로그인·세션 재개, 전역 스킬 전환은 미완료다. 아래 `greenfield/`의 기존 실험·검증 기록은 보존하지만 AX 기반 구현의 완료 근거로 사용하지 않는다.
+
+---
+
 점검일: 2026-09-26 · 기준: [C01–C12](contracts.md), [A01–A16](architecture.md#4-수용-시나리오와-검토-경계), [T01–T19](implementation-plan.md).
 
 **계약·그래프·격리 실행의 첫 구현과 일부 실제 Docker 검증은 있으며, 19개 태스크 전체 완료나 A01–A16 전체 충족을 선언하지 않는다.** 이 문서는 `greenfield/`만 점검한다. 계획 문서의 제안 경로와 실제 경로의 대응도 아래에 기록한다.
+
+### 2026-09-27 — Codex 자연어 진입점 추가
+
+프로젝트 스킬과 전담 역할, [자연어 라우팅](../../AGENTS.md)을 추가한 뒤 같은 날 전역 사용자 설치로 전환했다. 모델·권한 설정은 부모 Codex에서 상속한다. Codex의 실제 `skills/list` 조회에서 `task-agent`, scope `repo`, enabled `true`, 등록 오류 없음을 확인했다. 스킬 검증기와 TOML/YAML 검사도 통과했다.
+
+전역 설치는 `~/.codex/skills/task-agent/`와 `~/.codex/agents/task-agent.toml`이다. 저장소 중복 등록을 제거하고 공용 엔진 경로와 대상 프로젝트를 분리했다. 저장소 밖에서 실제 `skills/list`가 scope `user`, enabled `true`, 동일 이름 1개, 오류 없음으로 반환했다. 별도 임시 프로젝트 두 곳에서 context·help·예제 생성/검증·문자 그대로의 파일명 전달·프로젝트별 상태 분리와 기존 smoke 상태 조회를 확인했다. 사용자 정의 역할 TOML은 검사했지만 현재 도구가 named-role 인자를 제공하지 않아 역할 로더를 통한 직접 호출은 확인하지 않았다.
+
+전담 서브에이전트에 “입력 [3, 7, 10]의 합계와 개수를 독립 계산하고 JSON으로 통합”을 자연어로 전달했다. 기존 예제 호출 없이 source→sum/count→integration 계획을 작성했고 정적 검증을 통과했다. 부모가 시험 계획을 새 엔진에서 실행해 `complete: true`, 미처리 intent 0, 실제 결과 `{"sum":20,"count":3}`을 확인했다. 기록은 로컬 `greenfield/.state/codex-integration-smoke/`에 보존한다. 현재 도구에서는 사용자 정의 역할 인자 대신 일반 서브에이전트에 스킬을 전달하는 경로를 실행 검증했다.
+
+시험 중 Docker가 꺼져 있을 때 start intent가 일찍 완료 처리되는 문제를 수정했다. queued/unknown 상태에서는 intent를 유지하고, 이전 버전에서 이미 확인 처리한 queued attempt도 같은 신원으로 조정한다. 제어기 교체 후 재시작 및 이전 상태 복구 회귀 테스트를 추가했다. 실제 시험에서도 기존 sum/count attempt를 유지한 채 복구했다. 타입 검사와 기본 87개 중 81개 통과·Docker 6개 skip을 확인했다. 별도 Docker 회귀 묶음은 30/30 통과·skip 0이었다.
+
+이 연결은 **현재 Codex의 추론을 계획 작성에 사용하는 진입점**이다. 독립 CLI 안에 별도 원격 모델 제공자를 내장한 것은 아니며, 단일 자연어 시험을 일반적인 계획 품질 보장으로 확대하지 않는다. 아래 최초 구현 평가의 미검증 범위는 별도 명시가 없는 한 유지한다.
 
 ## 1. 검증 종류와 재현 범위
 

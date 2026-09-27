@@ -58,9 +58,25 @@ const stop = () => { if (stopping) return; stopping = true; signalChild("SIGTERM
 process.on("SIGTERM", stop); process.on("SIGINT", stop)
 const deadline = setTimeout(() => { timedOut = true; stop() }, config.timeoutMs)
 deadline.unref()
-const execute = step => new Promise((done, reject) => {
+const execute = (step, agentResume = false) => new Promise((done, reject) => {
   if (stopping) return done(143)
-  child = spawn(step.argv[0], step.argv.slice(1), { cwd: workspace, detached: true, stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, HOME: join(workspace, ".home"), TASK_RESUME_CHECKPOINT: checkpointPath } })
+  let agentEnvironment = {}, input
+  if (step.agent) {
+    let session = workspace
+    for (const part of step.agent.sessionPath.split("/")) {
+      if (!part || part === "." || part === "..") return reject(new Error("Invalid agent session path"))
+      session = join(session, part)
+      if (existsSync(session) && lstatSync(session).isSymbolicLink()) return reject(new Error("Agent session path is a symlink"))
+    }
+    if (agentResume && !existsSync(session)) return reject(new Error("Agent resume session is missing"))
+    mkdirSync(session, { recursive: true, mode: 0o700 })
+    agentEnvironment = { TASK_AGENT_SESSION: session, TASK_AGENT_RESUMING: String(agentResume) }
+    input = JSON.stringify({ ...config.taskContext, resume: agentResume, sessionPath: session })
+  }
+  const command = agentResume ? step.agent.resumeArgv : step.argv
+  const argv = process.env.TASK_AGENT_STEP_SUPERVISOR ? [process.env.TASK_AGENT_STEP_SUPERVISOR, "--cwd", workspace, "--grace", "1s", "--", ...command] : command
+  child = spawn(argv[0], argv.slice(1), { cwd: workspace, detached: true, stdio: [input ? "pipe" : "ignore", "inherit", "inherit"], env: { ...process.env, HOME: join(workspace, ".home"), TASK_RESUME_CHECKPOINT: checkpointPath, ...agentEnvironment } })
+  if (input) { child.stdin.on("error", () => {}); child.stdin.end(input) }
   let stepTimeout = false
   const timer = setTimeout(() => { stepTimeout = true; signalChild("SIGTERM"); setTimeout(() => signalChild("SIGKILL"), 2000).unref() }, step.timeoutMs)
   timer.unref()
@@ -90,7 +106,7 @@ try {
       if (matches) { checkpoint.completedSteps.push(completed); save(); continue }
     }
     checkpoint.state = "running"; checkpoint.activeStepId = step.id; save()
-    const code = await execute(step)
+    const code = await execute(step, Boolean(step.agent && compatible && prior.activeStepId === step.id))
     if (stopping || code !== 0) { exitCode = timedOut ? 124 : stopping ? 143 : code; break }
     checkpoint.completedSteps.push({ stepId: step.id, stepSpecDigest, inputDigest, outputDigest: outputDigest(step) })
     delete checkpoint.activeStepId

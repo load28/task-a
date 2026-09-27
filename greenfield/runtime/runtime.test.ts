@@ -203,3 +203,18 @@ test("real Docker input mounts reject writes and expose no backend database or h
   assert.equal(readFileSync(join(captured.outputs[0]!.snapshot.path, "result.txt"), "utf8"), "isolated")
   assert.equal(readFileSync(join(input, "source.txt"), "utf8"), "pinned")
 })
+
+test("agent runner passes the objective and resumes only the interrupted step with its session", async t => {
+  const root = temporary(t), workspace = join(root, "work"), configPath = join(root, "config.json"), agent = join(root, "agent.mjs")
+  mkdirSync(workspace)
+  writeFileSync(agent, `import fs from 'node:fs';import path from 'node:path';let data='';for await(const chunk of process.stdin)data+=chunk;const context=JSON.parse(data);const session=process.env.TASK_AGENT_SESSION;const file=path.join(session,'conversation.json');if(process.argv[2]==='start'){fs.writeFileSync(file,JSON.stringify({goal:context.objective}));process.exit(2)}if(!context.resume||process.env.TASK_AGENT_RESUMING!=='true')throw Error('not resuming');fs.writeFileSync('result.txt',JSON.parse(fs.readFileSync(file)).goal)`)
+  const request = launch(), config = { identity: { intentId: request.intentId, attemptId: request.attemptId, workspaceId: request.workspaceId, fence: 1 }, taskSpecRef: ref(request.task), inputSnapshotDigest: request.inputSnapshot.provenanceDigest, semanticReuseKey: request.inputSnapshot.semanticReuseKey, templateDigest: request.template.digest, timeoutMs: 10000, bootstrap: [], resume: false, taskContext: { objective: "테스트를 읽고 고치세요" }, steps: [
+    { id: "agent", argv: [process.execPath, agent, "start"], agent: { sessionPath: ".agent/test", resumeArgv: [process.execPath, agent, "resume"] }, outputs: ["result.txt"], timeoutMs: 5000, effectPolicy: "replayable" },
+  ] }
+  atomicJson(configPath, config); atomicJson(join(root, "permit.json"), { ...config.identity, revoked: false })
+  assert.equal(await runRunner(configPath, workspace), 2)
+  config.identity = { ...config.identity, intentId: "intent-2", attemptId: "attempt-2", fence: 2 }; config.resume = true
+  atomicJson(configPath, config); atomicJson(join(root, "permit.json"), { ...config.identity, revoked: false })
+  assert.equal(await runRunner(configPath, workspace), 0)
+  assert.equal(readFileSync(join(workspace, "result.txt"), "utf8"), "테스트를 읽고 고치세요")
+})

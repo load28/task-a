@@ -171,6 +171,7 @@ export class ValidationService implements Validator {
     const identity = `validation-${digest(request.id).slice(7)}`
     const template = withDigest({ ...request.template, id: `${identity}-template`, revision: 1, sourceSnapshots: [], bootstrap: [] })
     const policy = withDigest({ ...request.policy, id: `${identity}-policy`, revision: 1,
+      network: "none" as const, allowedHosts: [], secretRefs: [], allowedEffects: [],
       resources: { ...request.policy.resources, timeoutMs: Math.min(request.policy.resources.timeoutMs, request.validator.definition.timeoutMs + 1000) } })
     const all = [
       ...request.artifacts.map((artifact, index) => ({ artifact, name: `candidate-${index}`, mountPath: `/inputs/candidate-${index}` })),

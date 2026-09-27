@@ -9,9 +9,11 @@ import { contentDigest, digest, ref, revisionDigest, sameRef } from "../contract
 import type { CaptureResult, Digest, LaunchRequest, RevisionRef, RuntimeBackend, RuntimeIdentity, RuntimeObservation, StopReceipt, StopRequest } from "../contracts/model.ts"
 import { atomicJson, capturePath, copyTree, plainPath, RuntimeError, safeRelative, scanTree, within } from "./files.ts"
 
+import { ChatGPTModelBroker, CHATGPT_HOST, CHATGPT_SECRET, type ChatGPTBrokerOptions } from "./model-broker.ts"
+
 const executeFile = promisify(execFile)
 export type DockerCommand = (args: string[]) => Promise<{ stdout: string; stderr: string }>
-export interface DockerRuntimeOptions { root: string; command?: string; execute?: DockerCommand; timeoutMs?: number }
+export interface DockerRuntimeOptions { root: string; command?: string; execute?: DockerCommand; timeoutMs?: number; chatgpt?: ChatGPTBrokerOptions; supervisorPath?: string }
 interface Intent {
   identity: RuntimeIdentity; request?: LaunchRequest; launchDigest?: Digest; containerName: string
   tombstoned: boolean; createDispatched: boolean; startDispatched: boolean; workspaceReady?: boolean
@@ -46,8 +48,16 @@ export class DockerRuntimeBackend implements RuntimeBackend {
   private execute: DockerCommand
   private queue: Promise<unknown> = Promise.resolve()
   private namespace: string
+  private supervisorPath?: string
+  private broker?: ChatGPTModelBroker
 
   constructor(options: DockerRuntimeOptions) {
+    if (options.chatgpt) this.broker = new ChatGPTModelBroker(options.chatgpt)
+    const supervisor = options.supervisorPath ?? process.env.TASK_AGENT_STEP_SUPERVISOR_PATH
+    if (supervisor) {
+      this.supervisorPath = realpathSync(supervisor)
+      if (!lstatSync(this.supervisorPath).isFile()) throw new RuntimeError("invalid_contract", "Step supervisor must be an executable file")
+    }
     mkdirSync(options.root, { recursive: true, mode: 0o700 })
     this.root = realpathSync(options.root)
     this.namespace = key(this.root).slice(0, 20)
@@ -66,7 +76,7 @@ export class DockerRuntimeBackend implements RuntimeBackend {
     })
   }
 
-  close(): void { this.db.close(); this.gate.close() }
+  close(): void { this.broker?.close(); this.db.close(); this.gate.close() }
 
   private async serialized<T>(operation: () => Promise<T>): Promise<T> {
     const run = this.queue.then(async () => {
@@ -115,9 +125,13 @@ export class DockerRuntimeBackend implements RuntimeBackend {
 
   private validate(request: LaunchRequest): void {
     this.checkIdentity(request)
-    if (!/^.+@sha256:[a-f0-9]{64}$/.test(request.template.environment.image)) throw new RuntimeError("invalid_contract", "Docker images must be pinned by their complete sha256 digest")
-    if (request.policy.network !== "none" || request.policy.allowedHosts.length || request.policy.secretRefs.length || request.policy.allowedEffects.length)
-      throw new RuntimeError("capability_unsupported", "This backend supports no network, no secrets and no external effects")
+    if (!/^(?:[^\s@]+@)?sha256:[a-f0-9]{64}$/.test(request.template.environment.image)) throw new RuntimeError("invalid_contract", "Docker images must be pinned by their complete sha256 digest")
+    const modelAccess = this.modelAccess(request)
+    if (modelAccess) {
+      if (!this.broker || !request.task.design.steps.some(step => step.agent)) throw new RuntimeError("capability_unsupported", "ChatGPT model gateway must be configured explicitly for agent steps")
+      this.broker.preflight()
+    } else if (request.policy.network !== "none" || request.policy.allowedHosts.length || request.policy.secretRefs.length || request.policy.allowedEffects.length)
+      throw new RuntimeError("capability_unsupported", "Only offline execution or the explicit ChatGPT inference policy is supported")
     if ([request.task, request.template, request.policy].some(value => revisionDigest(value) !== value.digest))
       throw new RuntimeError("invalid_contract", "Launch specification bytes do not match their declared immutable digests")
     const resources = request.policy.resources
@@ -133,6 +147,15 @@ export class DockerRuntimeBackend implements RuntimeBackend {
       if (!step.argv.length || step.argv.some(value => typeof value !== "string" || !value || value.includes("\0")) || !Number.isSafeInteger(step.timeoutMs) || step.timeoutMs < 1)
         throw new RuntimeError("invalid_contract", "A step needs valid argv and a finite timeout")
       for (const path of step.outputs) this.validateOutput(path)
+      if (step.agent) {
+        safeRelative(step.agent.sessionPath)
+        if (step.agent.sessionPath.split("/")[0] === ".task-runtime") throw new RuntimeError("invalid_contract", "Agent sessions cannot overlap runner metadata")
+        if (!step.agent.resumeArgv.length || step.agent.resumeArgv.some(value => typeof value !== "string" || value.includes("\0")) || !step.agent.resumeArgv[0])
+          throw new RuntimeError("invalid_contract", "Agent resume requires an explicit argv")
+        if ([...step.outputs, ...request.task.outputPorts.map(port => port.path)].some(path => path === step.agent!.sessionPath || path.startsWith(step.agent!.sessionPath + "/") || step.agent!.sessionPath.startsWith(path + "/")))
+          throw new RuntimeError("invalid_contract", "Agent session storage cannot overlap declared outputs")
+        if (request.template.bootstrap.includes(step)) throw new RuntimeError("capability_unsupported", "Agent invocations belong to task steps, not bootstrap")
+      }
     }
     for (const port of request.task.outputPorts) this.validateOutput(port.path)
     if (request.readOnlyInputs.length !== request.task.inputPorts.length) throw new RuntimeError("invalid_contract", "Every declared input requires one read-only mount")
@@ -159,6 +182,13 @@ export class DockerRuntimeBackend implements RuntimeBackend {
       if (checkpoint.effectReceipts.some(receipt => receipt.state !== "confirmed")) throw new RuntimeError("effect_unknown", "An unresolved external effect prevents automatic resume")
     }
   }
+
+  private modelAccess(request: LaunchRequest): boolean {
+    const p = request.policy
+    return p.network === "restricted" && p.allowedHosts.length === 1 && p.allowedHosts[0] === CHATGPT_HOST && p.secretRefs.length === 1 && p.secretRefs[0] === CHATGPT_SECRET && p.allowedEffects.length === 1 && p.allowedEffects[0] === "model-inference"
+  }
+  private bridgePath(intent: Intent): string { return join(this.launchPath(intent.identity.intentId), "model-bridge") }
+  private pumpModel(intent: Intent): void { if (intent.request && this.modelAccess(intent.request) && !intent.tombstoned) this.broker?.pump(this.bridgePath(intent)) }
 
   private validateOutput(path: string): void {
     safeRelative(path)
@@ -222,10 +252,12 @@ export class DockerRuntimeBackend implements RuntimeBackend {
     if (source) copyTree(source, workspace)
     const launch = this.launchPath(request.intentId)
     mkdirSync(launch, { recursive: true, mode: 0o755 })
+    if (this.modelAccess(request)) for (const name of ["requests", "responses", "claims"]) mkdirSync(join(this.bridgePath(intent), name), { recursive: true, mode: 0o700 })
     atomicJson(join(launch, "permit.json"), { ...intent.identity, revoked: false })
     atomicJson(join(launch, "config.json"), {
       identity: intent.identity, taskSpecRef: ref(request.task), inputSnapshotDigest: request.inputSnapshot.provenanceDigest,
       semanticReuseKey: request.inputSnapshot.semanticReuseKey, templateDigest: request.template.digest,
+      taskContext: { objective: request.task.objective, taskSpecRef: ref(request.task), inputs: request.task.inputPorts, outputs: request.task.outputPorts },
       steps: request.task.design.steps, bootstrap: request.template.bootstrap, timeoutMs: request.policy.resources.timeoutMs,
       resume: Boolean(request.resumeCheckpoint),
     })
@@ -240,9 +272,13 @@ export class DockerRuntimeBackend implements RuntimeBackend {
       [this.launchPath(request.intentId), "/launch", true],
       [fileURLToPath(new URL("./runner.mjs", import.meta.url)), "/runtime/runner.mjs", true],
       ...request.readOnlyInputs.map(input => [realpathSync(input.hostPath), `/inputs/${input.port}`, true]),
+      [fileURLToPath(new URL("./codex-agent.mjs", import.meta.url)), "/runtime/codex-agent.mjs", true],
+      [fileURLToPath(new URL("./model-bridge.mjs", import.meta.url)), "/runtime/model-bridge.mjs", true],
+      ...(this.modelAccess(request) ? [[join(this.bridgePath(intent), "requests"), "/model-bridge/requests", false], [join(this.bridgePath(intent), "responses"), "/model-bridge/responses", true]] : []),
+      ...(this.supervisorPath ? [[this.supervisorPath, "/runtime/task-step", true]] : []),
     ] as Array<[string, string, boolean]>
     if (mounts.some(([source]) => source.includes(",") || source.includes("\n"))) throw new RuntimeError("capability_unsupported", "Docker mount source has unsupported punctuation")
-    return ["create", "--name", intent.containerName, "--init", "--user", `${uid}:${gid}`, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--restart", "no", "--no-healthcheck", "--cpus", String(resources.cpus), "--memory", String(resources.memoryBytes), "--memory-swap", String(resources.memoryBytes), "--pids-limit", String(resources.pids), "--stop-timeout", "10", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=67108864", "--workdir", "/workspace", "--env", "HOME=/workspace/.home", "--label", `task-agent.namespace=${this.namespace}`, "--label", `task-agent.intent=${request.intentId}`, "--label", `task-agent.attempt=${request.attemptId}`, "--label", `task-agent.fence=${request.fence}`, "--label", `task-agent.launch=${intent.launchDigest}`, ...mounts.flatMap(([source, target, readonly]) => ["--mount", `type=bind,src=${source},dst=${target}${readonly ? ",readonly" : ""}`]), "--entrypoint", "node", request.template.environment.image, "/runtime/runner.mjs", "/launch/config.json", "/workspace"]
+    return ["create", "--name", intent.containerName, "--init", "--user", `${uid}:${gid}`, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--restart", "no", "--no-healthcheck", "--cpus", String(resources.cpus), "--memory", String(resources.memoryBytes), "--memory-swap", String(resources.memoryBytes), "--pids-limit", String(resources.pids), "--stop-timeout", "10", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=67108864", "--workdir", "/workspace", "--env", "HOME=/workspace/.home", ...(this.supervisorPath ? ["--env", "TASK_AGENT_STEP_SUPERVISOR=/runtime/task-step"] : []), ...(this.modelAccess(request) ? ["--env", "TASK_AGENT_MODEL_BRIDGE=/model-bridge"] : []), "--label", `task-agent.namespace=${this.namespace}`, "--label", `task-agent.intent=${request.intentId}`, "--label", `task-agent.attempt=${request.attemptId}`, "--label", `task-agent.fence=${request.fence}`, "--label", `task-agent.launch=${intent.launchDigest}`, ...mounts.flatMap(([source, target, readonly]) => ["--mount", `type=bind,src=${source},dst=${target}${readonly ? ",readonly" : ""}`]), "--entrypoint", "node", request.template.environment.image, "/runtime/runner.mjs", "/launch/config.json", "/workspace"]
   }
 
   private async inspect(intent: Intent): Promise<Container | undefined> {
@@ -274,6 +310,7 @@ export class DockerRuntimeBackend implements RuntimeBackend {
     intent.observation = observation; this.save(intent); return observation
   }
   private async observeInternal(intent: Intent): Promise<RuntimeObservation> {
+    this.pumpModel(intent)
     // Recover a crash between committing the tombstone and revoking the boot permit.
     if (intent.tombstoned && intent.workspaceReady) atomicJson(join(this.launchPath(intent.identity.intentId), "permit.json"), { ...intent.identity, revoked: true })
     if (intent.tombstoned && !intent.startDispatched) return this.revoked(intent)
@@ -311,7 +348,7 @@ export class DockerRuntimeBackend implements RuntimeBackend {
       if (!intent) {
         intent = { identity: { intentId: request.intentId, attemptId: request.attemptId, workspaceId: request.workspaceId, fence: request.fence }, containerName: `task-gf-${this.namespace}-${key(request.intentId).slice(0, 24)}`, tombstoned: true, createDispatched: false, startDispatched: false }
       } else this.requireIdentity(intent, request)
-      intent.tombstoned = true; this.save(intent)
+      intent.tombstoned = true; this.save(intent); this.broker?.stop(this.bridgePath(intent))
       if (intent.workspaceReady) atomicJson(join(this.launchPath(request.intentId), "permit.json"), { ...intent.identity, revoked: true })
       if (!intent.startDispatched) return this.revoked(intent)
       let container: Container | undefined

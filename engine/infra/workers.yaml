@@ -1,0 +1,21 @@
+# Based on Substrate docs/api-guide.md and demos/counter/counter.yaml.tmpl.
+# Upstream Apache-2.0 attribution: Google LLC, 2026; see engine/ax/LICENSE.
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: task-agent
+  namespace: ax-system
+spec:
+  replicas: 2
+  sandboxClass: gvisor
+  workerImage: ko://github.com/agent-substrate/substrate/cmd/ateom-gvisor
+  template:
+    nodeSelector:
+      ate.dev/substrate-version: ed6d2a1
+    resources:
+      limits:
+        cpu: "1"
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 1Gi

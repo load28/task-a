@@ -1,6 +1,16 @@
 # 계약부터 다시 만든 Task Agent
 
-기존 제품과 독립된 Node 24 + SQLite + Docker 실행 시스템이다. [계약](../docs/rebuild/contracts.md)을 기준으로 그래프, 변경 영향, 작업 공간, 중단·재개를 구현한다. 기존 제품의 코드·데이터·패키지를 가져오지 않는다. AX는 [설계 참고](../docs/rebuild/ax-reference.md)이며 실행 종속성이 아니다.
+> 이전 설계의 구현·실험 기록이다. 2026-09-27부터 새 실행 엔진은 `engine/ax/`의 AX 원본을 기준으로 한다. 이 문서의 자체 Docker·인증 중계·선택적 supervisor 구현은 새 AX 기반의 완료 증거가 아니다.
+
+기존 제품과 독립된 Node 24 + SQLite + Docker 실행 시스템이다. [계약](../docs/rebuild/contracts.md)을 기준으로 그래프, 변경 영향, 작업 공간, 중단·재개를 구현한다. 기존 제품의 코드·데이터·패키지를 가져오지 않는다. AX는 [설계 참고](../docs/rebuild/ax-reference.md)와 [AX 원본 도입](../docs/rebuild/ax-implementation-adoption.md)의 출처다. AX 제품 자체는 실행 종속성이 아니다.
+
+이 사용자 환경의 Codex에는 `~/.codex/skills/task-agent/SKILL.md`와 `~/.codex/agents/task-agent.toml`을 전역 등록했다. 다른 프로젝트에서도 사용할 수 있다. 다음처럼 자연어로 요청하거나 `$task-agent`를 명시할 수 있다.
+
+> 태스크 에이전트로 이 작업을 작게 나눠서 계약과 그래프를 만들고 실행해 줘.
+>
+> 태스크 에이전트로 아까 작업 상태를 확인하고 이어서 실행해 줘.
+
+Codex 서브에이전트가 현재 요청을 계획하고 전역 스킬의 `scripts/task-agent.mjs --project <대상 프로젝트>`로 공용 엔진을 운용한다. 엔진 위치는 스킬의 `engine.json`에 현재 설치된 이 저장소의 `greenfield/` 절대 경로로 저장한다. 엔진을 옮기면 설정 또는 `TASK_AGENT_ENGINE_ROOT`를 갱신한다. 기본 상태는 대상 프로젝트의 `.task-agent/state`에 분리하며 기존 작업은 명시된 `--state`를 유지한다. 계획은 현재 Codex가 만들고, AI 판단이 필요한 leaf는 격리된 Codex CLI가 실행한다. 기존 ChatGPT 로그인은 호스트 중계기로 연결한다. graphId·state·계획 파일을 요청 기록으로 남기고 이후 요청에도 같은 영속 상태를 사용한다. 계획만 요청하면 검증까지만 수행한다. 실행 정책은 아래의 Docker 지원 범위를 그대로 따른다.
 
 ## 1. 실행하고 변경한다
 
@@ -64,7 +74,7 @@ writer 종료를 증명하는 receipt와 불변 checkpoint를 확보해야 재�
 
 작업 코드는 제어 DB, 다른 작업의 가변 공간, Docker socket에 접근하지 않는다. 검증은 중단된 출력 snapshot과 정확한 입력을 대상으로 수행한다. 명령 실행이 성공해도 계약 검증 전에는 결과로 채택하지 않는다. 조회 때도 채택 bytes·입력·검증 보고서의 무결성을 확인한다. 재검증이 불확실하거나 환경을 확인할 수 없으면 작업을 대기시키고 이유를 남긴다.
 
-계획 입력은 `GraphBundle` JSON이다. 자연어 모델과 연결하려면 운영자가 선택한 `ProposalSource`를 주입한다. 원격 모델 계정이나 API 키는 기본 설정에 포함하지 않는다.
+계획 입력은 `GraphBundle` JSON이다. Codex 안에서는 위 스킬의 전담 서브에이전트가 계약과 계획을 작성한다. Codex 대화 밖에서 별도 모델 제공자를 연결하려면 운영자가 선택한 `ProposalSource`를 주입한다. 원격 모델 계정이나 API 키는 기본 설정에 포함하지 않는다.
 
 ```sh
 node greenfield/cli/main.ts plan --objective '목표' --proposal /tmp/proposal.json --out /tmp/review-plan.json

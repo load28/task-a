@@ -1,5 +1,7 @@
 # Docker 실행 어댑터
 
+> 이전 설계의 구현·실험 기록이다. 2026-09-27부터 새 실행 엔진은 `engine/ax/`의 AX 원본을 기준으로 한다. 이 문서의 자체 Docker·인증 중계·선택적 supervisor 구현은 새 AX 기반의 완료 증거가 아니다.
+
 `DockerRuntimeBackend`는 신규 계약 C07–C10을 구현한다. 제어 상태 저장소와 독립된 backend SQLite 파일에 실행 신원, 단일 시작 전달, 철회 tombstone, 마지막 관측, 공간 점유를 저장한다. 기존 제품 구현을 가져오지 않는다.
 
 ## 사용과 지원 범위
@@ -15,7 +17,7 @@ const captured = await backend.captureStoppedWorkspace(observation.stopReceipt!)
 backend.close()
 ```
 
-Node 24가 설치된 digest 고정 컨테이너 이미지를 사용한다. `node` 바이너리, Linux 프로세스 그룹, Docker의 전체 컨테이너 종료 관측이 필요하다. 작업 argv와 bootstrap 단계는 `effectPolicy: replayable`만 지원한다. `network: none`, 빈 `allowedHosts/secretRefs/allowedEffects`를 요구한다. 외부 효과, secret 전달, 제한된 외부 통신, 영수증을 요구하는 단계는 `capability_unsupported`로 시작 전에 거절한다.
+Node 24가 설치된 digest 고정 컨테이너 이미지를 사용한다. `node` 바이너리, Linux 프로세스 그룹, Docker의 전체 컨테이너 종료 관측이 필요하다. 작업 argv와 bootstrap 단계는 `effectPolicy: replayable`만 지원한다. 일반 단계는 `network: none`, 빈 `allowedHosts/secretRefs/allowedEffects`를 요구한다. 에이전트 단계에 한해 [Codex 연결](../agents/codex/README.md)의 고정 ChatGPT inference 정책을 추가 지원한다. 나머지 외부 효과·직접 secret 전달·일반 외부 통신·영수증 의존 단계는 시작 전에 거절한다.
 
 공간별 private 디렉터리만 읽고 쓸 수 있다. 입력은 `/inputs/<port>`에 읽기 전용으로 연결한다. 파일 산출물은 그 디렉터리 안의 원래 파일명으로 읽는다. rootfs는 읽기 전용이고 non-root UID, capability 제거, privilege escalation 차단, network 없음, CPU·memory·PID 한도를 설정한다. 제어 DB, backend DB, host socket, 다른 태스크의 공간을 마운트하지 않는다.
 
@@ -37,3 +39,5 @@ TASK_AGENT_DOCKER_TEST=1 node --test greenfield/runtime/runtime.test.ts
 ```
 
 기본 검증은 중복 시작·응답 유실·재시작·철회·자원 소실·capture 인계·snapshot 무결성과 별도 runner 프로세스 재개를 확인한다. 실제 Docker 검증은 고정 Node 이미지로 중단 후 새 컨테이너에서 부분 파일과 완료 단계를 복원한다. 테스트가 만든 컨테이너는 종료 후 정리한다. 실제 Docker 검증에는 로컬 daemon 접근 권한이 필요하다.
+
+AX의 Go process group 감독 코드를 차용한 `runner-go` 실행기를 `TASK_AGENT_STEP_SUPERVISOR_PATH` 또는 `supervisorPath`로 선택할 수 있다. 원본·수정 내역은 [NOTICE](../runner-go/third_party/ax/NOTICE.md)에 있다.

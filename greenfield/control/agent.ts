@@ -180,9 +180,11 @@ export class TaskAgent {
             ? await this.backend.requestStop({ ...identity(attempt), reason: attempt.stopReason ?? "supersede", checkpoint: false })
             : await this.backend.ensureStarted(attempt.launch)
           this.observe(graphId, observation, intent.id)
+          this.store.release(intent.id, this.owner, observation.diagnostic)
         } else if (intent.type === "stop") {
           const observation = await this.backend.requestStop({ ...identity(attempt), reason: attempt.stopReason ?? "suspend", checkpoint: true })
           this.observe(graphId, observation, intent.id)
+          this.store.release(intent.id, this.owner, observation.diagnostic)
         } else if (intent.type === "capture") await this.capture(graphId, attemptId, intent.id)
         else throw new Error("Unknown backend intent")
       } catch (error) {
@@ -197,7 +199,13 @@ export class TaskAgent {
     }
     const observing = this.store.read(graphId)!.value.attempts.filter(a => a.phase === "observe" || a.phase === "dispatch")
     for (const attempt of observing) {
-      try { this.observe(graphId, await this.backend.observe(identity(attempt))) }
+      try {
+        // Reconcile older acknowledged starts that never reached a backend dispatch.
+        // The backend retains the same durable identity and owns dispatch deduplication.
+        const recoverQueued = attempt.observed === "queued" && attempt.desired === "running" && !attempt.fenced
+          && !this.store.pending(graphId).some(i => i.id === attempt.intentId)
+        this.observe(graphId, recoverQueued ? await this.backend.ensureStarted(attempt.launch) : await this.backend.observe(identity(attempt)))
+      }
       catch (error) { this.observe(graphId, { ...identity(attempt), observed: "unknown", diagnostic: diagnostic(error) }) }
     }
     const validating = this.store.read(graphId)!.value.attempts.filter(a => a.phase === "validate")
@@ -221,7 +229,9 @@ export class TaskAgent {
     this.change(graphId, "observe", (state, tx) => {
       const attempt = state.attempts.find(a => a.attemptId === obs.attemptId)!
       if (!sameIdentity(identity(attempt), obs)) throw new Error("stale_attempt")
-      if (completedIntent && (!completedIntent.startsWith("stop-") || obs.observed === "stopped" && obs.stopReceipt)) tx.completeIntent(completedIntent)
+      const stopped = obs.observed === "stopped" && !!obs.stopReceipt
+      const started = (obs.observed === "running" || obs.observed === "stopping") && !!obs.backendHandle
+      if (completedIntent && (stopped || !completedIntent.startsWith("stop-") && started)) tx.completeIntent(completedIntent)
       if (["capture", "validate", "finished"].includes(attempt.phase)) return null
       attempt.lastObservation = obs; attempt.observed = obs.observed; attempt.observedFence = obs.fence
       if (obs.backendHandle) attempt.backendHandle = obs.backendHandle

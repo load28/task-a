@@ -33,12 +33,18 @@ export interface ValidatorRevision extends Revisioned {
 
 export interface InputPort { name: string; contractRef: RevisionRef; mountPath: string }
 export interface OutputPort { name: string; contractRef: RevisionRef; path: string }
+/** An installed agent consumes task context on stdin and persists resumable state here. */
+export interface AgentInvocation {
+  sessionPath: string
+  resumeArgv: string[]
+}
 export interface ExecutionStep {
   id: string
   argv: string[]
   outputs: string[]
   timeoutMs: number
   effectPolicy: "replayable" | "requires-receipt"
+  agent?: AgentInvocation
 }
 export interface TaskSpecRevision extends Revisioned {
   objective: string

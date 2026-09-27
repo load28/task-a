@@ -138,7 +138,7 @@ async function main() {
     print((lstatSync(input).isDirectory() ? artifacts.ingestDirectory(input) : artifacts.ingestFile(input)).ref); return
   }
   const store = new StateStore<AgentState>(resolve(stateDirectory, "state.sqlite"))
-  const backend = new DockerRuntimeBackend({ root: resolve(stateDirectory, "backend") })
+  const backend = new DockerRuntimeBackend({ root: resolve(stateDirectory, "backend"), ...(process.env.TASK_AGENT_CODEX_AUTH_FILE ? { chatgpt: { authFile: resolve(process.env.TASK_AGENT_CODEX_AUTH_FILE) } } : {}) })
   const agent = new TaskAgent({ store, artifacts, backend, validator: new ValidationService(backend, artifacts) })
   const overview = (graphId: string) => {
     const status = agent.get(graphId), state = status.value

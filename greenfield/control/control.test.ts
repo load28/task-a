@@ -160,6 +160,41 @@ test("backend error codes survive durable diagnostics and status reads", async t
   assert.match(f.agent.get("sample").pendingIntents[0]!.error!, /^capability_unsupported:/)
 })
 
+test("an unavailable backend retains the start intent across controller replacement and dispatches once after recovery", async t => {
+  const f = fixture(t), start = f.backend.ensureStarted.bind(f.backend)
+  let unavailable = true
+  f.backend.autoFinish = true
+  f.backend.ensureStarted = async request => unavailable
+    ? { intentId: request.intentId, attemptId: request.attemptId, workspaceId: request.workspaceId, fence: request.fence,
+      observed: "unknown", diagnostic: "runtime_unavailable: daemon is stopped" }
+    : start(request)
+  await apply(f.agent); await drive(f.agent, 2)
+  const attemptId = f.agent.get("sample").value.attempts[0]!.attemptId
+  assert(f.agent.get("sample").pendingIntents.some(i => i.type === "start"))
+  assert.equal(f.backend.starts, 0)
+  unavailable = false
+  const resumed = new TaskAgent(f)
+  await drive(resumed)
+  assert.equal(resumed.get("sample").complete, true)
+  assert.deepEqual(resumed.get("sample").value.attempts.map(a => a.attemptId), [attemptId])
+  assert.equal(f.backend.starts, 1)
+})
+
+test("a queued legacy attempt with an acknowledged start is reconciled using its original identity", async t => {
+  const f = fixture(t); f.backend.autoFinish = true
+  await apply(f.agent); await f.agent.tick("sample")
+  const scheduled = f.agent.get("sample"), attempt = scheduled.value.attempts[0]!
+  f.store.command({ graphId: "sample", operationId: "legacy-ack", expectedRevision: scheduled.revision, payload: {} }, (state, tx) => {
+    state.attempts[0]!.phase = "observe"
+    tx.completeIntent(attempt.intentId)
+  })
+  await drive(f.agent)
+  assert.equal(f.agent.get("sample").complete, true)
+  assert.equal(f.agent.get("sample").value.attempts.length, 1)
+  assert.equal(f.backend.starts, 1)
+  assert(f.backend.requests.has(attempt.attemptId))
+})
+
 test("unrelated graph revision during execution records explicit reuse without rewriting provenance", async t => {
   const f = fixture(t); await apply(f.agent); await drive(f.agent, 2)
   const next = fixtureBundle(); next.graph = withDigest({ ...next.graph, revision: 2, baseRevision: 1, reviewEvidence: { reviewer: "reviewer", rationale: "표시만 변경" } })

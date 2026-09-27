@@ -77,7 +77,7 @@ const validatorDefinition: Check = (v, p) => {
 }
 const contract = revisionObject({ purpose: text, shape, invariants: array(text), validators: array(revisionRef, 1), compatibilityValidators: array(revisionRef) })
 const validator = revisionObject({ definition: validatorDefinition, implementationDigest: hash, configurationDigest: hash })
-const step = object({ id: identifier, argv, outputs: array(relativePath), timeoutMs: positive, effectPolicy: literal("replayable", "requires-receipt") })
+const step = object({ id: identifier, argv, outputs: array(relativePath), timeoutMs: positive, effectPolicy: literal("replayable", "requires-receipt"), agent: optional(object({ sessionPath: relativePath, resumeArgv: argv })) })
 const task = revisionObject({
   objective: text, kind: literal("work", "integration"),
   inputPorts: array(inputPort),
@@ -87,7 +87,7 @@ const task = revisionObject({
 })
 const image: Check = (v, p) => {
   text(v, p)
-  if (typeof v !== "string" || !/^[^\s@]+@sha256:[a-f0-9]{64}$/.test(v)) fail(p, "container image must use an exact sha256 digest")
+  if (typeof v !== "string" || !/^(?:[^\s@]+@)?sha256:[a-f0-9]{64}$/.test(v)) fail(p, "container image must use an exact sha256 digest")
 }
 const template = revisionObject({ environment: object({ kind: literal("container"), image }), sourceSnapshots: array(object({ snapshot: blob, destination })), bootstrap: array(step) })
 const policy = revisionObject({

@@ -74,3 +74,16 @@ test("never-created receipts require a tombstone and terminated writers require 
   assert.throws(() => validateStopReceipt({ ...identity, termination: { kind: "creation-revoked" } }), /tombstone/)
   assert.throws(() => validateStopReceipt({ ...identity, termination: { kind: "all-writers-terminated", evidence: "container exited" } }), /backendHandle/)
 })
+
+test("agent invocation pins session/resume behavior and rejects escaping session paths", () => {
+  const bundle = fixtureBundle()
+  bundle.tasks[0]!.design.steps[0]!.agent = { sessionPath: ".agent/codex", resumeArgv: ["node", "/runtime/codex-agent.mjs", "resume", "test-model"] }
+  bundle.tasks[0] = withDigest(bundle.tasks[0]!); bundle.graph = withDigest({ ...bundle.graph, taskSpecRefs: bundle.tasks.map(ref) })
+  const previous = bundle.tasks[0]!.digest
+  validateGraphBundle(bundle)
+  bundle.tasks[0]!.design.steps[0]!.agent!.resumeArgv.push("changed")
+  bundle.tasks[0] = withDigest(bundle.tasks[0]!); assert.notEqual(bundle.tasks[0]!.digest, previous)
+  bundle.tasks[0]!.design.steps[0]!.agent!.sessionPath = "../another-task"
+  bundle.tasks[0] = withDigest(bundle.tasks[0]!)
+  assert.throws(() => validateGraphBundle(bundle), /project-relative/)
+})
