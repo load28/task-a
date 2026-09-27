@@ -17,7 +17,9 @@ Go 그래프 CLI는 프로젝트별 Redis 상태와 이벤트, 불변 AX Task �
 
 시험 계획과 상태는 로컬 `engine/.state/smoke/`의 `final-dag-proof.json`, `final-reuse-proof.json`, `final-resume-proof.json` 등에 보존한다. 이전 image·준비 대기·실패 시험은 같은 폴더와 임시 로그에 남아 있으며 최종 성공 근거와 구분한다.
 
-실제 ChatGPT 로그인은 아직 클러스터에 동기화하지 않았다. 자동 승인 검토가 access token과 account id를 `task-agent-ax-source`의 Kubernetes Secret에 저장할 명시적 승인 근거가 없다는 이유로 거절했다. refresh token은 전송 대상이 아니다. 실행할 [Codex 시험 생성기](../../engine/examples/codex-smoke.mjs)와 로컬 `engine/.state/smoke/codex-plan.json`은 준비·정적 검증했다. 실제 Codex 추론·native 인증 주입의 종단 검증은 대기다.
+사용자 명시적 승인 후 현재 ChatGPT 로그인 access token과 account id를 전용 로컬 클러스터의 인증 Secret에 동기화했다. refresh token은 전송하지 않았다. `/Users/seominyong/Downloads/source/task-agent-demo`에서 전역 스킬의 전담 서브에이전트가 작성한 `todo-demo` revision 1을 실행했다. 격리된 실제 Codex가 core → cli 두 작업을 수행했으며, 각각 별도 AX validator의 exit 0과 actor 중단을 확인하여 `complete: true`가 됐다. 엔진 소스 변경 없이 native 인증 주입과 실제 모델 호출을 종단 검증했다.
+
+AX result의 원본 bytes로 `todo.mjs`, `cli.mjs`, `package.json`, `README.md`를 대상 프로젝트에 내보냈다. 호스트에서도 고정 core·CLI 계약 테스트가 통과했다. 대상 프로젝트 `.task-agent/requests/todo-demo/`의 `plan.json`, `result.json`, `proof.json`에 계약·결과·actor 신원·Codex 세션·출력 해시를 보존한다. 이번 시험은 실제 Codex 생성과 의존 결과 전달을 검증했으며, 실제 Codex 세션의 중단·재개까지 검증한 것은 아니다.
 
 이 버전은 UTF-8 파일 계약의 연결 구현이다. read-only 입력 mount, 대용량 artifact 전송, 분산 fencing·자동 crash lock 회수, C01–C12 전체 수용을 완료했다고 주장하지 않는다. 아래 기록은 이전 구현의 이력이다.
 
