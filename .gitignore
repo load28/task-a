@@ -11,3 +11,6 @@ data/
 # Local runtime state and credentials are never source artifacts.
 .state/
 .opencode/
+
+# Brainstorm browser sessions contain a private session key.
+.superpowers/

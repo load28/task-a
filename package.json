@@ -2,17 +2,20 @@
   "name": "task-agent",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node engine/skill/scripts/task-agent.mjs",
     "build": "node engine/build.mjs",
     "test": "npm run test:node && npm run test:go",
-    "test:node": "node --test engine/skill/scripts/task-agent.test.mjs engine/codex/adapter.test.mjs",
+    "test:node": "node --test engine/skill/scripts/task-agent.test.mjs engine/codex/adapter.test.mjs engine/install-skill.test.mjs engine/skill/visual-companion.test.mjs",
     "test:go": "go -C engine/ax test ./...",
-    "check": "npm run verify:upstream && npm run check:plan && npm test",
+    "check": "npm run verify:upstream && npm run verify:superpowers && npm run check:plan && npm test",
     "verify:upstream": "node engine/verify-upstream.mjs",
     "check:plan": "node docs/rebuild/validate-plan.mjs --self-test",
     "skill:install": "node engine/install-skill.mjs",
-    "infra:connect": "node engine/infra/connect.mjs"
+    "infra:connect": "node engine/infra/connect.mjs",
+    "verify:superpowers": "node engine/verify-superpowers.mjs"
   }
 }

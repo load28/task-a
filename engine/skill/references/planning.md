@@ -1,5 +1,7 @@
 # AX 기반 Plan
 
+새 목표의 Plan을 만들기 전에 [인터뷰 연결](discovery.md)의 경로별 설계 검토를 완료한다. architectural 작업은 검토된 spec에서 Superpowers writing-plans 단계로 넘어온 뒤 작성한다. 문서 계획의 입력·출력 인터페이스와 검증 조건을 아래 형식에 옮긴다. Plan JSON에 임의 인터뷰 필드를 추가하지 않는다.
+
 계획은 JSON이다. `id`와 task `id`는 영문 소문자로 시작하는 40자 이내 소문자·숫자·하이픈이다. revision은 1부터 시작한다. 지원하지 않는 기존 GraphBundle을 그대로 제출하지 않는다.
 
 각 task는 `id`, `goal`, `contract`, `image`, `command`, `files`, `inputs`, `outputs`, `validator`를 가진다. image와 validator.image는 `repository@sha256:<64 hex>`다. command는 셸 문자열이 아닌 argv 배열이다. files는 작업 공간의 상대 파일 경로와 UTF-8 내용이다. inputs는 로컬 경로에서 `{task, output}`로의 매핑이며 생산자의 선언된 output을 가리킨다. outputs는 상대 파일 경로 배열이다. validator는 별도 image·command·files로 고정된 검증을 정의한다. 검증 파일로 후보 산출물을 덮어쓸 수 없다.

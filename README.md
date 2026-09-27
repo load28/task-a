@@ -1,11 +1,12 @@
 # Task Agent
 
-계약으로 작은 태스크를 연결하고, 각 태스크의 Codex를 격리 실행하는 AX 소스 기반 엔진이다. 입력이나 계약이 바뀌면 영향받는 작업을 다시 실행하고, 동일한 성공 결과는 재사용한다. 중단한 작업은 Substrate DATA snapshot과 저장된 Codex 세션으로 재개한다.
+Superpowers 인터뷰로 개념과 방향을 합의한 뒤 계약으로 작은 태스크를 연결하고, 각 태스크의 Codex를 격리 실행하는 AX 소스 기반 엔진이다. 입력이나 계약이 바뀌면 영향받는 작업을 다시 실행하고, 동일한 성공 결과는 재사용한다. 중단한 작업은 Substrate DATA snapshot과 저장된 Codex 세션으로 재개한다.
 
 ## 구조
 
 ```text
-Codex 전담 서브에이전트 → 전역 스킬 → Go task-agent
+Codex 전담 서브에이전트 → Superpowers 인터뷰·설계 검토 → 계약·Plan
+  → 전역 스킬 → Go task-agent
   → AX gRPC · Redis Streams · controller
   → Substrate gVisor actor → AX runner → Codex CLI
 ```
@@ -28,7 +29,7 @@ npm run build
 npm run check
 ```
 
-`check`는 AX 원본 해시, 계약 DAG와 생성 문서 일치, Node 래퍼, Go 테스트를 검사한다. 실제 Redis 저장소 테스트는 `TASK_AGENT_TEST_REDIS`, Docker 안의 모의 Codex 어댑터 테스트는 `TASK_AGENT_TEST_IMAGE`를 지정했을 때 실행한다. 해당 환경을 지정하지 않으면 이 통합 테스트는 건너뛴다. 실제 모델 호출 시험과는 구분한다.
+`check`는 AX·Superpowers 원본 해시, 계약 DAG와 생성 문서 일치, Node 래퍼, Go 테스트를 검사한다. 실제 Redis 저장소 테스트는 `TASK_AGENT_TEST_REDIS`, Docker 안의 모의 Codex 어댑터 테스트는 `TASK_AGENT_TEST_IMAGE`를 지정했을 때 실행한다. 해당 환경을 지정하지 않으면 이 통합 테스트는 건너뛴다. 실제 모델 호출 시험과는 구분한다.
 
 원본의 중첩 `.github/workflows`는 출처 보존용이다. 이 저장소의 CI는 루트 [.github/workflows/check.yml](.github/workflows/check.yml)에서 실행한다.
 
@@ -46,7 +47,7 @@ npm run infra:connect
 npm run skill:install
 ```
 
-Codex에 “태스크 에이전트로 이 프로젝트에 할 일 CLI를 만들어줘”처럼 요청하면 전담 서브에이전트가 계약과 Plan을 작성하고 엔진을 운용한다. 자연어 분해는 에이전트가 담당하며 Go 엔진은 검증된 Plan을 실행한다.
+Codex에 “태스크 에이전트로 이 프로젝트에 할 일 CLI를 만들어줘”처럼 요청하면 전담 서브에이전트가 질문을 하나씩 하며 목적과 방향을 정리한다. 신규 프로젝트는 설계 문서 검토 후 계약과 Plan으로 넘어간다. 작은 변경·조사는 원본의 가벼운 경로를 따르며, 상태 조회·중단·재개에 인터뷰를 반복하지 않는다. [인터뷰 설계](docs/rebuild/interview-design.md)에 원본 채택과 연결 범위를 기록했다. 자연어 분해는 에이전트가 담당하며 Go 엔진은 검증된 Plan을 실행한다.
 
 직접 호출할 때는 실제 프로젝트 절대 경로와 [Plan 형식](engine/skill/references/planning.md)을 사용한다.
 

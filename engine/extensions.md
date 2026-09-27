@@ -2,6 +2,10 @@
 
 실행 경로는 `task-agent` Go CLI → AX gRPC → AX Redis Streams/controller → Substrate actor → AX Go runner다. 그래프 상태도 같은 Redis에 별도 prefix로 저장한다. 자체 Docker backend·SQLite·파일 mailbox 모델 중계는 사용하지 않는다.
 
+## 계획 이전의 인터뷰
+
+새 자연어 목표는 전역 스킬의 [Superpowers 인터뷰 연결](skill/references/discovery.md)에서 개념·방향과 설계를 검토한 뒤 Plan으로 변환한다. 원본 brainstorming·writing-plans와 시각 보조 코드를 버전 고정해 사용한다. 대화 단계와 검토 이력은 대상 프로젝트에 기록하며, Go Plan 형식과 AX 실행 수명은 변경하지 않는다. CLI는 인터뷰 기록을 강제 검사하는 보안 경계가 아니다.
+
 ## 계약과 지원 범위
 
 Plan은 `id`, `revision`, `tasks`를 가진다. task의 계약·목표·고정 image·argv·입력 파일·의존 출력·산출물·검증기를 명시한다. [계획 안내](skill/references/planning.md)를 따른다. 기존 `greenfield` GraphBundle과 상태는 자동 변환하지 않는다. C01–C12 전체 구현 완료를 의미하지 않으며, 아래 지원 범위 안에서만 사용한다.
