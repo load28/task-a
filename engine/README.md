@@ -25,7 +25,7 @@ cd engine/ax
 go test ./...
 ```
 
-Go 1.27.1과 원본 모듈 의존성이 필요하다. 도입 순서와 아직 연결되지 않은 기능은 [도입 계약·설계](../docs/rebuild/ax-implementation-adoption.md)를 따른다. `greenfield/` 검증 결과를 이 엔진의 통합 완료 증거로 사용하지 않는다.
+Go 1.27.1과 원본 모듈 의존성이 필요하다. 도입 순서와 아직 연결되지 않은 기능은 [도입 계약·설계](../docs/rebuild/ax-implementation-adoption.md)를 따른다. 이 엔진의 테스트와 실제 실행 증거로 완료 범위를 판단한다.
 
 ## 현재 진입점
 

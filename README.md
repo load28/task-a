@@ -1,75 +1,67 @@
 # Task Agent
 
-**OpenCode 서버가 요청 해석부터 태스크 관리·구현·검증까지 전체 하네스를 담당합니다.** Claude Code와 Codex는 대화 화면으로 사용하고, Task Graph는 OpenCode가 호출하는 영속 상태 도구로 동작합니다.
+계약으로 작은 태스크를 연결하고, 각 태스크의 Codex를 격리 실행하는 AX 소스 기반 엔진이다. 입력이나 계약이 바뀌면 영향받는 작업을 다시 실행하고, 동일한 성공 결과는 재사용한다. 중단한 작업은 Substrate DATA snapshot과 저장된 Codex 세션으로 재개한다.
 
-## 설치와 사용
-
-Node.js 24 이상이 필요합니다. 한 번 설치하면 현재 프로젝트 경로를 자동 인식합니다.
-
-```sh
-npm ci
-npm run host:install -- --opencode-url http://127.0.0.1:4096 --model claude --verify-command "npm test"
-```
-
-기존 OpenCode 서버를 사용하려면 `--opencode-url`을 지정합니다. 생략하면 로컬 전달 서비스가 OpenCode 서버를 자동 기동합니다. Docker는 필수가 아닙니다. 서버의 Claude 인증을 준비하고 Claude Code·Codex의 새 세션에서 훅을 신뢰한 뒤 평소처럼 요청합니다. MCP만 등록하면 자동 요청 전달 훅이 설치되지 않습니다. `--workspace`는 기존 DB 연결이나 명시적인 범위 설정이 필요할 때만 사용합니다.
-
-[설치·운영 안내](docs/automatic-host.md)와 [최종 실행 설계](docs/automatic-host-plan.md)에 설정과 검증 범위를 정리했습니다.
-
-## 실행 구조
+## 구조
 
 ```text
-Claude Code / Codex
-  ├─ UserPromptSubmit ── 요청 전달 서비스 ── OpenCode Server
-  └─ Host MCP ◀──────── 상태·질문·승인·취소 ──────┤
-                                                ├─ task-manager (기본 에이전트)
-                                                ├─ task-planner / task-worker (하위 에이전트)
-                                                ├─ 파일·터미널·외부 MCP 도구
-                                                └─ Task Graph MCP
-                                                     ├─ Task / Context / Integration Engine
-                                                     └─ SQLite 그래프·버전·이력
+Codex 전담 서브에이전트 → 전역 스킬 → Go task-agent
+  → AX gRPC · Redis Streams · controller
+  → Substrate gVisor actor → AX runner → Codex CLI
 ```
 
-전달 서비스는 요청과 OpenCode 세션 ID를 보존합니다. 태스크 추출·분해·선택·계획·실행·통합·재시도는 OpenCode가 수행합니다. 그래프 엔진 내부에서 추론이 필요한 작업도 OpenCode 기본·하위 에이전트가 맡습니다. 그래프 엔진은 제안 검증, 상태 전이, 버전·의존성·완료 조건 계산만 수행합니다.
+계약 DAG·변경 판정·독립 검증은 AX 위의 확장이다. AX 원본 코드·라이선스·출처는 [engine](engine/README.md)과 [원본 잠금 파일](engine/upstream.lock.json)에 보존한다.
 
-호스트 MCP는 `agent_control`, `agent_status`, `agent_reply`, `agent_cancel`을 제공합니다. 작업 중 상태 질문·중단·조건 변경·새 작업·승인 답변을 구분해 전달합니다. OpenCode의 Task Graph MCP는 그래프 도구 22개를 제공하며 `orchestrate_run`을 노출하지 않습니다. 그래프 변경에는 중복 방지를 위한 `operationId`가 필요합니다.
-
-## 구성 요소
-
-| 구성 | 책임 |
+| 경로 | 역할 |
 |---|---|
-| `packages/host-integration` | 훅, 설정 설치, 영속 요청 전달, 세션 연결, 상태·사용자 응답 전달 |
-| `packages/opencode-harness` | OpenCode 서버 연결, 기본·하위 에이전트 정의, native session API, Graph MCP |
-| `packages/task-engine`, `task-context`, `integration-engine` | 결정적인 그래프·맥락·검증 상태 처리 |
-| `packages/task-domain`, `task-store`, `task-agent-core` | 도메인 모델, SQLite 저장소, 그래프 API |
+| [docs/rebuild](docs/rebuild/README.md) | 요구·계약·설계·구현 DAG·검증 근거 |
+| [engine/ax](engine/ax/) | AX 원본과 Go 그래프 확장·테스트 |
+| [engine/codex](engine/codex/) · [engine/infra](engine/infra/) | Codex 이미지·세션·native 인증, 고정 Substrate 배포 |
+| [engine/skill](engine/skill/SKILL.md) | 자연어 위임·계획·실행·중단·재개 진입점 |
 
-기존 `packages/task-orchestrator` 실행 루프와 Claude CLI 실행기는 이전 API의 호환성·회귀 테스트용 코드입니다. 기본 런타임, 호스트 서비스, MCP 및 `npm run orchestrate`에서 실행하지 않습니다. 그래프 세부 모델은 [도메인 설계](docs/architecture.md)를 참고합니다.
+## 빌드와 검사
 
-## 코드 수정 후 로컬 반영
-
-`npm run host:reload` 한 번으로 검사 → 컨트롤러·작업자 이미지 빌드 → kind 이미지 로드 → CRD·컨트롤러 갱신 → 호스트 재시작 → 설치된 Codex·Claude MCP 등록 갱신과 실제 초기화 검증을 수행합니다. 설치된 로컬 kind 설정을 사용하며 소스 내용으로 이미지 태그를 구분합니다. 빌드 중 소스가 바뀌면 배포를 중단합니다. 기존 설정·인증·DB·볼륨·프로젝트 비활성 설정을 보존하며, 기존 실행 Pod는 재생성하지 않습니다. 새 작업부터 새 작업자 이미지를 사용합니다. 등록된 실행 명령으로 `initialize`와 `tools/list`까지 성공해야 갱신 완료로 기록합니다. 구버전의 삭제된 실행 파일 경로는 현재 등록으로 이전하며, 연동 해제 시 구버전 등록을 복원하지 않습니다. 반영 결과는 `~/.task-agent/local-release.json`에 기록합니다.
-
-## 운영과 검증
+Node.js 24 이상과 Go 1.27.1 toolchain이 필요하다. 루트 npm 패키지는 명령 진입점이며 설치할 npm 의존성은 없다. Go 의존성은 `engine/ax/go.mod`와 `go.sum`을 따른다.
 
 ```sh
-node scripts/host-setup.ts start
-npm run host:doctor
-npm run host:status
-node scripts/host-setup.ts cancel --request <requestId>
-node scripts/host-setup.ts cancel --workspace /absolute/project/path
-npm run host:stop
-npm run host:uninstall
+npm run build
 npm run check
-npm run evaluate:host -- --model openai/gpt-5.6-terra
 ```
 
-프로젝트 전체 취소는 `agent_cancel({workspace: "/absolute/project/path"})` 또는 위 `cancel --workspace` 명령으로 요청합니다. 대기 작업과 기존 예약을 먼저 차단하고, OpenCode 세션 및 Kubernetes Pod 종료 확인 후 예약을 해제합니다. 연결 장애 중에는 `cancelling`과 오류 이유를 보존하며 재시작 후에도 재시도합니다. 저장 볼륨은 삭제하지 않습니다. 원격 Graph MCP 연결에서는 전체 취소를 지원하지 않습니다.
+`check`는 AX 원본 해시, 계약 DAG와 생성 문서 일치, Node 래퍼, Go 테스트를 검사한다. 실제 Redis 저장소 테스트는 `TASK_AGENT_TEST_REDIS`, Docker 안의 모의 Codex 어댑터 테스트는 `TASK_AGENT_TEST_IMAGE`를 지정했을 때 실행한다. 해당 환경을 지정하지 않으면 이 통합 테스트는 건너뛴다. 실제 모델 호출 시험과는 구분한다.
 
-`host:doctor`는 실제 서버, 모델 인증, Graph MCP, 에이전트 로딩을 확인합니다. `check`는 결정적인 회귀·SDK 계약·훅·서비스 복구 테스트입니다. `evaluate:host`는 임시 프로젝트에서 실제 모델이 파일을 만들고 그래프 결과를 기록하는 별도 평가이며 서버 모델 인증이 필요합니다.
+원본의 중첩 `.github/workflows`는 출처 보존용이다. 이 저장소의 CI는 루트 [.github/workflows/check.yml](.github/workflows/check.yml)에서 실행한다.
 
-그래프 단독 stdio는 `npm run mcp`, JWT 인증 원격 Graph MCP는 `npm run remote`입니다. 이들은 OpenCode가 사용하는 백엔드이며 호스트 자동 연동의 대체물이 아닙니다. 기본 그래프 DB는 `data/tasks-v2.db`이고 `TASK_AGENT_DB`로 변경합니다. 기존 Docker 배포는 [배포 안내](deploy/README.md)에 있습니다.
+## 설치와 실행
 
-### 작업 환경과 실패 복구
+처음 실행할 환경은 [로컬 인프라 안내](engine/infra/README.md)에 따라 준비한다. 이미 구성된 환경은 연결 프로세스를 실행하고 유지한다.
 
-기본 작업자 이미지는 Node.js/npm, Python/pytest/uv, Java/Maven, Rust/Cargo와 빌드 도구를 포함하며 빌드 중 실행 여부를 검사합니다. 프로젝트별 버전과 의존성은 저장소의 명세·잠금 파일을 따라 작업 공간에 설치합니다.
-실패 결과에는 단계, 실행 프로그램, 종료 코드·시그널과 비밀값을 제거한 제한 길이의 오류 로그를 보존하고 호스트 진행 상황으로 전달합니다. 전체 실행 로그와 부분 작업은 기존 PVC에 남습니다.
-관리자는 승인 범위 안의 오류를 진단해 복구 지침으로 재개합니다. 두 번의 복구 실패 또는 권한·인증·요구사항 판단이 필요하면 기존 질문 기능으로 실제 사용자 응답을 기다립니다. 응답은 재실행 세대의 `recoveryInstructions`에 저장되며 동일 PVC와 모델 세션에 전달됩니다. 이미지 변경은 기존 이슈 라우팅과 작업 공간 복원 경로를 사용합니다.
+```sh
+npm run infra:connect
+```
+
+다른 터미널에서 전역 스킬을 설치한다.
+
+```sh
+npm run skill:install
+```
+
+Codex에 “태스크 에이전트로 이 프로젝트에 할 일 CLI를 만들어줘”처럼 요청하면 전담 서브에이전트가 계약과 Plan을 작성하고 엔진을 운용한다. 자연어 분해는 에이전트가 담당하며 Go 엔진은 검증된 Plan을 실행한다.
+
+직접 호출할 때는 실제 프로젝트 절대 경로와 [Plan 형식](engine/skill/references/planning.md)을 사용한다.
+
+```sh
+npm start -- --project /absolute/project validate /absolute/plan.json
+npm start -- --project /absolute/project apply /absolute/plan.json
+npm start -- --project /absolute/project run my-task
+npm start -- --project /absolute/project status my-task
+npm start -- --project /absolute/project result my-task
+```
+
+`run`은 조정 한 번이다. 상태를 확인하며 다음 `run`을 호출하고, `complete: true` 뒤 `result`를 조회한다. `result`는 파일 내용을 JSON으로 반환하며 호스트 프로젝트에 자동으로 쓰지 않는다. 중단은 `suspend my-task`로 요청하고 실제 중단을 확인한 뒤 `resume my-task`와 `run my-task`로 이어간다.
+
+## 지원 범위
+
+현재는 UTF-8 일반 파일을 전달하는 leaf DAG를 지원한다. 입력은 각 actor에 복사하며, 별도 검증 actor의 성공과 중단을 확인해야 결과를 채택한다. 전체 C01–C12 계약 충족을 선언하지 않는다. 크기 제한, 입력 mount, 장애 복구와 인증의 정확한 경계는 [지원 범위](engine/extensions.md)를 따른다.
+
+실제 Codex 생성, 동일 세션 중단·재개, 입력 변경에 따른 후속 재작업, 선택적 재사용의 근거는 [구현 상태](docs/rebuild/implementation-status.md)에 있다. 이전 제품·실험 구현과 배포 경로는 제거했으며 변경 이력은 Git에 남는다. 기존 로컬 실행 데이터와 외부에 설치된 서비스는 이 소스 정리로 자동 삭제하거나 이관하지 않는다.
