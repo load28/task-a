@@ -1,0 +1,10 @@
+# Only the Codex adapter and compiled AX guest binaries enter this build context.
+**
+!codex/
+!codex/Dockerfile
+!codex/task-agent-codex.mjs
+!ax/
+!ax/bin/
+!ax/bin/linux/
+!ax/bin/linux/ax-task-runner
+!ax/bin/linux/task-agent-exec

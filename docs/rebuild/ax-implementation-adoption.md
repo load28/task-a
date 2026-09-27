@@ -36,7 +36,7 @@ C07–C10의 중단 증거와 단일 writer 계약은 그대로 지킨다. 원�
 | AX01 원본 기반 | 소스·라이선스·고정 해시·원본 전체 테스트 | 도입·원본 차이 검증 완료 |
 | AX02 원본 인프라 | 고정 Substrate 버전, Redis·gRPC·gVisor actor·DATA 재개 | 전용 로컬 클러스터 실제 검증 완료 |
 | AX03 계약 그래프 | Go Plan·AX Task 매핑, Redis 상태/event, 별도 validator, 선택적 재사용 | 제한된 파일 계약 구현·실제 검증, C01–C12 전체 충족은 아님 |
-| AX04 Codex 연결 | AX runner·native egress·현재 로그인 sync·정확한 세션 재개 | 구현·무인증 어댑터 시험 완료, 실제 로그인 동기화는 승인 검토 거절로 대기 |
-| AX05 전역 진입점 | 전역 스킬·역할·프로젝트별 연결 | AX 경로 전환 및 래퍼 실제 실행 검증, 실제 AI 종단 검증은 AX04와 함께 대기 |
+| AX04 Codex 연결 | AX runner·native egress·현재 로그인 sync·정확한 세션 재개 | native 인증·실제 Codex 구현·동일 actor/세션 재개 확인, 중단 시점은 첫 도구 호출 전 |
+| AX05 전역 진입점 | 전역 스킬·역할·프로젝트별 연결 | 전역 스킬 위임·별도 프로젝트 생성·독립 검증·선택 재작업 확인 |
 
-`greenfield/`의 Docker·Codex·선택적 Go supervisor 시험은 이전 설계의 실험 결과다. 해당 성공을 AX02–AX05의 완료로 계산하지 않는다. 전역 스킬의 실행 대상은 `engine/ax/bin/task-agent`로 전환했다. 기존 SQLite 작업을 Redis로 자동 이관하지 않는다. 상세 지원 범위와 검증 한계는 [확장 문서](../../engine/extensions.md)를 따른다.
+제거한 이전 실행기의 시험 결과는 AX02–AX05의 완료 근거로 사용하지 않는다. 전역 스킬의 실행 대상은 `engine/ax/bin/task-agent`로 전환했다. 기존 SQLite 작업을 Redis로 자동 이관하지 않는다. 상세 지원 범위와 검증 한계는 [확장 문서](../../engine/extensions.md)를 따른다.

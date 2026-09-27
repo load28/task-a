@@ -76,8 +76,8 @@ function validate(value) {
     dependencies.set(task.id, deps)
     assert(task.owns.length > 0, `Missing ownership: ${task.id}`)
     for (const scope of task.owns) {
-      assert(/^greenfield\/[a-z0-9-]+\/$/.test(scope), `Invalid ownership scope: ${scope}`)
-      for (const prior of owners) assert(!(scope.startsWith(prior.scope) || prior.scope.startsWith(scope)), `Overlapping ownership: ${prior.id}, ${task.id}`)
+      assert(/^capability:[a-z0-9-]+$/.test(scope), `Invalid ownership scope: ${scope}`)
+      for (const prior of owners) assert(scope !== prior.scope, `Overlapping ownership: ${prior.id}, ${task.id}`)
       owners.push({ id: task.id, scope })
     }
   }
@@ -106,10 +106,10 @@ function validate(value) {
 
 function render(value, analysis) {
   const lines = [
-    "# 신규 구현 태스크 그래프", "", "상태: 검토 초안 · 제품 구현 전", "",
+    "# 신규 구현 태스크 그래프", "", "상태: 계약 전체의 목표 DAG · 실제 구현 상태와 구분", "",
     "이 문서는 [graph.json](graph.json)에서 생성한다. 입력 포트가 가리키는 산출물에서 의존성을 도출하며, 별도의 의존성 목록을 수작업으로 유지하지 않는다. 제품 실행용 GraphRevision payload가 아닌 구현 작업의 검토용 DAG다.", "",
     "## 1. 계약을 먼저 고정하고 독립 경로를 병렬 구현한다", "",
-    "T01은 계약을 기계적으로 검증 가능한 schema로 만들고, T02는 그 계약을 충족하는 실행·저장 기반을 선택한다. 두 작업 이후 그래프와 실행 계층을 독립 구현한다. 모든 작업의 현재 상태는 미착수다.", "",
+    "T01은 계약을 기계적으로 검증 가능한 schema로 만들고, T02는 고정한 AX Go·Redis·Substrate 기반이 계약을 충족하는지 판단한다. 이 DAG는 계약 전체의 논리 작업 분해다. 실제 구현 경계와 완료 근거는 [AX 도입 설계](ax-implementation-adoption.md)와 [구현 상태](implementation-status.md)를 따른다.", "",
     "```mermaid", "flowchart TB",
   ]
   for (const group of value.groups) {
@@ -120,7 +120,7 @@ function render(value, analysis) {
   for (const task of value.tasks) for (const dependency of analysis.dependencies.get(task.id)) lines.push(`  ${dependency} --> ${task.id}`)
   lines.push("```", "", "화살표는 선행 작업의 산출물을 소비한다는 뜻이다. 작업 의존성이 코드의 import 의존성을 강제하지는 않는다. 예를 들어 kernel은 adapter의 계약·검증 fixture를 참고하더라도 adapter 구현을 import하지 않는다. 계약·설계·AX 참고 문서 source 연결은 가독성을 위해 그림에서 생략했으며 JSON과 아래 입력 목록에는 모두 포함한다.", "",
     "## 2. 각 작업은 입력·산출물·소유 범위·완료 증거를 가진다", "",
-    "`greenfield/`는 제안된 새 산출물 영역이다. 현재 저장소의 구현 파일을 가리키지 않으며, 이번 문서 작업에서 생성하거나 연결하지 않는다. 기반 기술 선정 후 경로를 확정하더라도 소유권 중복을 다시 검사한다.", "")
+    "`capability:` 소유 범위는 파일 경로가 아닌 논리 책임 식별자다. AX의 기존 확장 지점과 원본 구현을 사용하며, 각 책임마다 새 디렉터리나 자체 실행기를 만들지 않는다. 동일 책임의 중복 소유는 검증기가 거절한다.", "")
   for (const group of value.groups) {
     lines.push(`### ${group.title}`, "")
     for (const task of value.tasks.filter(x => x.group === group.id)) {

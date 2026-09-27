@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "kind": "ImplementationPlanDraft",
   "status": "review",
-  "revision": "draft-1",
+  "revision": "draft-2",
   "goal": "계약 기반 작은 태스크, 선택적 재작업, 독립 실행 공간, 중단·재개를 지원하는 신규 Task Agent",
   "runtimeExecutable": false,
   "notes": [
     "이 JSON은 구현 작업의 검토용 DAG이며 제품의 GraphRevision 실행 payload가 아니다.",
-    "greenfield/는 제안된 신규 산출물 소유 영역이며 아직 생성하거나 기존 코드에 연결하지 않는다.",
+    "owns는 capability: 이름으로 구분한 논리 책임이며 파일 경로가 아니다. 실제 구현은 AX 확장 경계를 따른다.",
     "문서의 참조를 실행 가능한 digest로 동결하는 방식은 T01에서 구현한다.",
-    "작업 의존성은 inputs에서 도출한다. 별도의 dependsOn 원본을 두지 않는다."
+    "작업 의존성은 inputs에서 도출한다. 별도의 dependsOn 원본을 두지 않는다.",
+    "실행·저장 기반은 AX Go·Redis·Substrate로 고정한다. T01–T19의 완료 여부는 implementation-status.md와 engine/extensions.md에서 별도로 판단한다."
   ],
   "requirements": [
     "R1",
@@ -124,7 +125,7 @@
         }
       ],
       "owns": [
-        "greenfield/contract-schema/"
+        "capability:contract-schema"
       ],
       "acceptanceScenarioIds": [
         "A03",
@@ -140,7 +141,7 @@
       "id": "T02",
       "group": "foundation",
       "title": "실행·저장 기반 적합성 결정",
-      "objective": "계약의 필수 capability를 실제 후보 기반에서 확인하고 첫 backend와 저장 구성을 선택한다.",
+      "objective": "고정한 AX Go·Redis·Substrate 기반에서 계약의 필수 capability와 지원 범위를 실제 검증한다.",
       "contractRefs": [
         "C07",
         "C08",
@@ -169,11 +170,11 @@
       "outputs": [
         {
           "id": "platform-decision",
-          "description": "계약의 필수 capability를 실제 후보 기반에서 확인하고 첫 backend와 저장 구성을 선택한다."
+          "description": "고정한 AX Go·Redis·Substrate 기반에서 계약의 필수 capability와 지원 범위를 실제 검증한다."
         }
       ],
       "owns": [
-        "greenfield/platform-decision/"
+        "capability:platform-decision"
       ],
       "acceptanceScenarioIds": [
         "A09",
@@ -216,7 +217,7 @@
         }
       ],
       "owns": [
-        "greenfield/graph-validation/"
+        "capability:graph-validation"
       ],
       "acceptanceScenarioIds": [
         "A01",
@@ -258,7 +259,7 @@
         }
       ],
       "owns": [
-        "greenfield/state-store/"
+        "capability:state-store"
       ],
       "acceptanceScenarioIds": [
         "A13",
@@ -301,7 +302,7 @@
         }
       ],
       "owns": [
-        "greenfield/snapshot-store/"
+        "capability:snapshot-store"
       ],
       "acceptanceScenarioIds": [
         "A04",
@@ -344,7 +345,7 @@
         }
       ],
       "owns": [
-        "greenfield/input-resolution/"
+        "capability:input-resolution"
       ],
       "acceptanceScenarioIds": [
         "A01",
@@ -386,7 +387,7 @@
         }
       ],
       "owns": [
-        "greenfield/impact-analysis/"
+        "capability:impact-analysis"
       ],
       "acceptanceScenarioIds": [
         "A05",
@@ -429,7 +430,7 @@
         }
       ],
       "owns": [
-        "greenfield/rework-decision/"
+        "capability:rework-decision"
       ],
       "acceptanceScenarioIds": [
         "A05",
@@ -471,7 +472,7 @@
         }
       ],
       "owns": [
-        "greenfield/runtime-backend/"
+        "capability:runtime-backend"
       ],
       "acceptanceScenarioIds": [
         "A10",
@@ -512,7 +513,7 @@
         }
       ],
       "owns": [
-        "greenfield/workspace-provider/"
+        "capability:workspace-provider"
       ],
       "acceptanceScenarioIds": [
         "A09",
@@ -558,7 +559,7 @@
         }
       ],
       "owns": [
-        "greenfield/checkpoint-runner/"
+        "capability:checkpoint-runner"
       ],
       "acceptanceScenarioIds": [
         "A11",
@@ -612,7 +613,7 @@
         }
       ],
       "owns": [
-        "greenfield/execution-controller/"
+        "capability:execution-controller"
       ],
       "acceptanceScenarioIds": [
         "A08",
@@ -662,7 +663,7 @@
         }
       ],
       "owns": [
-        "greenfield/validation-service/"
+        "capability:validation-service"
       ],
       "acceptanceScenarioIds": [
         "A04",
@@ -724,7 +725,7 @@
         }
       ],
       "owns": [
-        "greenfield/result-adoption/"
+        "capability:result-adoption"
       ],
       "acceptanceScenarioIds": [
         "A02",
@@ -780,7 +781,7 @@
         }
       ],
       "owns": [
-        "greenfield/graph-activation/"
+        "capability:graph-activation"
       ],
       "acceptanceScenarioIds": [
         "A01",
@@ -831,7 +832,7 @@
         }
       ],
       "owns": [
-        "greenfield/planner-adapter/"
+        "capability:planner-adapter"
       ],
       "acceptanceScenarioIds": [
         "A01",
@@ -894,7 +895,7 @@
         }
       ],
       "owns": [
-        "greenfield/operator-interface/"
+        "capability:operator-interface"
       ],
       "acceptanceScenarioIds": [
         "A08",
@@ -955,7 +956,7 @@
         }
       ],
       "owns": [
-        "greenfield/failure-tests/"
+        "capability:failure-tests"
       ],
       "acceptanceScenarioIds": [
         "A08",
@@ -1010,7 +1011,7 @@
         }
       ],
       "owns": [
-        "greenfield/acceptance-tests/"
+        "capability:acceptance-tests"
       ],
       "acceptanceScenarioIds": [
         "A01",

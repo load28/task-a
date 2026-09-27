@@ -2,51 +2,17 @@
   "name": "task-agent",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=24.0.0"
-  },
-  "imports": {
-    "#task-domain": "./packages/task-domain/src/index.ts",
-    "#task-engine": "./packages/task-engine/src/index.ts",
-    "#integration-engine": "./packages/integration-engine/src/index.ts",
-    "#task-store": "./packages/task-store/src/index.ts",
-    "#task-context": "./packages/task-context/src/index.ts",
-    "#task-agent-core": "./packages/task-agent-core/src/index.ts",
-    "#task-orchestrator": "./packages/task-orchestrator/src/index.ts"
-  },
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
-    "start": "node apps/task-agent/src/main.ts",
-    "http": "node apps/task-agent/src/http.ts",
-    "mcp": "node apps/task-agent/src/mcp.ts",
-    "remote": "node apps/task-agent/src/remote.ts",
-    "orchestrate": "node apps/task-agent/src/orchestrate.ts",
-    "test": "node --test",
-    "check": "tsc --noEmit && node --test",
-    "host:install": "node scripts/host-setup.ts install",
-    "host:reload": "node scripts/host-reload.ts",
-    "host:status": "node scripts/host-setup.ts status",
-    "host:stop": "node scripts/host-setup.ts stop",
-    "host:uninstall": "node scripts/host-setup.ts uninstall",
-    "migrate:legacy": "node scripts/migrate-legacy.ts",
-    "evaluate:host": "node scripts/evaluate-automatic-host.ts",
-    "host:doctor": "node scripts/host-setup.ts doctor",
-    "instances": "node scripts/instances.ts",
-    "instances:controller": "node scripts/instance-controller.ts",
-    "test:kubernetes": "node scripts/smoke-kubernetes.ts",
-    "test:revisions:kubernetes": "node scripts/smoke-plan-revision-kubernetes.ts",
-    "test:archives:kubernetes": "node scripts/smoke-workspace-archive-kubernetes.ts",
-    "test:feedback:kubernetes": "node scripts/smoke-feedback-kubernetes.ts",
-    "test:signals:kubernetes": "node scripts/smoke-input-signals-kubernetes.ts"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "@opencode-ai/sdk": "^1.18.29",
-    "ajv": "^8.20.0",
-    "jose": "^6.2.11",
-    "opencode-ai": "^1.18.29"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "start": "node engine/skill/scripts/task-agent.mjs",
+    "build": "node engine/build.mjs",
+    "test": "npm run test:node && npm run test:go",
+    "test:node": "node --test engine/skill/scripts/task-agent.test.mjs engine/codex/adapter.test.mjs",
+    "test:go": "go -C engine/ax test ./...",
+    "check": "npm run verify:upstream && npm run check:plan && npm test",
+    "verify:upstream": "node engine/verify-upstream.mjs",
+    "check:plan": "node docs/rebuild/validate-plan.mjs --self-test",
+    "skill:install": "node engine/install-skill.mjs",
+    "infra:connect": "node engine/infra/connect.mjs"
   }
 }

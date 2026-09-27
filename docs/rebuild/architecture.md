@@ -181,8 +181,8 @@ ArtifactStore와 CheckpointStore는 상태 DB 밖에 있어도 된다. bytes를 
 - **A15 — 증거 보존:** artifact 업로드와 DB 채택 사이 장애, 이벤트 중복·연결 단절을 주입한다. 채택한 결과의 bytes와 근거가 조회되며 이벤트 cursor로 이어 읽을 수 있다. 참조된 bytes가 없으면 유효 결과로 제공하지 않는다.
 - **A16 — 전체 시나리오:** 목표 분해→병렬 독립 실행→중단/재개→입력 변경→영향 경로만 재작업→통합 검증→완료를 실제 backend에서 수행하고 각 판정의 증거를 연결한다.
 
-### 기술 선택을 위한 별도 산출물
+### AX 기반 적합성 검증
 
-`T02`는 RuntimeBackend·StateStore·ArtifactStore·CheckpointStore의 구체 구현을 선정한다. C07–C10의 필수 capability와 실제 검증 방법을 비교하고, 지원하지 못하는 요구가 있으면 계약을 몰래 완화하지 않고 검토안에 표시한다. AX를 직접 사용하는 선택도 동일한 기준으로 평가한다.
+`T02`는 고정한 AX Go·Redis·Substrate 기반에서 RuntimeBackend·StateStore·ArtifactStore·CheckpointStore 계약의 적합성을 확인한다. C07–C10의 필수 capability를 실제 검증하고, 지원하지 못하는 요구는 [지원 범위](../../engine/extensions.md)에 명시한다. 원본 구현을 우선 사용하고 불가피한 차이만 확장한다.
 
-UI, 특정 LLM 공급자, 특정 모델, 다중 지역 운영, 자동 비용 최적화는 현재 요구로 확정하지 않는다. planner와 runner 교체 포트만 정의한다. 자연어 계획 품질과 모델 성능은 결정적 계약 테스트의 통과만으로 보장하지 않는다.
+첫 작업 에이전트는 현재 ChatGPT 로그인을 사용하는 Codex CLI다. UI, 다중 지역 운영, 자동 비용 최적화는 현재 요구로 확정하지 않는다. 자연어 계획 품질과 모델 성능은 결정적 계약 테스트의 통과만으로 보장하지 않는다.

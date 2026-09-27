@@ -7,4 +7,7 @@ data/
 .env
 .env.*
 !.env.example
-deploy/*.parameters.json
+
+# Local runtime state and credentials are never source artifacts.
+.state/
+.opencode/
