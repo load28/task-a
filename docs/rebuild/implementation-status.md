@@ -1,5 +1,15 @@
 # 신규 구현 상태와 검증 근거
 
+## 2026-09-27 — 실제 Codex 중단·재개와 변경 재작업
+
+같은 `/Users/seominyong/Downloads/source/task-agent-demo` 프로젝트와 `todo-demo` 그래프를 revision 1 → 2 → 3으로 진행했다. 엔진 소스 변경 없이 다음을 확인했다.
+
+- **중단·재개:** revision 2 core의 실제 Codex 세션이 시작되고 완료 receipt가 없는 상태에서 suspend했다. 그래프 paused와 core suspended를 확인한 뒤 같은 actor `ta-d9a406c6a070ed8ad924e187166ce7f1d34c136c`를 재개했다. 프로세스 argv에서 `codex exec resume 01a0e138-a4d6-7943-ad55-8dca862ff528`을 직접 관찰했고, 같은 세션의 후속 도구 호출·완료와 독립 validator exit 0을 확인했다. 입력 파일 bytes도 보존됐다. 중단 시점은 세션 생성 후 첫 도구 호출 전이므로, 편집 도중 생성된 파일의 복원까지 입증한 시험으로 확대하지 않는다.
+- **의존 결과 변경:** revision 2는 core에 `removeTodo` 계약과 테스트만 추가하고 CLI 정의 전체를 revision 1과 동일하게 유지했다. core 출력 bytes가 바뀌자 CLI도 새 actor에서 재실행됐다. 두 작업 모두 reused=false, 독립 validator exit 0, 그래프 complete=true였다.
+- **선택 재작업:** revision 3은 CLI에 `remove ID` 계약과 테스트를 추가하고 core 정의를 그대로 유지했다. core는 같은 actor·같은 출력의 성공 결과를 reused=true로 재사용했고, CLI만 새 actor에서 실행·검증됐다. 그래프 complete=true를 확인했다.
+
+최종 결과를 대상 프로젝트로 그대로 내보내고 호스트에서도 Core/Remove/CLI 계약 테스트가 통과했다. 근거는 프로젝트 `.task-agent/requests/todo-demo/`의 `plan-revision2.json`, `plan-revision3.json`, `suspend-proof.json`, `resume-proof.json`, `resume-process-proof.json`, `proof-revision2.json`, `proof-revision3.json` 및 각 revision의 state/result 파일이다. 아래 최초 생성 시험의 중단·재개 미검증 기록은 당시의 검증 범위를 나타낸다.
+
 ## 2026-09-27 — AX 실행 경로와 전역 진입점 전환
 
 최신 기준은 [engine/extensions.md](../../engine/extensions.md)다. AX 원본 65개 중 60개는 해시가 같고, 5개는 [잠금 파일](../../engine/upstream.lock.json)에 사유와 수정 해시를 기록했다. 원본 Go runner·gRPC·Redis Streams·controller·workspace·Substrate를 사용한다. AX의 옛 클라이언트에는 native credential injector가 없어 Substrate 클라이언트/인프라를 `ed6d2a1fc8ae8337eb055d51b0b767b023cb3b5c`로 일치시켰다.
