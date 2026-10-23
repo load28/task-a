@@ -1,0 +1,21 @@
+{
+  "name": "slack-doc-bot",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "opencode": "opencode serve --hostname 127.0.0.1 --port 4096",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@octokit/rest": "22.0.1",
+    "@opencode-ai/sdk": "1.19.4",
+    "@slack/bolt": "5.1.0"
+  },
+  "devDependencies": {
+    "opencode-ai": "1.19.4"
+  }
+}
