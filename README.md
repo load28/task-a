@@ -19,6 +19,7 @@ Codex 전담 서브에이전트 → Superpowers 인터뷰·설계 검토 → 계
 | [engine/ax](engine/ax/) | AX 원본과 Go 그래프 확장·테스트 |
 | [engine/codex](engine/codex/) · [engine/infra](engine/infra/) | Codex 이미지·세션·native 인증, 고정 Substrate 배포 |
 | [engine/skill](engine/skill/SKILL.md) | 자연어 위임·계획·실행·중단·재개 진입점 |
+| [slack-doc-bot](slack-doc-bot/README.md) | 채널별 프로젝트 문서를 기준으로 답하고 PR로 고치는 Slack 봇(OpenCode 서버 기반, 별도 패키지) |
 
 ## 빌드와 검사
 

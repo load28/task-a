@@ -30,3 +30,7 @@ jobs:
           cache-dependency-path: engine/ax/go.sum
       - run: npm run check
       - run: npm run build
+      - run: npm ci
+        working-directory: slack-doc-bot
+      - run: npm test
+        working-directory: slack-doc-bot

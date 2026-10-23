@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "share": "disabled",
+  "agent": {
+    "doc-steward": {
+      "description": "Slack 프로젝트 채널에서 멘션을 받아 문서 기반으로 답하고 문서 변경을 협의한다",
+      "mode": "primary",
+      "prompt": "{file:./prompts/steward.md}",
+      "permission": {
+        "read": "deny",
+        "edit": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "list": "deny",
+        "bash": "deny",
+        "task": "deny",
+        "external_directory": "deny",
+        "todowrite": "deny",
+        "question": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "lsp": "deny",
+        "skill": "deny"
+      }
+    },
+    "doc-watcher": {
+      "description": "Slack 프로젝트 채널 대화를 문서와 비교해 먼저 개입할지 판단한다",
+      "mode": "primary",
+      "prompt": "{file:./prompts/watcher.md}",
+      "permission": {
+        "read": "deny",
+        "edit": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "list": "deny",
+        "bash": "deny",
+        "task": "deny",
+        "external_directory": "deny",
+        "todowrite": "deny",
+        "question": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "lsp": "deny",
+        "skill": "deny"
+      }
+    }
+  }
+}

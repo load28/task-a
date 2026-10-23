@@ -1,0 +1,10 @@
+{
+  "C0123456789": {
+    "owner": "your-org",
+    "repo": "project-alpha",
+    "branch": "main",
+    "docsPath": "docs",
+    "reviewers": ["github-user"],
+    "watch": true
+  }
+}
